@@ -279,10 +279,11 @@ html, body {
 .fl-table tr.fl-flash td { animation: fl-flash 2.4s ease-out; }
 @keyframes fl-flash { 0%, 40% { background: #fff1b8; } 100% { background: transparent; } }
 .fl-col-name { font-weight: 500; }
-.fl-col-path { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; color: #444; word-break: break-all; }
+.fl-col-path { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; color: #444; }
 .fl-col-desc { color: #666; max-width: 260px; }
-.fl-col-cloud { max-width: 320px; }
-.fl-col-cloud a { font-size: 12px; color: #007aff; text-decoration: none; word-break: break-all; }
+.fl-col-cloud { max-width: 300px; }
+.fl-target { font-size: 12px; }
+.fl-col-cloud a { font-size: 12px; color: #007aff; text-decoration: none; }
 .fl-col-cloud a:hover { text-decoration: underline; }
 .fl-path-root { color: #9aa3ad; }
 .fl-path-warn { color: #b26a00; }

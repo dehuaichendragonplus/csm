@@ -10,9 +10,9 @@
     return String(q || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
   }
 
-  // 参与搜索的字段：表名、xlsx 路径、云端表名、备注、spreadsheetId
+  // 参与搜索的字段：表名、xlsx 路径、云端表名、云端目录、备注、spreadsheetId
   function haystack(row) {
-    return [row.name, row.path, row.cloudName, row.description, row.spreadsheetId]
+    return [row.name, row.path, row.cloudName, row.cloudDir, row.cloudFile, row.description, row.spreadsheetId]
       .filter(Boolean).join('\n').toLowerCase();
   }
 

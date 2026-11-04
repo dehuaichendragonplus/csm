@@ -85,6 +85,7 @@
       <div class="fl-root-bar">
         <span class="fl-root-label">云端目录映射</span>
         <span id="fl-root" class="fl-root">—</span>
+        <button id="fl-cloud-refresh" type="button" class="fl-link-btn" title="云端文件移动或改名后，重新查询全部云端路径并写回 filelist.json">刷新云端路径</button>
         <button id="fl-root-edit" type="button" class="fl-link-btn">设置映射</button>
       </div>
       <div class="fl-list-bar">
@@ -95,7 +96,7 @@
       </div>
       <div class="fl-table-wrap">
         <table class="fl-table">
-          <thead><tr><th>表名</th><th>本地路径</th><th>备注</th><th>云端路径</th><th>本地文件</th><th></th></tr></thead>
+          <thead><tr><th>表名</th><th>本地路径</th><th>云端路径</th><th>备注</th><th>本地文件</th><th></th></tr></thead>
           <tbody id="fl-tbody"></tbody>
         </table>
       </div>

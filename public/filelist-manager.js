@@ -59,7 +59,8 @@
 
   let entries = [];
   let localTables = [];   // 本地目录下、未加入清单的 xlsx
-  let cloudPaths = null;  // { [spreadsheetId]: { dirs, name, error } }；null = 加载中
+  let cloudQuerying = false; // 正在为缺少云端位置的条目查询
+  let cloudFailed = {};      // { [spreadsheetId]: 错误信息 }
   let localRoot = 'Datas';
   const collapsed = { cloud: false, local: false };
   let uploading = null;   // 正在上传弹窗里的本地表
@@ -114,10 +115,6 @@
       return;
     }
     entries = data.entries || [];
-    if (cloudPaths) for (const e of entries) {
-      const info = cloudPaths[e.spreadsheetId];
-      if (info && !info.error) e.cloudName = [...info.dirs, info.name].join(' / ');
-    }
     localTables = (data.local && data.local.tables) || [];
     localRoot = (data.local && data.local.root) || 'Datas';
     baseLabel = data.baseLabel || '';
@@ -218,13 +215,19 @@
   function renderLocalRow(t) {
     const tr = document.createElement('tr');
     tr.appendChild(td(t.name, 'fl-col-name'));
-    tr.appendChild(td(t.path, 'fl-col-path'));
+    tr.appendChild(pathCell(relLocalParts(t.path), '/', 'fl-col-path', `${baseLabel}${t.path}`));
     const target = cloudTargetOf(t.path);
-    const tc = document.createElement('td');
-    if (!rootInfo) { tc.textContent = '正在识别云端目录…'; tc.className = 'fl-muted'; }
-    else if (!target) { tc.textContent = '未设置云端目录映射'; tc.className = 'fl-target warn'; }
-    else if (target.outside) { tc.textContent = '不在映射的本地目录下'; tc.className = 'fl-target warn'; }
-    else { tc.textContent = `→ ${target.dir}`; tc.className = 'fl-target'; tc.title = '上传后放到这个云端目录（缺的文件夹会自动创建）'; }
+    let tc;
+    if (!rootInfo) { tc = td('正在识别云端目录…', 'fl-muted'); }
+    else if (!target) { tc = td('未设置云端目录映射', 'fl-target warn'); }
+    else if (target.outside) { tc = td('不在映射的本地目录下', 'fl-target warn'); }
+    else {
+      // 上传后的云端位置（相对映射根目录）
+      const dirs = target.dir.split(' / ');
+      const rel = [...(stripPrefix(dirs, cloudRootParts()) || dirs), t.name];
+      tc = pathCell(rel, ' / ', 'fl-target', `上传后放到：${target.dir} / ${t.name}（缺的文件夹会自动创建）`);
+      tc.insertBefore(document.createTextNode('→ '), tc.firstChild);
+    }
     tr.appendChild(tc);
     tr.appendChild(td('未上传', 'fl-muted'));
     const local = td(`✓ ${fmtSize(t.size)}`, 'fl-ok');
@@ -314,7 +317,6 @@
       closeUpload();
       el.filter.value = '';
       await loadList(data.entry.path);
-      loadCloudPaths([data.entry.spreadsheetId]);
       setText(el.flash, data.linked ? `已关联：${data.entry.path}` : `已上传并加入清单：${data.entry.path}`, 'ok');
       window.CSM.reloadTables();
     } catch (err) {
@@ -357,71 +359,142 @@
     }
     batchRunning = false;
     await loadList();
-    loadCloudPaths();
     const summary = `批量上传完成：成功 ${done}${linked ? `（其中关联已有表 ${linked}）` : ''}${failed.length ? `，失败 ${failed.length}（详见日志）` : ''}`;
     setText(el.flash, summary, failed.length ? 'error' : 'ok');
     window.CSM.appendLog(`${summary}\n`);
     window.CSM.reloadTables();
   }
 
-  // 云端路径：映射根目录部分置灰，其余正常显示；云端子目录与本地子目录不一致时给出提示
-  function renderCloudPath(cell, e) {
+  // ---------- 路径显示：去掉映射目录段，只显示相对部分 ----------
+  const lower = x => String(x).toLowerCase();
+  function stripPrefix(parts, prefix) {
+    if (!prefix.length || parts.length < prefix.length) return null;
+    return prefix.every((p, i) => lower(parts[i]) === lower(p)) ? parts.slice(prefix.length) : null;
+  }
+  const localRootParts = () => String((rootInfo && rootInfo.root && !rootInfo.root.error && rootInfo.root.localRoot) || localRoot || '').split('/').filter(Boolean);
+  const cloudRootParts = () => (rootInfo && rootInfo.root && !rootInfo.root.error ? String(rootInfo.root.rootPath).split(' / ') : guessCloudRoot());
+
+  // 映射还没识别出来时（App 刚启动），用清单里已记录的 cloudDir 本地推算云端根目录，让显示立即正确：
+  // 每条的云端目录去掉与本地子目录相同的尾部，剩下的就是根目录，取出现最多的那个
+  let guessCache = null;
+  function guessCloudRoot() {
+    if (guessCache && guessCache.entries === entries) return guessCache.parts;
+    const votes = new Map();
+    const lr = String(localRoot || '').split('/').filter(Boolean);
+    for (const e of entries) {
+      if (!e.cloudDir) continue;
+      const dirs = e.cloudDir.split('/').filter(Boolean);
+      const local = (stripPrefix(String(e.path).split('/').filter(Boolean), lr) || []).slice(0, -1);
+      let k = 0;
+      while (k < local.length && k < dirs.length && lower(local[local.length - 1 - k]) === lower(dirs[dirs.length - 1 - k])) k++;
+      const key = dirs.slice(0, dirs.length - k).join('/');
+      votes.set(key, (votes.get(key) || 0) + 1);
+    }
+    let best = '';
+    let max = 0;
+    for (const [key, n] of votes) if (n > max) { best = key; max = n; }
+    guessCache = { entries, parts: best ? best.split('/') : [] };
+    return guessCache.parts;
+  }
+
+  // 本地路径相对映射目录：Datas/Item/Global.xlsx → Item/Global.xlsx
+  function relLocalParts(p) {
+    const parts = String(p).split('/').filter(Boolean);
+    return stripPrefix(parts, localRootParts()) || parts;
+  }
+
+  // 云端位置相对映射根目录：MX11/Data/Item + Global → Item / Global
+  function relCloudDirs(e) {
+    const dirs = String(e.cloudDir || '').split('/').filter(Boolean);
+    return stripPrefix(dirs, cloudRootParts()) || dirs;
+  }
+
+  // 只在分隔符处换行，避免把单词从中间截断
+  function pathCell(parts, sep, cls, title) {
+    const c = document.createElement('td');
+    c.className = cls;
+    parts.forEach((p, i) => {
+      c.appendChild(document.createTextNode(i < parts.length - 1 ? `${p}${sep}` : p));
+      if (i < parts.length - 1) c.appendChild(document.createElement('wbr'));
+    });
+    if (title) c.title = title;
+    return c;
+  }
+
+  function cloudPathCell(e) {
+    if (!e.spreadsheetId) {
+      const c = td('缺少 ID', 'fl-col-cloud fl-bad');
+      return c;
+    }
+    const c = document.createElement('td');
+    c.className = 'fl-col-cloud';
     const a = document.createElement('a');
     a.href = sheetUrl(e.spreadsheetId);
     a.target = '_blank';
     a.rel = 'noopener noreferrer';
-    const info = cloudPaths && cloudPaths[e.spreadsheetId];
-    if (!cloudPaths) {
-      a.textContent = '查询中…';
-      a.className = 'fl-muted';
-    } else if (!info || info.error) {
-      a.textContent = `⚠ ${info && info.error ? info.error : '未查到'}`;
-      a.className = 'fl-bad';
-    } else {
-      const full = [...info.dirs, info.name];
-      const r = rootInfo && rootInfo.root && !rootInfo.root.error ? rootInfo.root : null;
-      const rootParts = r ? String(r.rootPath).split(' / ') : [];
-      const underRoot = r && rootParts.every((p, i) => info.dirs[i] === p);
-      if (underRoot) {
-        const pre = document.createElement('span');
-        pre.className = 'fl-path-root';
-        pre.textContent = `${rootParts.join(' / ')} / `;
-        a.append(pre, full.slice(rootParts.length).join(' / '));
-        // 对比云端子目录与本地子目录
-        const cloudSub = info.dirs.slice(rootParts.length).join('/');
-        const localParts = String(e.path).split('/');
-        const lr = String(r.localRoot || '').split('/').filter(Boolean);
-        const localUnder = lr.every((p, i) => (localParts[i] || '').toLowerCase() === p.toLowerCase());
-        const localSub = localUnder ? localParts.slice(lr.length, -1).join('/') : null;
-        if (localSub !== null && localSub.toLowerCase() !== cloudSub.toLowerCase()) {
-          const w = document.createElement('span');
-          w.className = 'fl-path-warn';
-          w.textContent = ' ⚠';
-          w.title = `云端目录与本地目录不一致\n云端：${cloudSub || '（根目录）'}\n本地：${localSub || '（根目录）'}`;
-          a.appendChild(w);
-        }
-      } else {
-        a.textContent = full.join(' / ');
+    if (e.cloudDir && e.cloudFile) {
+      const parts = [...relCloudDirs(e), e.cloudFile];
+      parts.forEach((p, i) => {
+        a.appendChild(document.createTextNode(i < parts.length - 1 ? `${p} / ` : p));
+        if (i < parts.length - 1) a.appendChild(document.createElement('wbr'));
+      });
+      a.title = `${e.cloudDir.split('/').join(' / ')} / ${e.cloudFile}\n${e.spreadsheetId}\n点击打开云端表`;
+      c.appendChild(a);
+      // 云端子目录与本地子目录不一致时提示
+      const cloudSub = relCloudDirs(e).join('/');
+      const localUnder = stripPrefix(String(e.path).split('/').filter(Boolean), localRootParts());
+      const localSub = localUnder ? localUnder.slice(0, -1).join('/') : null;
+      // 本地不在映射目录下（如 DDatas/...）的不比较
+      if (localSub !== null && cloudRootParts().length && lower(cloudSub) !== lower(localSub)) {
+        const w = document.createElement('span');
+        w.className = 'fl-path-warn';
+        w.textContent = ' ⚠';
+        w.title = `云端目录与本地目录不一致\n云端：${cloudSub || '（根目录）'}\n本地：${localSub || '（根目录）'}`;
+        c.appendChild(w);
       }
+    } else if (cloudFailed[e.spreadsheetId]) {
+      a.textContent = `⚠ ${cloudFailed[e.spreadsheetId]}`;
+      a.className = 'fl-bad';
+      a.title = `${e.spreadsheetId}\n点击打开云端表`;
+      c.appendChild(a);
+    } else {
+      a.textContent = cloudQuerying ? '查询中…' : '未记录';
+      a.className = 'fl-muted';
+      a.title = `${e.spreadsheetId}\n点击打开云端表`;
+      c.appendChild(a);
     }
-    a.title = `${a.title ? `${a.title}\n` : ''}${info && !info.error ? [...info.dirs, info.name].join(' / ') : ''}\n${e.spreadsheetId}\n点击打开云端表`.trim();
-    cell.appendChild(a);
+    return c;
   }
 
-  async function loadCloudPaths(ids) {
-    const q = ids && ids.length ? `?ids=${encodeURIComponent(ids.join(','))}` : '';
+  // 只为还没有云端位置的条目查询（all=true 时全部重查），结果由服务端写回 filelist.json
+  async function syncCloudPaths(all) {
+    const missing = entries.filter(e => e.spreadsheetId && (!e.cloudDir || !e.cloudFile));
+    if (!all && !missing.length) return;
+    cloudQuerying = true;
+    cloudFailed = {};
+    renderList();
+    if (all) setText(el.flash, '正在重新查询全部云端路径…');
     try {
-      const resp = await fetch(api(`/filelist/cloud-paths${q}`));
-      if (!resp.ok) { if (!ids) cloudPaths = {}; renderList(); return; }
+      const resp = await fetch(api('/filelist/cloud-paths'), { method: 'POST', ...json({ all: !!all }) });
       const data = await readJson(resp);
-      cloudPaths = ids ? { ...(cloudPaths || {}), ...data } : data;
-      // 云端路径也参与筛选
-      for (const e of entries) {
-        const info = cloudPaths[e.spreadsheetId];
-        if (info && !info.error) e.cloudName = [...info.dirs, info.name].join(' / ');
+      cloudQuerying = false;
+      if (!resp.ok) {
+        setText(el.flash, resp.status === 401 ? '需要先完成 Google 授权才能查询云端路径' : `查询云端路径失败：${data.error || resp.status}`, 'error');
+        renderList();
+        return;
       }
+      cloudFailed = data.failed || {};
+      await loadList();
+      const nFail = Object.keys(cloudFailed).length;
+      if (data.updated || nFail || all) {
+        setText(el.flash, `云端路径已写入清单：更新 ${data.updated} 条${nFail ? `，${nFail} 条查询失败` : ''}`, nFail ? 'error' : 'ok');
+        if (data.updated) window.CSM.appendLog(`✎ 已把 ${data.updated} 条云端路径写入 filelist.json（cloudDir / cloudFile）\n`);
+      }
+    } catch (err) {
+      cloudQuerying = false;
+      setText(el.flash, `查询云端路径失败：${err.message}`, 'error');
       renderList();
-    } catch (_) { /* 忽略，保持「查询中」 */ }
+    }
   }
 
   function td(text, cls) {
@@ -434,17 +507,9 @@
   function renderRow(e) {
     const tr = document.createElement('tr');
     tr.appendChild(td(e.name, 'fl-col-name'));
-    tr.appendChild(td(e.path, 'fl-col-path'));
+    tr.appendChild(pathCell(relLocalParts(e.path), '/', 'fl-col-path', `${baseLabel}${e.path}`));
+    tr.appendChild(cloudPathCell(e));
     tr.appendChild(td(e.description, 'fl-col-desc'));
-
-    const cloud = document.createElement('td');
-    cloud.className = 'fl-col-cloud';
-    if (e.spreadsheetId) renderCloudPath(cloud, e);
-    else {
-      cloud.textContent = '缺少 ID';
-      cloud.classList.add('fl-bad');
-    }
-    tr.appendChild(cloud);
 
     const local = td(e.local ? `✓ ${fmtSize(e.local.size)}` : '未下载', e.local ? 'fl-ok' : 'fl-muted');
     if (e.local) local.title = `本地修改时间：${fmtTime(e.local.mtime)}`;
@@ -681,7 +746,6 @@
       closeEditor();
       el.filter.value = '';
       await loadList(saved.path);
-      loadCloudPaths([saved.spreadsheetId]);
       setText(el.flash, editing ? `已保存：${saved.path}` : `已添加：${saved.path}（本地还没有这个文件，可在主列表里点「下载」）`, 'ok');
       window.CSM.reloadTables();
     } catch (err) {
@@ -715,14 +779,15 @@
     entries = [];
     localTables = [];
     rootInfo = null;
-    cloudPaths = null;
+    cloudQuerying = false;
+    cloudFailed = {};
     el.filter.value = '';
     setText(el.flash, '');
     el.modal.classList.remove('hidden');
     el.filter.focus();
     await loadList();
     loadRoot(); // 后台识别云端目录（首次约几秒，之后有缓存）
-    loadCloudPaths(); // 后台查询每张云端表的云端路径
+    syncCloudPaths(); // 只为还没记录云端路径的条目查询，并写回 filelist.json
   }
 
   el.open.addEventListener('click', open);
@@ -735,6 +800,7 @@
   el.filter.addEventListener('input', () => renderList());
   el.add.addEventListener('click', () => openEditor(null));
   el.rootEdit.addEventListener('click', openRootEditor);
+  $('fl-cloud-refresh').addEventListener('click', () => syncCloudPaths(true));
 
   el.editClose.addEventListener('click', closeEditor);
   el.cancel.addEventListener('click', closeEditor);

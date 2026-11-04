@@ -420,6 +420,18 @@ async function main(opts = {}) {
     };
   }
 
+  // 新增 / 修改后条目还没有云端位置时补查并写回；查询失败不影响保存
+  async function withCloudLocation(ctx, entry) {
+    if (!hasToken || !entry.spreadsheetId || (entry.cloudDir && entry.cloudFile)) return entry;
+    try {
+      await persistCloudLocations(ctx, [entry.spreadsheetId]);
+      const { entries } = filelistEditor.readFilelistRaw(ctx.cfg.filelistPath);
+      return entries.find(e => e.path === entry.path) || entry;
+    } catch (_) {
+      return entry;
+    }
+  }
+
   // 新增 / 修改后只补查这一个表的云端修改时间，避免整表刷新
   async function refreshOneInCache(ctx, spreadsheetId) {
     if (!hasToken || !spreadsheetId) return;
@@ -484,7 +496,8 @@ async function main(opts = {}) {
     const body = req.body || {};
     try {
       const input = await fillFromCloud(req.ctx, body.entry, true);
-      const entry = filelistEditor.addEntry(req.ctx.cfg.filelistPath, input, { allowDuplicateId: !!body.allowDuplicateId });
+      let entry = filelistEditor.addEntry(req.ctx.cfg.filelistPath, input, { allowDuplicateId: !!body.allowDuplicateId });
+      entry = await withCloudLocation(req.ctx, entry);
       await refreshOneInCache(req.ctx, entry.spreadsheetId);
       res.json({ entry });
     } catch (err) {
@@ -497,7 +510,8 @@ async function main(opts = {}) {
     if (!body.originalPath) return res.status(400).json({ error: 'originalPath 不能为空' });
     try {
       const input = await fillFromCloud(req.ctx, body.entry, false);
-      const entry = filelistEditor.updateEntry(req.ctx.cfg.filelistPath, body.originalPath, input, { allowDuplicateId: !!body.allowDuplicateId });
+      let entry = filelistEditor.updateEntry(req.ctx.cfg.filelistPath, body.originalPath, input, { allowDuplicateId: !!body.allowDuplicateId });
+      entry = await withCloudLocation(req.ctx, entry);
       await refreshOneInCache(req.ctx, entry.spreadsheetId);
       res.json({ entry });
     } catch (err) {
@@ -567,7 +581,10 @@ async function main(opts = {}) {
         spreadsheetId: cloud.id,
         name: String(body.name || '').trim() || baseName,
         description: body.description != null && String(body.description).trim() !== '' ? String(body.description).trim() : cloudName
-      }, { allowDuplicateId: true });
+      }, {
+        allowDuplicateId: true,
+        extra: filelistEditor.cloudFields({ dirs: [...String(root.rootPath).split(' / '), ...subDirs], name: cloud.name })
+      });
 
       // 新建的云端表内容就是本地文件，记为已同步；关联已有表时内容可能不同，不记状态，让列表按实际情况显示
       const markSynced = modifiedTime => {
@@ -604,15 +621,28 @@ async function main(opts = {}) {
     return prev;
   }
 
-  // 云端表的云端路径（所在文件夹链 + 云端表名），供清单列表展示
-  projectRouter.get('/filelist/cloud-paths', async (req, res) => {
+  // 查询云端位置并写回 filelist.json（cloudDir / cloudFile），之后打开清单直接读取，不再重复查询
+  async function persistCloudLocations(ctx, ids) {
+    const locs = await tree().locateMany(ids);
+    const ok = {};
+    const failed = {};
+    for (const [id, loc] of Object.entries(locs)) {
+      if (loc.error) failed[id] = loc.error; else ok[id] = loc;
+    }
+    const updated = Object.keys(ok).length ? filelistEditor.setCloudLocations(ctx.cfg.filelistPath, ok) : 0;
+    return { updated, failed, queried: Object.keys(locs).length };
+  }
+
+  // body: { all: true } 全部重新查询（云端文件移动 / 改名后用）；否则只查还没有云端位置的条目
+  projectRouter.post('/filelist/cloud-paths', async (req, res) => {
     if (!hasToken) return res.status(401).json({ error: 'OAUTH_REQUIRED' });
     try {
-      // ?ids=a,b 只查指定的表（新增 / 修改后补查）；不传则查清单里全部
-      const ids = typeof req.query.ids === 'string' && req.query.ids
-        ? req.query.ids.split(',')
-        : filelistEditor.readFilelistRaw(req.ctx.cfg.filelistPath).entries.map(e => String(e.spreadsheetId || '').trim());
-      res.json(await tree().locateMany(ids));
+      const { entries } = filelistEditor.readFilelistRaw(req.ctx.cfg.filelistPath);
+      const all = !!(req.body && req.body.all);
+      const ids = entries
+        .filter(e => String(e.spreadsheetId || '').trim() && (all || !e.cloudDir || !e.cloudFile))
+        .map(e => String(e.spreadsheetId).trim());
+      res.json(ids.length ? await persistCloudLocations(req.ctx, ids) : { updated: 0, failed: {}, queried: 0 });
     } catch (err) {
       sendEditorError(res, err);
     }

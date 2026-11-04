@@ -117,3 +117,35 @@ test('readFilelistRaw 对非法 JSON 与非数组报错', () => {
   assert.throws(() => fe.readFilelistRaw(tmpFilelist('{')), e => e.code === 'INVALID_JSON');
   assert.throws(() => fe.readFilelistRaw(tmpFilelist('{}')), e => e.code === 'INVALID_JSON');
 });
+
+test('setCloudLocations 写入 cloudDir / cloudFile，无变化不写文件', () => {
+  const p = tmpFilelist(SAMPLE);
+  const n = fe.setCloudLocations(p, { [ID1]: { dirs: ['MX11', 'Data', 'Activity'], name: 'MX11-A（活动A/未启用）' }, nope: { dirs: [], name: 'x' } });
+  assert.strictEqual(n, 1);
+  const list = JSON.parse(fs.readFileSync(p, 'utf8'));
+  assert.deepStrictEqual(Object.keys(list[0]), ['path', 'spreadsheetId', 'description', 'name', 'cloudDir', 'cloudFile']);
+  assert.strictEqual(list[0].cloudDir, 'MX11/Data/Activity');
+  assert.strictEqual(list[0].cloudFile, 'MX11-A（活动A/未启用）');
+  assert.strictEqual(list[1].cloudDir, undefined);
+  const mtime = fs.statSync(p).mtimeMs;
+  assert.strictEqual(fe.setCloudLocations(p, { [ID1]: { dirs: ['MX11', 'Data', 'Activity'], name: 'MX11-A（活动A/未启用）' } }), 0);
+  assert.strictEqual(fs.statSync(p).mtimeMs, mtime);
+});
+
+test('addEntry / updateEntry 支持写入云端位置；换绑云端表时清掉旧位置', () => {
+  const p = tmpFilelist(SAMPLE);
+  fe.addEntry(p, { name: 'C', path: 'Datas/C.xlsx', spreadsheetId: ID3 }, { extra: { cloudDir: 'MX11/Data', cloudFile: 'C' } });
+  let list = JSON.parse(fs.readFileSync(p, 'utf8'));
+  assert.strictEqual(list[2].cloudDir, 'MX11/Data');
+  fe.setCloudLocations(p, { [ID2]: { dirs: ['MX11', 'Data'], name: 'B' } });
+  // 只改表名：云端位置保留
+  fe.updateEntry(p, 'Datas/Activity/B.xlsx', { path: 'Datas/Activity/B.xlsx', spreadsheetId: ID2, name: 'B改' });
+  list = JSON.parse(fs.readFileSync(p, 'utf8'));
+  assert.strictEqual(list[1].cloudFile, 'B');
+  // 换绑：清掉
+  fe.updateEntry(p, 'Datas/Activity/B.xlsx', { path: 'Datas/Activity/B.xlsx', spreadsheetId: ID3, name: 'B改' }, { allowDuplicateId: true });
+  list = JSON.parse(fs.readFileSync(p, 'utf8'));
+  assert.strictEqual(list[1].cloudDir, undefined);
+  assert.strictEqual(list[1].cloudFile, undefined);
+  assert.strictEqual(list[1].mergeCells, true);
+});
