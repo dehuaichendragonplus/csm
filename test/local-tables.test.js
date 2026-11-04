@@ -28,6 +28,10 @@ test('isTableFile 排除 Excel 临时文件与隐藏文件', () => {
   assert.ok(!isTableFile('~$A.xlsx'));
   assert.ok(!isTableFile('.A.xlsx'));
   assert.ok(!isTableFile('A.xls'));
+  // Luban 定义表
+  for (const n of ['__beans__.xlsx', '__enums__.xlsx', '__tables__.xlsx', '__template__.xlsx']) assert.ok(!isTableFile(n), n);
+  assert.ok(isTableFile('__Draft.xlsx'));
+  assert.ok(isTableFile('My__Table__.xlsx'));
 });
 
 test('scanLocalTables 只列 localRoot 下、且不在清单里的 xlsx（大小写不敏感）', () => {
@@ -36,6 +40,7 @@ test('scanLocalTables 只列 localRoot 下、且不在清单里的 xlsx（大小
     'Datas/Activity/B.xlsx',
     'Datas/Item/Deep/C.xlsx',
     'Datas/~$A.xlsx',
+    'Datas/__beans__.xlsx',
     'Datas/.hidden/D.xlsx',
     'Datas/readme.txt',
     'Other/E.xlsx'
