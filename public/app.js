@@ -147,9 +147,9 @@
 
   function renderRow(row) {
     const div = document.createElement('div');
-    const isError = row.status === 'error';
-    const rowClickable = !isError;
-    const showButton = !isError;
+    // 按钮与配置表清单同一套规则：已同步不显示；云端较新（或本地缺失）显示「下载」，本地较新显示「上传」
+    const rowClickable = row.direction === 'download'; // 点整行 = 下载，只在云端较新时生效
+    const timesTip = `云端修改：${formatTime(row.cloudModifiedTime)}\n本地文件修改：${row.localMtime ? formatTime(row.localMtime) : '本地没有文件'}`;
     div.className = `row status-${row.status}${rowClickable ? ' clickable' : ''}`;
     div.dataset.path = row.path;
     if (rowClickable) div.addEventListener('click', () => { if (!busyPaths.has(row.path)) syncOne(row.path); });
@@ -212,29 +212,28 @@
     actionCell.className = 'action-cell';
     const stateEl = document.createElement('span');
     stateEl.className = 'row-state';
-    if (showButton) {
+    if (row.direction === 'download') {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'row-btn';
       btn.textContent = '下载';
+      btn.title = `云端较新：用云端表覆盖本地 xlsx\n${timesTip}`;
       btn.addEventListener('click', e => {
         e.stopPropagation();
         syncOne(row.path);
       });
       actionCell.appendChild(btn);
-
-      if (appConfig.allowUpload) {
+    } else if (row.direction === 'upload' && appConfig.allowUpload) {
       const upBtn = document.createElement('button');
       upBtn.type = 'button';
       upBtn.className = 'row-btn upload-btn';
       upBtn.textContent = '上传';
-      upBtn.title = '用本地 xlsx 覆盖云端该表';
+      upBtn.title = `本地较新：用本地 xlsx 覆盖云端表\n${timesTip}`;
       upBtn.addEventListener('click', e => {
         e.stopPropagation();
         pickAndUpload(row);
       });
       actionCell.appendChild(upBtn);
-      }
     }
     actionCell.appendChild(stateEl);
     div.appendChild(actionCell);
@@ -358,7 +357,8 @@
   }
 
   async function pickAndUpload(row) {
-    if (!confirm(`确定用本地文件覆盖云端表「${row.name}」吗？\n\n云端现有内容将被替换，此操作不可撤销（可在 Google 表格版本历史中恢复）。`)) return;
+    const times = `云端修改：${formatTime(row.cloudModifiedTime)}\n本地文件修改：${row.localMtime ? formatTime(row.localMtime) : '—'}`;
+    if (!confirm(`确定用本地文件覆盖云端表「${row.name}」吗？\n\n${times}\n\n云端现有内容将被替换（可在 Google 表格版本历史中恢复）。`)) return;
     await uploadOne(row);
   }
 
@@ -404,11 +404,12 @@
     const resp = await fetch(api('/tables'));
     if (!resp.ok) { appendLog('! 无法获取列表\n'); setBusy(false); return; }
     const rows = await resp.json();
-    const paths = rows
-      .filter(r => r.status === 'updated' || r.status === 'never_synced' || r.status === 'missing_local' || r.status === 'local_changed')
-      .map(r => r.path);
+    // 只下载云端较新（或本地缺失）的表；本地较新的不覆盖，留给用户逐个确认上传
+    const paths = rows.filter(r => r.direction === 'download').map(r => r.path);
+    const localNewer = rows.filter(r => r.direction === 'upload');
+    if (localNewer.length) appendLog(`（${localNewer.length} 张表本地较新，不会被下载覆盖：${localNewer.map(r => r.name).join('、')}）\n`);
     if (paths.length === 0) {
-      appendLog('（没有需要同步的表）\n');
+      appendLog('（没有需要下载的表）\n');
       setBusy(false);
       return;
     }

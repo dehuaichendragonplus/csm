@@ -6,10 +6,9 @@ const open = require('open');
 const { findAvailablePort } = require('./lib/port-scanner');
 const oauth = require('./lib/oauth');
 const { loadFilelist } = require('./lib/filelist-loader');
-const { loadState, saveState, updateEntry } = require('./lib/sync-state');
+const { loadState, saveState, updateEntry, hashFile } = require('./lib/sync-state');
 const { getModifiedTimes, uploadXlsxToSheet, downloadViaDrive, getFileInfo, resolveFolderPath, findSheetInFolder, createSheetFromXlsx } = require('./lib/drive-api');
 const localTables = require('./lib/local-tables');
-const { suggestDirection } = require('./lib/status');
 const filelistEditor = require('./lib/filelist-editor');
 const driveTree = require('./lib/drive-tree');
 const { aggregateTables } = require('./lib/table-aggregator');
@@ -132,16 +131,34 @@ async function main(opts = {}) {
         lastSyncedAt: new Date().toISOString(),
         lastSyncedModifiedTime: recordedModifiedTime,
         lastSyncedSize: stat.size,
-        lastSyncedMtime: stat.mtime.toISOString()
+        lastSyncedMtime: stat.mtime.toISOString(),
+        lastSyncedHash: hashFile(entry.savePath)
       };
       changed = true;
     }
     if (changed) saveState(statePath, state);
   }
 
+  // 旧的同步记录没有内容指纹：文件修改时间与记录一致（同步后没动过）时补记指纹，之后 git 操作只改时间也能识别为未改动
+  function backfillHashes(ctx, filelist) {
+    const state = loadState(ctx.cfg.statePath);
+    let changed = false;
+    for (const entry of filelist) {
+      const row = state[entry.path];
+      if (!row || row.lastSyncedHash || !row.lastSyncedMtime) continue;
+      let st;
+      try { st = fs.statSync(entry.savePath); } catch (_) { continue; }
+      if (st.mtime.toISOString() !== row.lastSyncedMtime || st.size !== row.lastSyncedSize) continue;
+      const h = hashFile(entry.savePath);
+      if (h) { row.lastSyncedHash = h; changed = true; }
+    }
+    if (changed) saveState(ctx.cfg.statePath, state);
+  }
+
   function tablesOf(ctx) {
     const filelist = loadFilelist(ctx.cfg.filelistPath);
     bootstrapStateFromSidecar(ctx, filelist);
+    backfillHashes(ctx, filelist);
     return aggregateTables(filelist, driveCaches.get(ctx.id), loadState(ctx.cfg.statePath));
   }
 
@@ -314,7 +331,8 @@ async function main(opts = {}) {
         updateEntry(cfg.statePath, entry.path, {
           lastSyncedModifiedTime: modifiedTime,
           lastSyncedSize: stat.size,
-          lastSyncedMtime: stat.mtime.toISOString()
+          lastSyncedMtime: stat.mtime.toISOString(),
+          lastSyncedHash: hashFile(entry.savePath)
         });
         if (cfg.sidecarPath) updateSidecar(cfg.sidecarPath, entry.path, modifiedTime);
         sseEmit(res, 'table-done', { path: entry.path, success: true });
@@ -354,7 +372,7 @@ async function main(opts = {}) {
       // 云端内容已与本地一致：记为已同步（并等 Drive 转换后修改时间稳定再记一次），避免上传后显示「有更新」
       const markSynced = modifiedTime => {
         const st = fs.statSync(entry.savePath);
-        updateEntry(cfg.statePath, entry.path, { lastSyncedModifiedTime: modifiedTime, lastSyncedSize: st.size, lastSyncedMtime: st.mtime.toISOString() });
+        updateEntry(cfg.statePath, entry.path, { lastSyncedModifiedTime: modifiedTime, lastSyncedSize: st.size, lastSyncedMtime: st.mtime.toISOString(), lastSyncedHash: hashFile(entry.savePath) });
         if (cfg.sidecarPath) updateSidecar(cfg.sidecarPath, entry.path, modifiedTime);
         driveCaches.get(id).set(entry.spreadsheetId, { modifiedTime, name: info.name, error: null });
       };
@@ -473,7 +491,7 @@ async function main(opts = {}) {
         const sync = t ? {
           status: t.status,
           cloudModifiedTime: t.cloudModifiedTime,
-          direction: suggestDirection({ status: t.status, cloudModifiedTime: t.cloudModifiedTime, localMtime: local && local.mtime })
+          direction: t.direction // 与主列表同一个判定结果
         } : null;
         return { ...e, local, sync };
       });
@@ -615,7 +633,8 @@ async function main(opts = {}) {
         updateEntry(cfg.statePath, entry.path, {
           lastSyncedModifiedTime: modifiedTime,
           lastSyncedSize: st.size,
-          lastSyncedMtime: st.mtime.toISOString()
+          lastSyncedMtime: st.mtime.toISOString(),
+          lastSyncedHash: hashFile(abs)
         });
         if (cfg.sidecarPath) updateSidecar(cfg.sidecarPath, entry.path, modifiedTime);
         driveCaches.get(id).set(cloud.id, { modifiedTime, name: cloud.name, error: null });
