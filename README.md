@@ -1,0 +1,121 @@
+# Sync Manager
+
+> 通用工具：项目相关的内容（表格清单、导出服务、生成命令）全部在 `syncmanager.config.json` 里，代码本身与项目无关，可直接复用到其他项目，见下文「复用到其他项目」。
+
+基于浏览器的图形化工具，用于检测配置文件里 `filelist` 所指的的 Google Sheets 表格哪些与本地 xlsx 文件存在差异，并支持在同一个界面里完成下载同步与触发 `gen_client` 代码生成。
+
+可同时管理多个项目（见「多项目平台」）。
+
+## 环境要求
+
+- Node.js ≥ 18（项目使用 Node 内置测试运行器）
+- 拥有各项目表格读取权限（要上传覆盖则需编辑权限）的 Google 账号
+- 一个 OAuth 2.0 客户端（Desktop 类型）—— 详见下文「初次配置」
+
+## 多项目平台
+
+一个 Sync Manager 管理多个项目。页面顶部是项目标签栏：
+
+- **添加项目**：点「＋ 添加项目」，在弹窗里逐级浏览目录，选中项目的**配置表目录**（含 `syncmanager.config.json` 或 `filelist.json` 的目录会标 ★），点「添加此目录」。
+  - 目录里已有 `syncmanager.config.json` → 直接使用。
+  - 只有 `filelist.json`（根目录或 `Input/` 下）→ 自动生成一份最小配置（走 Drive API 导出、无自定义动作），之后可自行编辑补充。
+  - 两者都没有 → 提示错误，不添加。
+- **移除项目**：点标签上的 ✕。只是平台不再管理，项目目录里的文件不会被删。
+- **切换项目**：点标签。上次选的项目会被记住。
+
+### 数据放在哪
+
+| 内容 | 位置 |
+|---|---|
+| 项目注册表 | `data/projects.json` |
+| Google 授权令牌（所有项目共用一个账号） | `data/.tokens/token.json` |
+| 各项目同步状态 | `data/projects/<项目id>/.sync_state.json` |
+| 项目自己的配置 | 项目目录下的 `syncmanager.config.json`（建议随项目入库） |
+| OAuth 客户端凭证 | 工具目录 `credentials.json` |
+
+可用环境变量 `SYNC_MANAGER_DATA` 改变数据目录。配置文件每次请求都会重新读取，改完无需重启。
+
+### 项目配置 `syncmanager.config.json`
+
+路径一律相对该配置文件所在目录，样例见 `syncmanager.config.example.json`。
+
+| 字段 | 必填 | 说明 |
+|---|---|---|
+| `filelist` | 是 | 表格清单 JSON 路径，格式为数组，每项 `{ "path": "相对清单目录的 xlsx 路径", "spreadsheetId": "...", "name": "...", "description": "..." }`（可选 `mergeCells`，仅内部导出服务使用） |
+| `title` | 否 | 标签页上显示的项目名，默认目录名 |
+| `sidecar` | 否 | 入仓的版本记录文件，用于 `git pull` 后避免误判「有更新」；不填则不启用 |
+| `export.url` / `export.password` | 否 | 内部导出服务。**不填则直接用 Drive API 导出 xlsx**（单表 ≤10MB） |
+| `allowUpload` | 否 | 是否显示每行的「上传」按钮，默认 true |
+| `actions` | 否 | 自定义动作列表，每项 `{ id, label, steps:[{ label, cwd, command }] }`，渲染成顶部按钮；`command` 可写字符串，或 `{ "unix": "...", "win": "..." }`，在 `cwd` 下经 shell 执行 |
+| `afterSync` | 否 | 某个 action 的 id：「一键同步」与行内「同步并…」下载成功后自动执行它 |
+| `afterSyncButtonLabel` | 否 | 行内按钮文案，默认「同步并 + action 名」 |
+
+## 上传覆盖云端
+
+每行的「上传」按钮会把该行对应的**本地 xlsx** 直接覆盖到云端 Google 表（确认后执行，云端旧内容可在 Google 表格版本历史中恢复）。需要 Google 授权包含 `drive` 写权限：旧版本只授权了只读，首次上传若提示权限不足，访问 `/auth/start` 重新授权一次即可。
+
+## 初次配置
+
+`credentials.json`（OAuth 客户端密钥）**不入库**：首次使用请从团队 wiki / 维护者处获取，放到本目录（格式见 `credentials.json.example`）。之后：
+
+1. `cd` 到本目录
+2. 运行 `./start.sh`（Mac）或 `start.bat`（Windows）。
+3. 首次启动时浏览器会自动跳转到 Google 授权页 → 点击「允许」（首次使用需保证你的 Google 账号已被加入 OAuth 客户端的 test users 名单，由维护者管理）。refresh token 会保存在本地 `.tokens/token.json`。
+4. 主页面按状态分组列出所有表格。
+
+### 维护者：如何重新生成 OAuth 客户端（仅在 client_secret 泄漏 / 失效时执行）
+
+1. [Google Cloud Console](https://console.cloud.google.com/) → 启用 **Google Drive API**
+2. 「OAuth 同意屏」选 External，把团队成员的 Google 邮箱加到 **Test users**
+3. 「Credentials」→ 创建 OAuth client ID，类型必须是 **Desktop app**
+4. 下载生成的 JSON → 替换本目录下的 `credentials.json`
+5. 把新的 `credentials.json` 分发给使用者（该文件已被 .gitignore 忽略）
+
+> Desktop 类型 OAuth 的 `client_secret` 按 [Google 官方文档](https://developers.google.com/identity/protocols/oauth2#installed)说明并非真正机密，仅在私有内部仓库中提交是可接受的实践。
+
+## 日常使用
+
+- **刷新**：调用 Drive API 查询每个表格的 `modifiedTime`，更新状态徽标。
+- **点击单行**：仅下载该表对应的 xlsx，并更新本地状态；**不会**触发 `gen_client`。
+- **一键同步所有有更新**：批量下载所有状态为 `updated` / `never_synced` / `missing_local` 的表，下载完成后自动依次跑「导出多语言 + 代码生成」（先 `gen_localization` 再 `gen_client`）。
+- **执行代码生成**：先运行 `gen_localization.sh` / `gen_localization.bat` 导出多语言，再运行 `gen_client.sh` / `gen_client.bat` 生成客户端代码与数据；多语言这步失败会中止、不继续生成代码。
+- **导出多语言**：单独运行 `gen_localization.sh` / `gen_localization.bat`，生成多语言 Luban 定义（`Localization.xml`）与 `LocalizationKey` 常量类，日志实时显示在面板里。
+
+## 目录结构
+
+> 下面的 `.sync_state.json`、`.tokens/`、`sync-versions` 已按上文「数据放在哪」调整：状态与令牌在 `data/`，sidecar 在各项目目录里。
+
+- `server.js` — Express 服务，默认监听端口 7321（被占用时自动递增寻找可用端口）
+- `lib/` — 各功能模块（status、sync-state、drive-api、downloader、gen-client-runner、version-sidecar 等）
+- `public/` — HTML / CSS / JS 前端
+- `.sync_state.json` — 本机每个表上次同步时的 size / mtime / 云端 `modifiedTime`（gitignore）
+- `.tokens/token.json` — OAuth refresh token（gitignore）
+- `credentials.json` — OAuth 客户端 ID / Secret
+- `各项目 `sidecar` 所指文件` — **入仓**的 sidecar：每个 xlsx 对应的云端 `modifiedTime`。下载时由本工具自动维护
+
+## sidecar 协同（解决 git pull 后误判"有更新"）
+
+如果你刚从 git 拉取了新的 xlsx，工具会读取项目配置里 `sidecar` 指向的入仓文件（如 `Input/.sync-versions.json`），**自动**为本地 `.sync_state.json` 填充对应条目（lastSyncedModifiedTime 取 sidecar 的值，size / mtime 取本地实际值）。然后正常状态判定：
+
+- 云端 modifiedTime == sidecar 记录 → **已同步**（不会误标"有更新"）
+- 云端 modifiedTime > sidecar 记录 → **有更新**（说明仓库里的版本旧于云端最新版）
+
+每次本工具下载完一个 xlsx 后，会同时更新 `.sync_state.json`（本机）和 `.sync-versions.json`（入仓）。提交 xlsx 改动时把 sidecar 文件一起提交即可。
+
+## 常见问题排查
+
+| 现象 | 解决方法 |
+|---|---|
+| 启动时报「OAuth credentials not found」 | 确认目录下存在 `credentials.json` |
+| 浏览器一直被重定向到 `/auth/start` | Token 可能已被撤销；删除 `.tokens/` 目录并重新授权 |
+| 某行显示「错误: forbidden」 | 你的 Google 账号无权读取该表格，联系表格所有者添加共享权限 |
+| `gen_client` 退出码非 0 | 查看日志面板；通常是 Luban schema 报错 —— 修复 xlsx 后再点「执行代码生成」 |
+| 端口 7321 被占用 | 工具会自动寻找下一个可用端口；查看控制台输出获取实际 URL |
+
+## 运行测试
+
+```bash
+npm test
+```
+
+执行 `node --test 'test/**/*.test.js'`。覆盖纯逻辑层（状态判定、状态持久化、filelist 解析、端口扫描、表格聚合、基于本地 mock server 的下载器）。OAuth 与 Drive API 部分通过手动方式验证。

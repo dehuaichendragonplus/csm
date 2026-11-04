@@ -1,0 +1,7 @@
+node_modules/
+data/
+.tokens/
+.sync_state.json
+.sync_state.json.bak.*
+credentials.json
+.DS_Store

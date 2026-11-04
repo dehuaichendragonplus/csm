@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sync Manager</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="toolbar">
+    <h1 id="app-title">Sync Manager</h1>
+    <div class="actions">
+      <button id="btn-refresh" type="button">刷新</button>
+      <button id="btn-sync-all" type="button">一键同步所有有更新</button>
+      <span id="custom-actions" class="custom-actions"></span>
+      <button id="btn-clear-state" type="button" class="btn-danger">清除缓存</button>
+    </div>
+  </header>
+
+  <nav class="project-bar">
+    <div id="project-tabs" class="project-tabs"></div>
+    <button id="btn-add-project" type="button" class="add-project">＋ 添加项目</button>
+  </nav>
+
+  <section id="summary" class="summary">加载中…</section>
+
+  <main id="groups" class="groups"></main>
+
+  <section id="auth-banner" class="auth-banner hidden">
+    <p>需要 Google 授权才能查询云端表格变更状态。</p>
+    <a href="/auth/start" class="btn-primary">前往授权</a>
+  </section>
+
+  <section class="logs">
+    <header>
+      <h2>日志</h2>
+      <button id="btn-clear-log" type="button">清空</button>
+    </header>
+    <pre id="log" class="log"></pre>
+  </section>
+
+  <div id="dir-modal" class="modal hidden">
+    <div class="modal-box">
+      <header class="modal-head">
+        <strong>选择项目的配置表目录</strong>
+        <button id="dir-close" type="button">✕</button>
+      </header>
+      <div id="dir-path" class="dir-path"></div>
+      <ul id="dir-list" class="dir-list"></ul>
+      <p id="dir-msg" class="dir-msg"></p>
+      <footer class="modal-foot">
+        <span class="dir-tip">含 syncmanager.config.json 或 filelist.json 的目录会标 ★</span>
+        <button id="dir-pick" type="button" class="primary">添加此目录</button>
+      </footer>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
