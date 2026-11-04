@@ -310,3 +310,12 @@ html, body {
 .fl-up-info code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; background: #eef1f5; padding: 1px 6px; border-radius: 4px; }
 .fl-edit-box .fl-grid + .fl-field { margin-top: 10px; }
 .fl-up-help { margin-top: 12px; }
+
+/* 清单：本地 ↔ 云端同步 */
+.fl-sync { white-space: nowrap; font-size: 12px; }
+.fl-newer-cloud { color: #0a66c2; }
+.fl-newer-local { color: #b26a00; }
+.fl-col-ops .fl-dl { color: #0a66c2; border-color: #9cc3ea; }
+.fl-col-ops .fl-ul { color: #b26a00; border-color: #f0cf9c; }
+.fl-col-ops button:disabled { opacity: 0.45; cursor: not-allowed; }
+.fl-busy { font-size: 12px; color: #888; margin-right: 6px; }

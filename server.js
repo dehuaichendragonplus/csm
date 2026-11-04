@@ -9,6 +9,7 @@ const { loadFilelist } = require('./lib/filelist-loader');
 const { loadState, saveState, updateEntry } = require('./lib/sync-state');
 const { getModifiedTimes, uploadXlsxToSheet, downloadViaDrive, getFileInfo, resolveFolderPath, findSheetInFolder, createSheetFromXlsx } = require('./lib/drive-api');
 const localTables = require('./lib/local-tables');
+const { suggestDirection } = require('./lib/status');
 const filelistEditor = require('./lib/filelist-editor');
 const driveTree = require('./lib/drive-tree');
 const { aggregateTables } = require('./lib/table-aggregator');
@@ -350,7 +351,15 @@ async function main(opts = {}) {
     }
     try {
       const info = await uploadXlsxToSheet(entry.spreadsheetId, buf, oauth2Client);
-      driveCaches.get(id).set(entry.spreadsheetId, { modifiedTime: info.modifiedTime, name: info.name, error: null });
+      // 云端内容已与本地一致：记为已同步（并等 Drive 转换后修改时间稳定再记一次），避免上传后显示「有更新」
+      const markSynced = modifiedTime => {
+        const st = fs.statSync(entry.savePath);
+        updateEntry(cfg.statePath, entry.path, { lastSyncedModifiedTime: modifiedTime, lastSyncedSize: st.size, lastSyncedMtime: st.mtime.toISOString() });
+        if (cfg.sidecarPath) updateSidecar(cfg.sidecarPath, entry.path, modifiedTime);
+        driveCaches.get(id).set(entry.spreadsheetId, { modifiedTime, name: info.name, error: null });
+      };
+      markSynced(info.modifiedTime);
+      settleModifiedTime(entry.spreadsheetId, info.modifiedTime).then(t => { if (t !== info.modifiedTime) markSynced(t); }).catch(() => {});
       res.json({ ok: true, modifiedTime: info.modifiedTime, size: buf.length });
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -441,18 +450,32 @@ async function main(opts = {}) {
     } catch (_) { /* 下次刷新时再查 */ }
   }
 
-  projectRouter.get('/filelist', (req, res) => {
+  projectRouter.get('/filelist', async (req, res) => {
     const { cfg, project } = req.ctx;
     try {
       const { entries } = filelistEditor.readFilelistRaw(cfg.filelistPath);
       const baseDir = path.dirname(cfg.filelistPath);
+      // 同步状态（与主列表同一套判定）；云端修改时间缓存为空时先查一次
+      const syncByPath = new Map();
+      if (hasToken) {
+        try {
+          if (driveCaches.get(req.ctx.id).size === 0) await refreshDriveCache(req.ctx);
+          for (const t of tablesOf(req.ctx)) syncByPath.set(t.path, t);
+        } catch (_) { /* 查不到云端时只是不显示同步按钮 */ }
+      }
       const rows = entries.map(e => {
         let local = null;
         try {
           const st = fs.statSync(path.resolve(baseDir, String(e.path || '')));
           local = { size: st.size, mtime: st.mtime.toISOString() };
         } catch (_) { /* 本地还没有这个文件 */ }
-        return { ...e, local };
+        const t = syncByPath.get(e.path);
+        const sync = t ? {
+          status: t.status,
+          cloudModifiedTime: t.cloudModifiedTime,
+          direction: suggestDirection({ status: t.status, cloudModifiedTime: t.cloudModifiedTime, localMtime: local && local.mtime })
+        } : null;
+        return { ...e, local, sync };
       });
       const relBase = path.relative(project.dir, baseDir);
       const scanRoot = localTables.scanRootOf(entries, cfg.cloudRoot && cfg.cloudRoot.local);
