@@ -88,7 +88,17 @@ npm run dist:mac   # 输出 dist/ 下的 arm64 + x64 dmg
 
 项目栏右侧「📋 配置表清单」打开当前项目 `filelist.json` 的列表，不用手改 JSON。
 
-- **列表**：表名、本地路径、备注、云端链接、本地 xlsx 是否已下载（大小、修改时间），支持筛选；双击行或点「编辑」修改
+- **列表分两组**（筛选对两组都生效，分组可折叠）：
+  - **云端表**：已在 `filelist.json` 中的条目——表名、本地路径、备注、云端链接、本地 xlsx 是否已下载；双击行或点「编辑」修改
+  - **本地表**：本地目录（映射的本地目录，默认 `Datas/`）下存在、但还没加入清单的 xlsx，显示上传后会放到的云端目录
+- **上传本地表**：点「上传」（或双击）弹出确认窗口，可改云端表名 / 表名 / 备注；确认后：
+  1. 按本地相对目录在云端映射根目录下找到**同样的相对目录**（例如本地 `Datas/Activity/Sub/X.xlsx` → 云端 `<根目录> / Activity / Sub / X`），缺的文件夹逐级自动创建
+  2. 用本地 xlsx 新建 Google 表格（不会修改本地文件）
+  3. 加入 `filelist.json`，并记为已同步（有 sidecar 时同时写入）
+  - 云端同目录已有同名表时会询问：直接关联那张已有表（不上传、不覆盖），或返回改名
+  - 「全部上传」/「上传筛选出的 N 张」：逐张上传，遇到同名表自动关联，结果写进日志
+  - 需要先有云端目录映射（项目配置或自动推断）；不在映射本地目录下的文件无法上传
+  - 需要 Google 授权包含 drive 写权限（与「上传覆盖云端」相同）
 - **新增 / 编辑**：点「＋ 新增配置表」或「编辑」弹出独立窗口，确认后直接写回 `filelist.json` 并刷新列表（新行会高亮）
   - 粘贴 Google 表格链接（或 ID）自动解析：云端表名、所在云端目录，并填好表名（括号里的中文）、本地路径、备注（完整云端表名）
   - **本地路径与云端目录对齐**：云端 `MX11 / Data / Activity / 表` → 本地 `Configs/Input/Datas/Activity/表.xlsx`
@@ -162,6 +172,7 @@ npm run dist:mac   # 输出 dist/ 下的 arm64 + x64 dmg
 - `public/` — HTML / CSS / JS 前端
 - `lib/filelist-editor.js` — filelist.json 的增删改、链接解析、表名与路径推荐
 - `lib/drive-tree.js` — 云端目录链查询、云端根目录推断与本地路径对齐
+- `lib/local-tables.js` — 扫描未加入清单的本地表、计算对应的云端相对目录
 - `electron/main.js` — 桌面 App 外壳（启动 server.js、窗口、系统浏览器授权、原生选目录）
 - `build/icon.png` — App 图标（electron-builder 自动转换为 icns / ico）
 - `.sync_state.json` — 本机每个表上次同步时的 size / mtime / 云端 `modifiedTime`（gitignore）

@@ -41,10 +41,28 @@
     rootMsg: $('fl-root-msg'),
     rootClear: $('fl-root-clear'),
     rootCancel: $('fl-root-cancel'),
-    rootSave: $('fl-root-save')
+    rootSave: $('fl-root-save'),
+    // 上传本地表
+    up: $('fl-up-modal'),
+    upClose: $('fl-up-close'),
+    upLocal: $('fl-up-local'),
+    upMeta: $('fl-up-meta'),
+    upDir: $('fl-up-dir'),
+    upDirTip: $('fl-up-dir-tip'),
+    upCloudName: $('fl-up-cloudname'),
+    upName: $('fl-up-name'),
+    upDesc: $('fl-up-desc'),
+    upMsg: $('fl-up-msg'),
+    upCancel: $('fl-up-cancel'),
+    upSave: $('fl-up-save')
   };
 
   let entries = [];
+  let localTables = [];   // 本地目录下、未加入清单的 xlsx
+  let localRoot = 'Datas';
+  const collapsed = { cloud: false, local: false };
+  let uploading = null;   // 正在上传弹窗里的本地表
+  let batchRunning = false;
   let baseLabel = '';
   let rootInfo = null;    // { root, configured }
   let editingPath = null; // null = 新增；否则为正在编辑条目的原路径
@@ -95,6 +113,8 @@
       return;
     }
     entries = data.entries || [];
+    localTables = (data.local && data.local.tables) || [];
+    localRoot = (data.local && data.local.root) || 'Datas';
     baseLabel = data.baseLabel || '';
     el.file.textContent = data.filelist || '';
     el.dirs.innerHTML = '';
@@ -106,28 +126,235 @@
     renderList(highlightPath);
   }
 
+  function groupRow(key, title, count, tip, ops) {
+    const tr = document.createElement('tr');
+    tr.className = 'fl-group';
+    const c = document.createElement('td');
+    c.colSpan = 6;
+    const caret = document.createElement('span');
+    caret.className = 'caret';
+    caret.textContent = collapsed[key] ? '▶' : '▼';
+    const t = document.createElement('span');
+    t.textContent = `${title}（${count}）`;
+    const tipEl = document.createElement('span');
+    tipEl.className = 'fl-group-tip';
+    tipEl.textContent = tip || '';
+    c.append(caret, t, tipEl);
+    if (ops) {
+      const box = document.createElement('span');
+      box.className = 'fl-group-ops';
+      box.appendChild(ops);
+      box.addEventListener('click', e => e.stopPropagation());
+      c.appendChild(box);
+    }
+    tr.appendChild(c);
+    tr.addEventListener('click', () => { collapsed[key] = !collapsed[key]; renderList(); });
+    return tr;
+  }
+
+  function emptyRow(text) {
+    const tr = document.createElement('tr');
+    const c = document.createElement('td');
+    c.colSpan = 6;
+    c.className = 'fl-empty';
+    c.textContent = text;
+    tr.appendChild(c);
+    return tr;
+  }
+
   function renderList(highlightPath) {
     const terms = window.TableSearch.parseQuery(el.filter.value);
-    const shown = terms.length ? entries.filter(e => window.TableSearch.matchRow(e, terms)) : entries;
-    el.count.textContent = terms.length ? `匹配 ${shown.length} / 共 ${entries.length} 项` : `共 ${entries.length} 项`;
+    const match = list => (terms.length ? list.filter(e => window.TableSearch.matchRow(e, terms)) : list);
+    const cloudShown = match(entries);
+    const localShown = match(localTables);
+    const total = entries.length + localTables.length;
+    el.count.textContent = terms.length
+      ? `匹配 ${cloudShown.length + localShown.length} / 共 ${total} 项`
+      : `云端表 ${entries.length} · 本地表 ${localTables.length}`;
     el.tbody.innerHTML = '';
-    if (!shown.length) {
-      const tr = document.createElement('tr');
-      const td = document.createElement('td');
-      td.colSpan = 6;
-      td.className = 'fl-empty';
-      td.textContent = entries.length ? '没有匹配的条目' : '清单是空的，点右上方「＋ 新增配置表」添加第一张表';
-      tr.appendChild(td);
-      el.tbody.appendChild(tr);
-      return;
-    }
     let target = null;
-    for (const e of shown) {
-      const tr = renderRow(e);
-      if (highlightPath && e.path === highlightPath) { tr.classList.add('fl-flash'); target = tr; }
-      el.tbody.appendChild(tr);
+
+    // 云端表：已在 filelist.json 中
+    el.tbody.appendChild(groupRow('cloud', '云端表', cloudShown.length, '已在 filelist.json 中，与云端 Google 表格关联'));
+    if (!collapsed.cloud) {
+      if (!cloudShown.length) el.tbody.appendChild(emptyRow(entries.length ? '没有匹配的云端表' : '清单是空的：可以上传下方的本地表，或点「＋ 新增配置表」关联已有云端表'));
+      for (const e of cloudShown) {
+        const tr = renderRow(e);
+        if (highlightPath && e.path === highlightPath) { tr.classList.add('fl-flash'); target = tr; }
+        el.tbody.appendChild(tr);
+      }
+    }
+
+    // 本地表：本地目录下存在、但还没加入清单
+    const batchBtn = document.createElement('button');
+    batchBtn.type = 'button';
+    batchBtn.textContent = terms.length ? `上传筛选出的 ${localShown.length} 张` : `全部上传（${localShown.length}）`;
+    batchBtn.disabled = !localShown.length || batchRunning;
+    batchBtn.addEventListener('click', () => uploadBatch(localShown));
+    el.tbody.appendChild(groupRow('local', '本地表', localShown.length, `${baseLabel}${localRoot}/ 下未加入清单的 xlsx`, localTables.length ? batchBtn : null));
+    if (!collapsed.local) {
+      if (!localShown.length) el.tbody.appendChild(emptyRow(localTables.length ? '没有匹配的本地表' : `${baseLabel}${localRoot}/ 下的 xlsx 都已在清单中`));
+      for (const t of localShown) el.tbody.appendChild(renderLocalRow(t));
     }
     if (target) target.scrollIntoView({ block: 'center' });
+  }
+
+  // 本地路径 → 云端目标目录（按映射镜像相对目录）；没有映射时返回 null
+  function cloudTargetOf(localPath) {
+    const r = rootInfo && rootInfo.root;
+    if (!r || r.error) return null;
+    const parts = String(localPath).split('/').filter(Boolean);
+    const rootParts = String(r.localRoot || '').split('/').filter(Boolean);
+    if (parts.length <= rootParts.length) return null;
+    for (let i = 0; i < rootParts.length; i++) if (parts[i].toLowerCase() !== rootParts[i].toLowerCase()) return { outside: true };
+    return { dir: [r.rootPath, ...parts.slice(rootParts.length, -1)].join(' / ') };
+  }
+
+  function renderLocalRow(t) {
+    const tr = document.createElement('tr');
+    tr.appendChild(td(t.name, 'fl-col-name'));
+    tr.appendChild(td(t.path, 'fl-col-path'));
+    const target = cloudTargetOf(t.path);
+    const tc = document.createElement('td');
+    if (!rootInfo) { tc.textContent = '正在识别云端目录…'; tc.className = 'fl-muted'; }
+    else if (!target) { tc.textContent = '未设置云端目录映射'; tc.className = 'fl-target warn'; }
+    else if (target.outside) { tc.textContent = '不在映射的本地目录下'; tc.className = 'fl-target warn'; }
+    else { tc.textContent = `→ ${target.dir}`; tc.className = 'fl-target'; tc.title = '上传后放到这个云端目录（缺的文件夹会自动创建）'; }
+    tr.appendChild(tc);
+    tr.appendChild(td('未上传', 'fl-muted'));
+    const local = td(`✓ ${fmtSize(t.size)}`, 'fl-ok');
+    local.title = `本地修改时间：${fmtTime(t.mtime)}`;
+    tr.appendChild(local);
+    const ops = document.createElement('td');
+    ops.className = 'fl-col-ops';
+    const up = document.createElement('button');
+    up.type = 'button';
+    up.className = 'fl-up';
+    up.textContent = '上传';
+    up.title = '在云端对应目录新建 Google 表格并加入清单';
+    up.disabled = batchRunning;
+    up.addEventListener('click', () => openUpload(t));
+    ops.appendChild(up);
+    tr.appendChild(ops);
+    tr.addEventListener('dblclick', () => openUpload(t));
+    return tr;
+  }
+
+  // ---------- 上传本地表 ----------
+  function openUpload(t) {
+    if (batchRunning) return;
+    uploading = t;
+    const target = cloudTargetOf(t.path);
+    el.upLocal.textContent = `${baseLabel}${t.path}`;
+    el.upMeta.textContent = `${fmtSize(t.size)} · ${fmtTime(t.mtime)}`;
+    el.upDir.textContent = target && target.dir ? target.dir : '—';
+    el.upDirTip.textContent = target && target.dir ? '（与本地相对目录一致，缺的文件夹自动创建）' : '';
+    el.upCloudName.value = t.name;
+    el.upName.value = t.name;
+    el.upDesc.value = '';
+    setText(el.upMsg, !rootInfo ? '正在识别云端目录…'
+      : !target ? '还没有云端目录映射，请先在清单顶部「设置映射」'
+      : target.outside ? `该文件不在映射的本地目录下，无法对应云端目录` : '', target && target.dir ? '' : 'error');
+    el.upSave.disabled = !(target && target.dir);
+    el.up.classList.remove('hidden');
+    el.upCloudName.focus();
+    el.upCloudName.select();
+  }
+
+  function closeUpload() {
+    el.up.classList.add('hidden');
+    uploading = null;
+  }
+
+  async function postUpload(body) {
+    const resp = await fetch(api('/filelist/upload-local'), { method: 'POST', ...json(body) });
+    return { resp, data: await readJson(resp) };
+  }
+
+  function uploadErrorText(resp, data) {
+    if (resp.status === 401) return '需要先完成 Google 授权';
+    if (data.error === 'NEED_UPLOAD_SCOPE') return '当前授权只有只读权限，请关闭弹窗后在主界面重新授权（/auth/start）';
+    return data.error || `上传失败（${resp.status}）`;
+  }
+
+  function logUploaded(data) {
+    const folders = data.createdFolders && data.createdFolders.length ? `，新建云端文件夹 ${data.createdFolders.join(' / ')}` : '';
+    window.CSM.appendLog(data.linked
+      ? `🔗 已关联云端已有表：${data.entry.path} ↔ ${data.cloudDir} / ${data.cloud.name}\n`
+      : `⬆ 已上传本地表：${data.entry.path} → ${data.cloudDir} / ${data.cloud.name}${folders}\n`);
+  }
+
+  async function saveUpload(onExisting) {
+    const t = uploading;
+    if (!t) return;
+    el.upSave.disabled = true;
+    setText(el.upMsg, '上传中…（xlsx 较大时需要十几秒）');
+    try {
+      const { resp, data } = await postUpload({
+        path: t.path,
+        cloudName: el.upCloudName.value.trim(),
+        name: el.upName.value.trim(),
+        description: el.upDesc.value.trim(),
+        onExisting: onExisting || 'ask'
+      });
+      if (resp.status === 409 && data.code === 'CLOUD_EXISTS') {
+        setText(el.upMsg, '');
+        const ok = confirm(`${data.error}\n\n确定：直接关联这张已有的云端表（不上传、不覆盖它）\n取消：返回，可修改云端表名后再上传`);
+        if (ok) return saveUpload('link');
+        el.upCloudName.focus();
+        return;
+      }
+      if (!resp.ok) { setText(el.upMsg, uploadErrorText(resp, data), 'error'); return; }
+      logUploaded(data);
+      closeUpload();
+      el.filter.value = '';
+      await loadList(data.entry.path);
+      setText(el.flash, data.linked ? `已关联：${data.entry.path}` : `已上传并加入清单：${data.entry.path}`, 'ok');
+      window.CSM.reloadTables();
+    } catch (err) {
+      setText(el.upMsg, err.message, 'error');
+    } finally {
+      el.upSave.disabled = false;
+    }
+  }
+
+  // 批量上传：逐张进行；云端同目录已有同名表时直接关联，不重复创建
+  async function uploadBatch(list) {
+    if (!list.length || batchRunning) return;
+    const r = rootInfo && rootInfo.root;
+    if (!r || r.error) { setText(el.flash, '还没有云端目录映射，请先「设置映射」', 'error'); return; }
+    const ok = confirm(`上传 ${list.length} 张本地表到云端 ${r.rootPath}（按本地相对目录放置，缺的文件夹自动创建），并加入清单？\n\n云端同目录已有同名表的，会直接关联已有表、不重复创建。`);
+    if (!ok) return;
+    batchRunning = true;
+    renderList();
+    let done = 0;
+    let linked = 0;
+    const failed = [];
+    window.CSM.appendLog(`\n===== 批量上传本地表（${list.length}）=====\n`);
+    for (const t of list) {
+      setText(el.flash, `上传中 ${done + failed.length + 1}/${list.length}：${t.path}`);
+      try {
+        const { resp, data } = await postUpload({ path: t.path, onExisting: 'link' });
+        if (!resp.ok) {
+          failed.push(t.path);
+          window.CSM.appendLog(`✗ ${t.path}：${uploadErrorText(resp, data)}\n`);
+          if (resp.status === 401 || resp.status === 403 || data.code === 'NO_ROOT') break; // 后面的也会同样失败
+          continue;
+        }
+        done++;
+        if (data.linked) linked++;
+        logUploaded(data);
+      } catch (err) {
+        failed.push(t.path);
+        window.CSM.appendLog(`✗ ${t.path}：${err.message}\n`);
+      }
+    }
+    batchRunning = false;
+    await loadList();
+    const summary = `批量上传完成：成功 ${done}${linked ? `（其中关联已有表 ${linked}）` : ''}${failed.length ? `，失败 ${failed.length}（详见日志）` : ''}`;
+    setText(el.flash, summary, failed.length ? 'error' : 'ok');
+    window.CSM.appendLog(`${summary}\n`);
+    window.CSM.reloadTables();
   }
 
   function td(text, cls) {
@@ -209,6 +436,7 @@
     else if (!resp.ok) rootInfo = { error: `识别云端目录失败：${data.error || resp.status}` };
     else rootInfo = data;
     renderRoot();
+    renderList();
   }
 
   function openRootEditor() {
@@ -232,6 +460,7 @@
       if (!resp.ok) { setText(el.rootMsg, data.error || `保存失败（${resp.status}）`, 'error'); return; }
       rootInfo = data;
       renderRoot();
+      renderList();
       el.rootModal.classList.add('hidden');
       setText(el.flash, '已保存云端目录映射（写入 syncmanager.config.json）', 'ok');
       window.CSM.appendLog(`✎ 已设置云端目录映射：${data.root && data.root.rootPath} ↔ ${data.root && data.root.localRoot}\n`);
@@ -423,6 +652,8 @@
       return;
     }
     entries = [];
+    localTables = [];
+    rootInfo = null;
     el.filter.value = '';
     setText(el.flash, '');
     el.modal.classList.remove('hidden');
@@ -432,7 +663,10 @@
   }
 
   el.open.addEventListener('click', open);
-  el.close.addEventListener('click', () => el.modal.classList.add('hidden'));
+  el.close.addEventListener('click', () => {
+    if (batchRunning && !confirm('批量上传还在进行，关闭窗口不会中断上传。确定关闭？')) return;
+    el.modal.classList.add('hidden');
+  });
   el.modal.addEventListener('click', e => { if (e.target === el.modal) el.modal.classList.add('hidden'); });
   el.modal.addEventListener('keydown', e => { if (e.key === 'Escape') el.modal.classList.add('hidden'); });
   el.filter.addEventListener('input', () => renderList());
@@ -453,6 +687,13 @@
   });
   [el.name, el.path, el.desc, el.id].forEach(i => i.addEventListener('keydown', e => { if (e.key === 'Enter') save(false); }));
   el.save.addEventListener('click', () => save(false));
+
+  el.upClose.addEventListener('click', closeUpload);
+  el.upCancel.addEventListener('click', closeUpload);
+  el.up.addEventListener('click', e => { if (e.target === el.up) closeUpload(); });
+  el.up.addEventListener('keydown', e => { if (e.key === 'Escape') { e.stopPropagation(); closeUpload(); } });
+  [el.upCloudName, el.upName, el.upDesc].forEach(i => i.addEventListener('keydown', e => { if (e.key === 'Enter' && !el.upSave.disabled) saveUpload(); }));
+  el.upSave.addEventListener('click', () => saveUpload());
 
   el.rootClose.addEventListener('click', () => el.rootModal.classList.add('hidden'));
   el.rootCancel.addEventListener('click', () => el.rootModal.classList.add('hidden'));

@@ -7,7 +7,8 @@ const { findAvailablePort } = require('./lib/port-scanner');
 const oauth = require('./lib/oauth');
 const { loadFilelist } = require('./lib/filelist-loader');
 const { loadState, saveState, updateEntry } = require('./lib/sync-state');
-const { getModifiedTimes, uploadXlsxToSheet, downloadViaDrive, getFileInfo } = require('./lib/drive-api');
+const { getModifiedTimes, uploadXlsxToSheet, downloadViaDrive, getFileInfo, resolveFolderPath, findSheetInFolder, createSheetFromXlsx } = require('./lib/drive-api');
+const localTables = require('./lib/local-tables');
 const filelistEditor = require('./lib/filelist-editor');
 const driveTree = require('./lib/drive-tree');
 const { aggregateTables } = require('./lib/table-aggregator');
@@ -442,7 +443,10 @@ async function main(opts = {}) {
         return { ...e, local };
       });
       const relBase = path.relative(project.dir, baseDir);
+      const scanRoot = localTables.scanRootOf(entries, cfg.cloudRoot && cfg.cloudRoot.local);
       res.json({
+        // 本地表：本地目录下存在但还没加入清单的 xlsx
+        local: { root: scanRoot, tables: localTables.scanLocalTables(baseDir, scanRoot, entries) },
         filelist: path.relative(project.dir, cfg.filelistPath) || path.basename(cfg.filelistPath),
         // 条目路径相对的目录，用于界面展示，如 Configs/Input/
         baseLabel: `${[path.basename(project.dir), relBase].filter(Boolean).join('/')}/`,
@@ -500,6 +504,105 @@ async function main(opts = {}) {
       sendEditorError(res, err);
     }
   });
+
+  // 本地表上传：在云端对应目录新建 Google 表格（缺的文件夹自动创建），加入清单并记为已同步。
+  // onExisting：云端同目录已有同名表时 'ask'（默认，返回 409）/ 'link'（直接关联已有表，不上传）/ 'create'（仍新建）
+  projectRouter.post('/filelist/upload-local', async (req, res) => {
+    const { cfg, id } = req.ctx;
+    const body = req.body || {};
+    if (!hasToken) return res.status(401).json({ error: 'OAUTH_REQUIRED' });
+    if (!oauth.hasUploadScope(oauth.loadToken(TOKEN_PATH))) return res.status(403).json({ error: 'NEED_UPLOAD_SCOPE' });
+    try {
+      const { entries } = filelistEditor.readFilelistRaw(cfg.filelistPath);
+      const baseDir = path.dirname(cfg.filelistPath);
+      const localPath = String(body.path || '').replace(/\\/g, '/').replace(/^\.\//, '');
+      const abs = path.resolve(baseDir, localPath);
+      if (!localPath || !abs.startsWith(baseDir + path.sep) || !/\.xlsx$/i.test(localPath)) {
+        return res.status(400).json({ error: `无效的本地表路径：${localPath}` });
+      }
+      if (entries.some(e => String(e.path || '').toLowerCase() === localPath.toLowerCase())) {
+        return res.status(409).json({ error: `已在清单中：${localPath}`, code: 'DUPLICATE_PATH' });
+      }
+      let buf;
+      try { buf = fs.readFileSync(abs); } catch (_) { return res.status(404).json({ error: `本地文件不存在：${localPath}` }); }
+      if (buf.length < 4 || buf[0] !== 0x50 || buf[1] !== 0x4b) return res.status(400).json({ error: '本地文件不是有效的 xlsx' });
+
+      const root = await projectRoot(req.ctx, entries);
+      if (!root || root.error) {
+        return res.status(400).json({ error: root && root.error ? root.error : '还没有云端目录映射：请先在清单顶部「设置映射」指定云端根目录', code: 'NO_ROOT' });
+      }
+      const subDirs = localTables.subDirsUnder(localPath, root.localRoot);
+      if (!subDirs) return res.status(400).json({ error: `该文件不在映射的本地目录 ${root.localRoot}/ 下，无法对应云端目录`, code: 'OUTSIDE_ROOT' });
+
+      const baseName = path.basename(localPath).replace(/\.xlsx$/i, '');
+      const cloudName = String(body.cloudName || '').trim() || baseName;
+      const cloudDir = [root.rootPath, ...subDirs].join(' / ');
+      const onExisting = ['link', 'create'].includes(body.onExisting) ? body.onExisting : 'ask';
+
+      // 先只查不建：目录都存在时才检查同名表，避免确认前就在云端建出空目录
+      const probe = await resolveFolderPath(root.rootId, subDirs, oauth2Client, { create: false });
+      const existing = probe.folderId ? await findSheetInFolder(probe.folderId, cloudName, oauth2Client) : null;
+      if (existing && onExisting === 'ask') {
+        return res.status(409).json({
+          error: `云端目录 ${cloudDir} 下已有同名表「${existing.name}」`,
+          code: 'CLOUD_EXISTS',
+          existing: { id: existing.id, name: existing.name, link: existing.webViewLink, modifiedTime: existing.modifiedTime }
+        });
+      }
+
+      let cloud;
+      let createdFolders = [];
+      let linked = false;
+      if (existing && onExisting === 'link') {
+        cloud = existing;
+        linked = true;
+      } else {
+        const folder = probe.folderId ? probe : await resolveFolderPath(root.rootId, subDirs, oauth2Client, { create: true });
+        createdFolders = folder.created;
+        cloud = await createSheetFromXlsx(folder.folderId, cloudName, buf, oauth2Client);
+      }
+
+      const entry = filelistEditor.addEntry(cfg.filelistPath, {
+        path: localPath,
+        spreadsheetId: cloud.id,
+        name: String(body.name || '').trim() || baseName,
+        description: body.description != null && String(body.description).trim() !== '' ? String(body.description).trim() : cloudName
+      }, { allowDuplicateId: true });
+
+      // 新建的云端表内容就是本地文件，记为已同步；关联已有表时内容可能不同，不记状态，让列表按实际情况显示
+      const markSynced = modifiedTime => {
+        const st = fs.statSync(abs);
+        updateEntry(cfg.statePath, entry.path, {
+          lastSyncedModifiedTime: modifiedTime,
+          lastSyncedSize: st.size,
+          lastSyncedMtime: st.mtime.toISOString()
+        });
+        if (cfg.sidecarPath) updateSidecar(cfg.sidecarPath, entry.path, modifiedTime);
+        driveCaches.get(id).set(cloud.id, { modifiedTime, name: cloud.name, error: null });
+      };
+      if (linked) driveCaches.get(id).set(cloud.id, { modifiedTime: cloud.modifiedTime, name: cloud.name, error: null });
+      else {
+        markSynced(cloud.modifiedTime);
+        // Drive 把 xlsx 转成表格后约 1 秒还会再改一次修改时间；后台等它稳定后再记一次，避免刚上传就显示「有更新」
+        settleModifiedTime(cloud.id, cloud.modifiedTime).then(t => { if (t !== cloud.modifiedTime) markSynced(t); }).catch(() => {});
+      }
+      res.json({ entry, cloud, cloudDir, createdFolders, linked });
+    } catch (err) {
+      sendEditorError(res, err);
+    }
+  });
+
+  async function settleModifiedTime(fileId, initial) {
+    let prev = initial;
+    for (let i = 0; i < 5; i++) {
+      await new Promise(r => setTimeout(r, 2500));
+      const info = (await getModifiedTimes([fileId], oauth2Client)).get(fileId);
+      if (!info || !info.modifiedTime) return prev;
+      if (info.modifiedTime === prev) return prev;
+      prev = info.modifiedTime;
+    }
+    return prev;
+  }
 
   // 云端根目录映射：查看（未配置时返回自动推断结果）
   projectRouter.get('/filelist/cloud-root', async (req, res) => {
@@ -587,7 +690,8 @@ async function main(opts = {}) {
   });
 
   app.use('/api/p/:pid', projectRouter);
-  app.use(express.static(path.join(ROOT, 'public')));
+  // max-age=0：每次都向服务端校验，App 升级后不会用到浏览器里缓存的旧前端文件
+  app.use(express.static(path.join(ROOT, 'public'), { maxAge: 0 }));
 
   const url = `http://localhost:${port}/`;
   const server = await new Promise((resolve, reject) => {
