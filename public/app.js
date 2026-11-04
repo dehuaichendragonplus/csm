@@ -51,8 +51,13 @@
     customActions: document.getElementById('custom-actions'),
     btnClearState: document.getElementById('btn-clear-state'),
     btnClearLog: document.getElementById('btn-clear-log'),
-    authBanner: document.getElementById('auth-banner')
+    authBanner: document.getElementById('auth-banner'),
+    search: document.getElementById('table-search')
   };
+
+  // 搜索：render() 记住最近一次完整列表，输入关键词时只在前端过滤重绘，不再请求服务端
+  let lastRows = null;
+  let searchTerms = [];
 
   function formatTime(iso) {
     if (!iso) return '—';
@@ -73,12 +78,18 @@
   }
 
   function render(rows) {
+    if (rows) lastRows = rows; else rows = lastRows;
+    if (!rows) return;
     const counts = { error: 0, missing_local: 0, local_changed: 0, never_synced: 0, updated: 0, synced: 0 };
+    rows.forEach(r => { counts[r.status]++; });
+    const searching = searchTerms.length > 0;
+    const shown = searching ? rows.filter(r => TableSearch.matchRow(r, searchTerms)) : rows;
     const buckets = { error: [], missing_local: [], local_changed: [], never_synced: [], updated: [], synced: [] };
-    rows.forEach(r => { counts[r.status]++; buckets[r.status].push(r); });
+    shown.forEach(r => { buckets[r.status].push(r); });
 
     els.summary.textContent =
-      `${rows.length} 个表 | 有更新 ${counts.updated} | 未同步 ${counts.never_synced} | 本地缺失 ${counts.missing_local} | 本地变更 ${counts.local_changed} | 已同步 ${counts.synced} | 错误 ${counts.error}`;
+      `${rows.length} 个表 | 有更新 ${counts.updated} | 未同步 ${counts.never_synced} | 本地缺失 ${counts.missing_local} | 本地变更 ${counts.local_changed} | 已同步 ${counts.synced} | 错误 ${counts.error}`
+      + (searching ? ` ｜ 搜索命中 ${shown.length} 个` : '');
 
     els.groups.innerHTML = '';
     for (const key of GROUP_ORDER) {
@@ -87,7 +98,8 @@
       if (!groupExpandedState.has(key)) {
         groupExpandedState.set(key, !DEFAULT_COLLAPSED.has(key));
       }
-      const expanded = groupExpandedState.get(key);
+      // 搜索时命中的分组一律展开，且不改动用户平时的折叠偏好
+      const expanded = searching || groupExpandedState.get(key);
       const group = document.createElement('section');
       group.className = `group ${expanded ? 'expanded' : ''}`;
       const header = document.createElement('header');
@@ -95,7 +107,7 @@
       header.textContent = `${STATUS_LABELS[key].label}（${list.length}）`;
       header.addEventListener('click', () => {
         const nowExpanded = group.classList.toggle('expanded');
-        groupExpandedState.set(key, nowExpanded);
+        if (!searching) groupExpandedState.set(key, nowExpanded);
       });
       group.appendChild(header);
       const body = document.createElement('div');
@@ -107,6 +119,25 @@
 
     if (rows.length === 0) {
       els.groups.innerHTML = '<p style="text-align:center;color:#888;padding:32px;">没有可用的表（请检查 filelist.json）</p>';
+    } else if (shown.length === 0) {
+      const p = document.createElement('p');
+      p.className = 'empty-tip';
+      p.textContent = `没有匹配「${els.search.value.trim()}」的配置表`;
+      els.groups.appendChild(p);
+    }
+  }
+
+  // 把文本写进元素，命中关键词的片段用 <mark> 包起来
+  function setHighlighted(el, text) {
+    el.textContent = '';
+    for (const part of TableSearch.splitHighlight(text, searchTerms)) {
+      if (part.hit) {
+        const m = document.createElement('mark');
+        m.textContent = part.text;
+        el.appendChild(m);
+      } else {
+        el.appendChild(document.createTextNode(part.text));
+      }
     }
   }
 
@@ -125,7 +156,15 @@
 
     const nameDiv = document.createElement('div');
     nameDiv.className = 'name';
-    nameDiv.textContent = row.name;
+    setHighlighted(nameDiv, row.name);
+    nameDiv.title = row.path;
+    // 搜索命中的是路径（表名里没有）时，把路径也显示出来，免得看不出为什么命中
+    if (searchTerms.length && !TableSearch.matchRow({ name: row.name, cloudName: row.cloudName || row.description }, searchTerms)) {
+      const pathSpan = document.createElement('span');
+      pathSpan.className = 'row-path';
+      setHighlighted(pathSpan, row.path);
+      nameDiv.appendChild(pathSpan);
+    }
     // 备注行显示云端表名，并直接作为跳转云端表的入口
     const metaDiv = document.createElement('div');
     metaDiv.className = 'meta';
@@ -136,12 +175,12 @@
       link.href = `https://docs.google.com/spreadsheets/d/${encodeURIComponent(row.spreadsheetId)}/edit`;
       link.target = '_blank';
       link.rel = 'noopener noreferrer';
-      link.textContent = label;
+      setHighlighted(link, label);
       link.title = '在新标签页打开云端配置表';
       link.addEventListener('click', e => e.stopPropagation());
       metaDiv.appendChild(link);
     } else {
-      metaDiv.textContent = label;
+      setHighlighted(metaDiv, label);
     }
     const nameCell = document.createElement('div');
     nameCell.append(nameDiv, metaDiv);
@@ -453,6 +492,7 @@
     try { localStorage.setItem(PROJECT_KEY, id); } catch (_) {}
     renderTabs();
     groupExpandedState.clear();
+    lastRows = null; // 换项目后不能再拿旧项目的列表做搜索
     els.groups.innerHTML = '';
     els.summary.textContent = '加载中…';
     await loadConfig();
@@ -466,6 +506,7 @@
     const pick = [preferId, currentId, saved].find(id => id && projects.some(p => p.id === id)) || (projects[0] && projects[0].id);
     if (!pick) {
       currentId = null;
+      lastRows = null;
       renderTabs();
       els.customActions.innerHTML = '';
       els.groups.innerHTML = '<p class="empty-tip">还没有项目，点右上方「＋ 添加项目」选择配置表目录</p>';
@@ -580,6 +621,34 @@
   els.btnSyncAll.addEventListener('click', syncAllUpdated);
   els.btnClearState.addEventListener('click', clearState);
   els.btnClearLog.addEventListener('click', () => { els.log.textContent = ''; });
+
+  // ---------- 配置表搜索 ----------
+  els.search.addEventListener('input', () => {
+    searchTerms = TableSearch.parseQuery(els.search.value);
+    render();
+  });
+  els.search.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      els.search.value = '';
+      searchTerms = [];
+      render();
+      els.search.blur();
+    } else if (e.key === 'Enter') {
+      // 回车：只命中一个表时直接下载它
+      const hits = (lastRows || []).filter(r => TableSearch.matchRow(r, searchTerms));
+      if (searchTerms.length && hits.length === 1 && hits[0].status !== 'error' && !busyPaths.has(hits[0].path)) syncOne(hits[0].path);
+    }
+  });
+  // ⌘F / Ctrl+F 或 / 聚焦搜索框（弹窗打开时不抢焦点）
+  document.addEventListener('keydown', e => {
+    if (!dirEls.modal.classList.contains('hidden')) return;
+    const typing = /^(INPUT|TEXTAREA)$/.test(document.activeElement && document.activeElement.tagName);
+    if (((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f') || (e.key === '/' && !typing)) {
+      e.preventDefault();
+      els.search.focus();
+      els.search.select();
+    }
+  });
 
   // 还没有项目时也提示授权（桌面 App 不会像命令行那样启动即打开授权页）
   fetch('/api/auth-status').then(r => r.json()).then(s => {

@@ -34,12 +34,39 @@ html, body {
 .btn-danger:hover:not(:disabled) { background: #fdecec; }
 
 .summary {
-  padding: 12px 24px;
+  padding: 8px 24px;
   font-size: 13px;
   color: #555;
   background: #fafafa;
   border-bottom: 1px solid #ececef;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
 }
+.summary-text { min-width: 0; }
+.search-box { position: relative; flex: 0 1 340px; min-width: 220px; }
+.search-box input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 44px 6px 10px;
+  font-size: 13px;
+  border: 1px solid #d0d0d7;
+  border-radius: 6px;
+  background: #fff;
+  outline: none;
+}
+.search-box input:focus { border-color: #007aff; box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.15); }
+.search-kbd {
+  position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+  font: 11px -apple-system, sans-serif; color: #999;
+  border: 1px solid #ddd; border-radius: 4px; padding: 0 4px; background: #fafafa;
+  pointer-events: none;
+}
+.search-box input:focus + .search-kbd, .search-box input:not(:placeholder-shown) + .search-kbd { display: none; }
+.row mark { background: #ffe58f; color: inherit; border-radius: 2px; padding: 0 1px; }
+.row .row-path { margin-left: 8px; font-weight: 400; font-size: 12px; color: #888; }
 .groups { padding: 16px 24px; max-width: 1200px; margin: 0 auto; }
 .group {
   margin-bottom: 12px;

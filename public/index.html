@@ -22,7 +22,13 @@
     <button id="btn-add-project" type="button" class="add-project">＋ 添加项目</button>
   </nav>
 
-  <section id="summary" class="summary">加载中…</section>
+  <section class="summary">
+    <span id="summary" class="summary-text">加载中…</span>
+    <div class="search-box">
+      <input id="table-search" type="search" placeholder="搜索配置表：表名 / 路径 / 云端表名" autocomplete="off" spellcheck="false">
+      <kbd class="search-kbd">⌘F</kbd>
+    </div>
+  </section>
 
   <main id="groups" class="groups"></main>
 
@@ -62,6 +68,7 @@
     </div>
   </div>
 
+  <script src="table-search.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
