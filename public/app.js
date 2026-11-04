@@ -12,7 +12,7 @@
 
   const GROUP_ORDER = ['updated', 'never_synced', 'missing_local', 'local_changed', 'error', 'synced'];
   // 由 /api/config 填充：标题、是否允许上传、同步后动作名、自定义动作按钮
-  let appConfig = { allowUpload: true, syncButtonLabel: '同步', actions: [] };
+  let appConfig = { allowUpload: true, actions: [] };
   const DEFAULT_COLLAPSED = new Set(['synced', 'local_changed']);
   // Tracks each group's expanded/collapsed state across re-renders (render() rebuilds the DOM from scratch).
   // Populated lazily from DEFAULT_COLLAPSED the first time a group is seen, then mutated by user clicks.
@@ -22,6 +22,23 @@
   let projects = [];
   const api = p => `/api/p/${encodeURIComponent(currentId)}${p}`;
   const PROJECT_KEY = 'syncmanager.currentProject';
+
+  // 正在下载/上传的表 path：对应行置灰且不可点击（render 重建 DOM 时据此还原）
+  const busyPaths = new Map(); // path -> 状态文案（下载中 / 上传中）
+  function setRowBusy(path, busy, label) {
+    if (busy) busyPaths.set(path, label || '处理中'); else busyPaths.delete(path);
+    document.querySelectorAll('.row[data-path]').forEach(div => {
+      if (div.dataset.path === path) applyRowBusy(div, busy, label);
+    });
+  }
+  // 只释放本次操作自己的行（兜底流异常中断），不能动并发进行中的其他行
+  function releaseRows(paths) { paths.forEach(p => setRowBusy(p, false)); }
+  function applyRowBusy(div, busy, label) {
+    div.classList.toggle('row-busy', busy);
+    div.querySelectorAll('button').forEach(b => { b.disabled = busy; });
+    const state = div.querySelector('.row-state');
+    if (state) state.textContent = busy ? label : '';
+  }
 
   const els = {
     projectTabs: document.getElementById('project-tabs'),
@@ -47,7 +64,11 @@
     els.log.scrollTop = els.log.scrollHeight;
   }
 
-  function setBusy(busy) {
+  // 多个操作可并发（例如连续点了几行的下载），用计数保证全部结束后才恢复顶部按钮
+  let busyCount = 0;
+  function setBusy(on) {
+    busyCount = Math.max(0, busyCount + (on ? 1 : -1));
+    const busy = busyCount > 0;
     [els.btnRefresh, els.btnSyncAll, els.btnClearState, ...els.customActions.querySelectorAll('button')].forEach(b => { b.disabled = busy; });
   }
 
@@ -95,14 +116,35 @@
     const rowClickable = !isError;
     const showButton = !isError;
     div.className = `row status-${row.status}${rowClickable ? ' clickable' : ''}`;
-    if (rowClickable) div.addEventListener('click', () => syncOne(row.path));
+    div.dataset.path = row.path;
+    if (rowClickable) div.addEventListener('click', () => { if (!busyPaths.has(row.path)) syncOne(row.path); });
 
     const iconCell = document.createElement('span');
     iconCell.className = 'icon';
     iconCell.textContent = STATUS_LABELS[row.status].icon;
 
+    const nameDiv = document.createElement('div');
+    nameDiv.className = 'name';
+    nameDiv.textContent = row.name;
+    // 备注行显示云端表名，并直接作为跳转云端表的入口
+    const metaDiv = document.createElement('div');
+    metaDiv.className = 'meta';
+    const label = row.cloudName || row.description || '';
+    if (row.spreadsheetId && label) {
+      const link = document.createElement('a');
+      link.className = 'sheet-link';
+      link.href = `https://docs.google.com/spreadsheets/d/${encodeURIComponent(row.spreadsheetId)}/edit`;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = label;
+      link.title = '在新标签页打开云端配置表';
+      link.addEventListener('click', e => e.stopPropagation());
+      metaDiv.appendChild(link);
+    } else {
+      metaDiv.textContent = label;
+    }
     const nameCell = document.createElement('div');
-    nameCell.innerHTML = `<div class="name">${row.name}</div><div class="meta">${row.description || ''}</div>`;
+    nameCell.append(nameDiv, metaDiv);
 
     const cloudCell = document.createElement('div');
     cloudCell.className = 'meta';
@@ -124,14 +166,17 @@
     div.appendChild(localCell);
 
     const actionCell = document.createElement('div');
+    actionCell.className = 'action-cell';
+    const stateEl = document.createElement('span');
+    stateEl.className = 'row-state';
     if (showButton) {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'row-btn';
-      btn.textContent = appConfig.syncButtonLabel;
+      btn.textContent = '下载';
       btn.addEventListener('click', e => {
         e.stopPropagation();
-        syncAndGenOne(row.path);
+        syncOne(row.path);
       });
       actionCell.appendChild(btn);
 
@@ -148,7 +193,9 @@
       actionCell.appendChild(upBtn);
       }
     }
+    actionCell.appendChild(stateEl);
     div.appendChild(actionCell);
+    if (busyPaths.has(row.path)) applyRowBusy(div, true, busyPaths.get(row.path));
 
     return div;
   }
@@ -190,12 +237,14 @@
     }
   }
 
-  function streamSync(paths, runAfterSync) {
+  function streamSync(paths) {
+    // 本批所有表先标「排队中」，轮到谁再切换为「下载中」
+    paths.forEach(p => { if (!busyPaths.has(p)) setRowBusy(p, true, '排队中…'); });
     return new Promise((resolve) => {
       fetch(api('/sync'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ paths, runAfterSync })
+        body: JSON.stringify({ paths })
       }).then(async response => {
         if (response.status === 401) {
           els.authBanner.classList.remove('hidden');
@@ -244,9 +293,12 @@
       if (!data.endsWith('\n')) appendLog('\n');
     } else if (event === 'progress') {
       // optional: render progress bar
+    } else if (event === 'table-start') {
+      try { setRowBusy(JSON.parse(data).path, true, '下载中…'); } catch (_) {}
     } else if (event === 'table-done') {
       try {
         const obj = JSON.parse(data);
+        setRowBusy(obj.path, false);
         appendLog(obj.success ? `✓ ${obj.path}\n` : `✗ ${obj.path}${obj.error ? ': ' + obj.error : ''}\n`);
       } catch (_) {}
     } else if (event === 'done') {
@@ -269,6 +321,7 @@
 
   async function uploadOne(row) {
     setBusy(true);
+    setRowBusy(row.path, true, '上传中…');
     appendLog(`→ 上传本地 ${row.name} 覆盖云端…\n`);
     try {
       const resp = await fetch(api(`/upload?path=${encodeURIComponent(row.path)}`), {
@@ -290,20 +343,15 @@
     } catch (err) {
       appendLog(`! ${err.message}\n`);
     } finally {
+      setRowBusy(row.path, false);
       setBusy(false);
     }
   }
 
   async function syncOne(p) {
     setBusy(true);
-    await streamSync([p], false);
-    await loadTables();
-    setBusy(false);
-  }
-
-  async function syncAndGenOne(p) {
-    setBusy(true);
-    await streamSync([p], true);
+    await streamSync([p]);
+    releaseRows([p]);
     await loadTables();
     setBusy(false);
   }
@@ -321,7 +369,8 @@
       setBusy(false);
       return;
     }
-    await streamSync(paths, true);
+    await streamSync(paths);
+    releaseRows(paths);
     await loadTables();
     setBusy(false);
   }
@@ -361,7 +410,7 @@
   }
 
   async function loadConfig() {
-    appConfig = { allowUpload: true, syncButtonLabel: '同步', actions: [] };
+    appConfig = { allowUpload: true, actions: [] };
     try {
       const resp = await fetch(api('/config'));
       const data = await resp.json();
@@ -369,7 +418,7 @@
       else appendLog(`! 项目配置错误: ${data.error}\n`);
     } catch (_) { /* 用默认值 */ }
     els.customActions.innerHTML = '';
-    appConfig.actions.forEach(action => {
+    (appConfig.actions || []).forEach(action => {
       const b = document.createElement('button');
       b.type = 'button';
       b.textContent = action.label;
@@ -384,7 +433,7 @@
     projects.forEach(p => {
       const tab = document.createElement('span');
       tab.className = `project-tab${p.id === currentId ? ' active' : ''}`;
-      tab.title = p.dir;
+      tab.title = `${p.dir}\n双击重命名`;
       const label = document.createElement('span');
       label.textContent = p.name;
       const close = document.createElement('span');
@@ -394,6 +443,7 @@
       close.addEventListener('click', e => { e.stopPropagation(); removeProject(p); });
       tab.append(label, close);
       tab.addEventListener('click', () => selectProject(p.id));
+      tab.addEventListener('dblclick', () => renameProject(p));
       els.projectTabs.appendChild(tab);
     });
   }
@@ -425,6 +475,18 @@
     await selectProject(pick);
   }
 
+  async function renameProject(p) {
+    const name = prompt('项目名称', p.name);
+    if (name === null || !name.trim() || name.trim() === p.name) return;
+    const resp = await fetch(`/api/projects/${encodeURIComponent(p.id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name })
+    });
+    if (!resp.ok) { appendLog(`! 重命名失败: ${(await resp.json()).error}\n`); return; }
+    await loadProjects(currentId);
+  }
+
   async function removeProject(p) {
     if (!confirm(`从平台移除项目「${p.name}」吗？\n\n只是不再管理它，项目目录里的文件不会被删除。`)) return;
     const resp = await fetch(`/api/projects/${encodeURIComponent(p.id)}`, { method: 'DELETE' });
@@ -440,7 +502,8 @@
     list: document.getElementById('dir-list'),
     msg: document.getElementById('dir-msg'),
     pick: document.getElementById('dir-pick'),
-    close: document.getElementById('dir-close')
+    close: document.getElementById('dir-close'),
+    name: document.getElementById('dir-name')
   };
   let dirCurrent = null;
   const DIR_KEY = 'syncmanager.lastDir';
@@ -466,6 +529,7 @@
 
   function openDirModal() {
     dirEls.modal.classList.remove('hidden');
+    dirEls.name.value = '';
     let last = null;
     try { last = localStorage.getItem(DIR_KEY); } catch (_) {}
     browse(last);
@@ -476,7 +540,7 @@
     const resp = await fetch('/api/projects', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ dir: dirCurrent })
+      body: JSON.stringify({ dir: dirCurrent, name: dirEls.name.value })
     });
     const data = await resp.json();
     if (!resp.ok) { dirEls.msg.textContent = data.error; return; }

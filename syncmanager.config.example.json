@@ -3,15 +3,23 @@
   "filelist": "./filelist.json",
   "sidecar": "./.sync-versions.json",
   "allowUpload": true,
-  "export": { "url": "", "password": "" },
-  "afterSync": "build",
-  "afterSyncButtonLabel": "同步并生成",
+  "export": {
+    "url": "",
+    "password": ""
+  },
   "actions": [
     {
       "id": "build",
       "label": "生成代码",
       "steps": [
-        { "label": "生成", "cwd": ".", "command": { "unix": "bash gen.sh", "win": "gen.bat" } }
+        {
+          "label": "生成",
+          "cwd": ".",
+          "command": {
+            "unix": "bash gen.sh",
+            "win": "gen.bat"
+          }
+        }
       ]
     }
   ]

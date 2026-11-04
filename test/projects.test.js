@@ -3,7 +3,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const { addProject, removeProject, loadProjects, findProject } = require('../lib/projects');
+const { addProject, removeProject, renameProject, loadProjects, findProject } = require('../lib/projects');
 const { listDirs } = require('../lib/fs-browser');
 
 function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'sm-proj-')); }
@@ -72,4 +72,21 @@ test('listDirs 只列非隐藏子目录并标记候选项目', () => {
   const r = listDirs(dir);
   assert.deepStrictEqual(r.dirs.map(d => [d.name, d.hint]), [['a', false], ['proj', true]]);
   assert.strictEqual(r.parent, path.dirname(dir));
+});
+
+test('添加时可自定义项目名，留空用配置 title；支持重命名', () => {
+  const reg = path.join(tmp(), 'projects.json');
+  const mk = title => {
+    const dir = tmp();
+    fs.writeFileSync(path.join(dir, 'syncmanager.config.json'), JSON.stringify({ title, filelist: 'f.json' }));
+    return dir;
+  };
+  const a = addProject(reg, mk('T1'), '  我的名字 ').project;
+  const b = addProject(reg, mk('T2'), '').project;
+  assert.strictEqual(a.name, '我的名字');
+  assert.strictEqual(b.name, 'T2');
+  assert.strictEqual(renameProject(reg, a.id, '新名').name, '新名');
+  assert.strictEqual(findProject(reg, a.id).name, '新名');
+  assert.throws(() => renameProject(reg, a.id, '  '), /不能为空/);
+  assert.strictEqual(renameProject(reg, 'nope', 'x'), null);
 });

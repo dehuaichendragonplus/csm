@@ -11,7 +11,7 @@
     <h1 id="app-title">Sync Manager</h1>
     <div class="actions">
       <button id="btn-refresh" type="button">刷新</button>
-      <button id="btn-sync-all" type="button">一键同步所有有更新</button>
+      <button id="btn-sync-all" type="button">下载所有更新</button>
       <span id="custom-actions" class="custom-actions"></span>
       <button id="btn-clear-state" type="button" class="btn-danger">清除缓存</button>
     </div>
@@ -47,6 +47,9 @@
       </header>
       <div id="dir-path" class="dir-path"></div>
       <ul id="dir-list" class="dir-list"></ul>
+      <label class="dir-name">项目名称
+        <input id="dir-name" type="text" placeholder="留空则使用配置里的 title / 目录名">
+      </label>
       <p id="dir-msg" class="dir-msg"></p>
       <footer class="modal-foot">
         <span class="dir-tip">含 syncmanager.config.json 或 filelist.json 的目录会标 ★</span>

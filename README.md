@@ -2,7 +2,7 @@
 
 > 通用工具：项目相关的内容（表格清单、导出服务、生成命令）全部在 `syncmanager.config.json` 里，代码本身与项目无关，可直接复用到其他项目，见下文「复用到其他项目」。
 
-基于浏览器的图形化工具，用于检测配置文件里 `filelist` 所指的的 Google Sheets 表格哪些与本地 xlsx 文件存在差异，并支持在同一个界面里完成下载同步与触发 `gen_client` 代码生成。
+基于浏览器的图形化工具，用于检测配置文件里 `filelist` 所指的的 Google Sheets 表格哪些与本地 xlsx 文件存在差异，并支持下载到本地、或把本地 xlsx 上传覆盖云端。
 
 可同时管理多个项目（见「多项目平台」）。
 
@@ -46,9 +46,7 @@
 | `sidecar` | 否 | 入仓的版本记录文件，用于 `git pull` 后避免误判「有更新」；不填则不启用 |
 | `export.url` / `export.password` | 否 | 内部导出服务。**不填则直接用 Drive API 导出 xlsx**（单表 ≤10MB） |
 | `allowUpload` | 否 | 是否显示每行的「上传」按钮，默认 true |
-| `actions` | 否 | 自定义动作列表，每项 `{ id, label, steps:[{ label, cwd, command }] }`，渲染成顶部按钮；`command` 可写字符串，或 `{ "unix": "...", "win": "..." }`，在 `cwd` 下经 shell 执行 |
-| `afterSync` | 否 | 某个 action 的 id：「一键同步」与行内「同步并…」下载成功后自动执行它 |
-| `afterSyncButtonLabel` | 否 | 行内按钮文案，默认「同步并 + action 名」 |
+| `actions` | 否 | 自定义动作列表，每项 `{ id, label, steps:[{ label, cwd, command }] }`，渲染成顶部按钮，点击后依次执行各步骤（任一步失败即中止），日志实时显示；`command` 可写字符串，或 `{ "unix": "...", "win": "..." }`，在 `cwd` 下经 shell 执行。动作只手动触发，下载后不会自动执行 |
 
 ## 上传覆盖云端
 
@@ -76,10 +74,10 @@
 ## 日常使用
 
 - **刷新**：调用 Drive API 查询每个表格的 `modifiedTime`，更新状态徽标。
-- **点击单行**：仅下载该表对应的 xlsx，并更新本地状态；**不会**触发 `gen_client`。
-- **一键同步所有有更新**：批量下载所有状态为 `updated` / `never_synced` / `missing_local` 的表，下载完成后自动依次跑「导出多语言 + 代码生成」（先 `gen_localization` 再 `gen_client`）。
-- **执行代码生成**：先运行 `gen_localization.sh` / `gen_localization.bat` 导出多语言，再运行 `gen_client.sh` / `gen_client.bat` 生成客户端代码与数据；多语言这步失败会中止、不继续生成代码。
-- **导出多语言**：单独运行 `gen_localization.sh` / `gen_localization.bat`，生成多语言 Luban 定义（`Localization.xml`）与 `LocalizationKey` 常量类，日志实时显示在面板里。
+- **下载**（或点击单行）：下载该表对应的 xlsx 到本地，并更新本地状态。
+- **下载所有更新**：批量下载所有需要同步的表。
+- **顶部自定义按钮**（如 MergeX11 的「Luban导出」）：由项目配置的 `actions` 生成，手动点击执行。
+- **上传**：见下文「上传覆盖云端」。
 
 ## 目录结构
 
@@ -109,7 +107,6 @@
 | 启动时报「OAuth credentials not found」 | 确认目录下存在 `credentials.json` |
 | 浏览器一直被重定向到 `/auth/start` | Token 可能已被撤销；删除 `.tokens/` 目录并重新授权 |
 | 某行显示「错误: forbidden」 | 你的 Google 账号无权读取该表格，联系表格所有者添加共享权限 |
-| `gen_client` 退出码非 0 | 查看日志面板；通常是 Luban schema 报错 —— 修复 xlsx 后再点「执行代码生成」 |
 | 端口 7321 被占用 | 工具会自动寻找下一个可用端口；查看控制台输出获取实际 URL |
 
 ## 运行测试

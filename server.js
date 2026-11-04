@@ -10,11 +10,11 @@ const { loadState, saveState, updateEntry } = require('./lib/sync-state');
 const { getModifiedTimes, uploadXlsxToSheet, downloadViaDrive } = require('./lib/drive-api');
 const { aggregateTables } = require('./lib/table-aggregator');
 const { downloadOne } = require('./lib/downloader');
-const { runSteps } = require('./lib/gen-client-runner');
 const { CONFIG_FILENAME, loadConfig, publicConfig } = require('./lib/config');
-const { loadProjects, addProject, removeProject, findProject } = require('./lib/projects');
+const { loadProjects, addProject, removeProject, renameProject, findProject } = require('./lib/projects');
 const { listDirs } = require('./lib/fs-browser');
 const { sseSetup, sseEmit } = require('./lib/sse');
+const { runSteps } = require('./lib/gen-client-runner');
 const { loadSidecar, updateSidecar } = require('./lib/version-sidecar');
 
 const ROOT = __dirname;
@@ -160,9 +160,19 @@ async function main() {
     const dir = req.body && req.body.dir;
     if (!dir || typeof dir !== 'string') return res.status(400).json({ error: 'dir 不能为空' });
     try {
-      res.json(addProject(REGISTRY_PATH, dir));
+      res.json(addProject(REGISTRY_PATH, dir, req.body.name));
     } catch (err) {
       res.status(err.code === 'DUPLICATE' ? 409 : 400).json({ error: err.message });
+    }
+  });
+
+  app.patch('/api/projects/:id', (req, res) => {
+    try {
+      const p = renameProject(REGISTRY_PATH, req.params.id, req.body && req.body.name);
+      if (!p) return res.status(404).json({ error: 'unknown project' });
+      res.json(p);
+    } catch (err) {
+      res.status(400).json({ error: err.message });
     }
   });
 
@@ -222,7 +232,7 @@ async function main() {
 
   projectRouter.post('/sync', async (req, res) => {
     const { cfg, id } = req.ctx;
-    const { paths, runAfterSync: shouldRunAfter } = req.body || {};
+    const { paths } = req.body || {};
     if (!Array.isArray(paths)) return res.status(400).json({ error: 'paths must be an array' });
     if (!hasToken) return res.status(401).json({ error: 'OAUTH_REQUIRED' });
 
@@ -244,6 +254,7 @@ async function main() {
         failedCount++;
         continue;
       }
+      sseEmit(res, 'table-start', { path: entry.path });
       sseEmit(res, 'log', `→ downloading ${entry.name} (${p})\n`);
       try {
         if (cfg.exportUrl) {
@@ -281,18 +292,7 @@ async function main() {
       }
     }
 
-    const afterAction = cfg.actions.find(a => a.id === cfg.afterSync);
-    if (shouldRunAfter && afterAction && successCount > 0) {
-      try {
-        const code = await runSteps({ steps: afterAction.steps, onLog: line => sseEmit(res, 'log', line) });
-        sseEmit(res, 'done', { successCount, failedCount, exitCode: code });
-      } catch (err) {
-        sseEmit(res, 'error', { message: err.message });
-        sseEmit(res, 'done', { successCount, failedCount, exitCode: -1 });
-      }
-    } else {
-      sseEmit(res, 'done', { successCount, failedCount, exitCode: null });
-    }
+    sseEmit(res, 'done', { successCount, failedCount, exitCode: null });
     res.end();
   });
 
@@ -333,7 +333,7 @@ async function main() {
     }
   });
 
-  // 执行配置里的自定义动作（如代码生成），日志经 SSE 实时回传
+  // 执行配置里的自定义动作（如 Luban 导出），日志经 SSE 实时回传
   projectRouter.post('/action/:id', async (req, res) => {
     const action = req.ctx.cfg.actions.find(a => a.id === req.params.id);
     if (!action) return res.status(404).json({ error: `unknown action: ${req.params.id}` });

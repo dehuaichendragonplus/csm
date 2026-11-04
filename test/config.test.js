@@ -24,10 +24,9 @@ test('loadConfig 相对路径按配置文件目录解析，并带默认值', () 
   assert.strictEqual(cfg.port, 7321);
 });
 
-test('loadConfig 缺少 filelist / 文件不存在 / afterSync 悬空 都报错', () => {
+test('loadConfig 缺少 filelist / 文件不存在 都报错', () => {
   assert.throws(() => loadConfig('/nonexistent/x.json'), /找不到配置文件/);
   assert.throws(() => loadConfig(writeCfg({}).p), /filelist/);
-  assert.throws(() => loadConfig(writeCfg({ filelist: 'f', afterSync: 'nope' }).p), /不存在的 action/);
 });
 
 test('actions 的 command 支持字符串与 {unix,win}', () => {
