@@ -13,6 +13,7 @@ const { downloadOne } = require('./lib/downloader');
 const { CONFIG_FILENAME, loadConfig, publicConfig } = require('./lib/config');
 const { loadProjects, addProject, removeProject, renameProject, findProject } = require('./lib/projects');
 const { listDirs } = require('./lib/fs-browser');
+const { pickFolder } = require('./lib/native-picker');
 const { sseSetup, sseEmit } = require('./lib/sse');
 const { runSteps } = require('./lib/gen-client-runner');
 const { loadSidecar, updateSidecar } = require('./lib/version-sidecar');
@@ -189,6 +190,15 @@ async function main() {
       res.json(listDirs(req.query.path));
     } catch (err) {
       res.status(400).json({ error: err.message });
+    }
+  });
+
+  // 弹出系统原生选目录对话框（macOS 访达 / Windows 资源管理器）
+  app.post('/api/fs/pick', async (req, res) => {
+    try {
+      res.json(await pickFolder(req.body && req.body.start));
+    } catch (err) {
+      res.status(501).json({ error: err.message });
     }
   });
 

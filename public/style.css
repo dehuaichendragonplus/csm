@@ -165,6 +165,7 @@ html, body {
 .modal-box { background: #fff; border-radius: 10px; width: 560px; max-width: 92vw; max-height: 80vh; display: flex; flex-direction: column; box-shadow: 0 10px 40px rgba(0,0,0,0.25); }
 .modal-head { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid #eee; }
 .modal-head button { border: none; background: none; cursor: pointer; font-size: 16px; }
+.dir-toolbar { display: flex; align-items: center; gap: 10px; padding: 8px 16px; border-bottom: 1px solid #eee; }
 .dir-path { padding: 8px 16px; font-size: 12px; color: #555; background: #f7f7f9; word-break: break-all; }
 .dir-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; min-height: 200px; }
 .dir-list li { padding: 8px 16px; cursor: pointer; font-size: 13px; border-bottom: 1px solid #f2f2f5; }

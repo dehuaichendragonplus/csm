@@ -503,6 +503,7 @@
     msg: document.getElementById('dir-msg'),
     pick: document.getElementById('dir-pick'),
     close: document.getElementById('dir-close'),
+    native: document.getElementById('dir-native'),
     name: document.getElementById('dir-name')
   };
   let dirCurrent = null;
@@ -550,7 +551,28 @@
     await loadProjects(data.project.id);
   }
 
+  async function pickNative() {
+    dirEls.msg.textContent = '';
+    dirEls.native.disabled = true;
+    try {
+      const resp = await fetch('/api/fs/pick', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ start: dirCurrent })
+      });
+      if (resp.status === 404) { dirEls.msg.textContent = '服务端还没有该接口，请重启 Sync Manager 后再试（暂时可用下方列表浏览）'; return; }
+      const data = await resp.json();
+      if (!resp.ok) { dirEls.msg.textContent = `${data.error}，请用下方列表浏览`; return; }
+      if (data.path) await browse(data.path); // 跳到所选目录，确认后点「添加此目录」
+    } catch (err) {
+      dirEls.msg.textContent = err.message;
+    } finally {
+      dirEls.native.disabled = false;
+    }
+  }
+
   els.btnAddProject.addEventListener('click', openDirModal);
+  dirEls.native.addEventListener('click', pickNative);
   dirEls.close.addEventListener('click', () => dirEls.modal.classList.add('hidden'));
   dirEls.pick.addEventListener('click', addCurrentDir);
 
