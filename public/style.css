@@ -281,7 +281,11 @@ html, body {
 .fl-col-name { font-weight: 500; }
 .fl-col-path { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; color: #444; word-break: break-all; }
 .fl-col-desc { color: #666; max-width: 260px; }
-.fl-col-cloud a { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; color: #007aff; }
+.fl-col-cloud { max-width: 320px; }
+.fl-col-cloud a { font-size: 12px; color: #007aff; text-decoration: none; word-break: break-all; }
+.fl-col-cloud a:hover { text-decoration: underline; }
+.fl-path-root { color: #9aa3ad; }
+.fl-path-warn { color: #b26a00; }
 .fl-col-ops { white-space: nowrap; text-align: right; }
 .fl-col-ops button { padding: 3px 10px; font-size: 12px; margin-left: 4px; }
 .fl-col-ops .fl-del { color: #d12c2c; border-color: #f0b4b4; }

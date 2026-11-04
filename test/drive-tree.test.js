@@ -69,3 +69,18 @@ test('createRootResolver 缓存成功结果，推断失败不缓存', async () =
   await r.resolve({ projectId: 'q', cacheKey: 'k', entries, tree });
   assert.strictEqual(calls, 2, '空清单的 null 结果没有被缓存');
 });
+
+test('createTreeClient.parentChain：命中文件夹缓存时按层级组装完整路径', async () => {
+  const { createTreeClient } = require('../lib/drive-tree');
+  const FOLDER = 'application/vnd.google-apps.folder';
+  const folders = {
+    root: { id: 'root', name: 'MX11', mimeType: FOLDER },
+    data: { id: 'data', name: 'Data', mimeType: FOLDER, parents: ['root'] },
+    item: { id: 'item', name: 'Item', mimeType: FOLDER, parents: ['data'] }
+  };
+  const cache = new Map(Object.values(folders).map(f => [f.id, Promise.resolve(f)]));
+  const client = createTreeClient(null, cache); // 全部命中缓存，不会发起 Drive 请求
+  const sheet = { id: 's1', name: 'ItemGlobal', mimeType: 'application/vnd.google-apps.spreadsheet', parents: ['item'] };
+  const chain = await client.parentChain('s1', sheet);
+  assert.deepStrictEqual(chain.map(f => f.name), ['MX11', 'Data', 'Item']);
+});

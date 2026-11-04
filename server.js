@@ -604,6 +604,20 @@ async function main(opts = {}) {
     return prev;
   }
 
+  // 云端表的云端路径（所在文件夹链 + 云端表名），供清单列表展示
+  projectRouter.get('/filelist/cloud-paths', async (req, res) => {
+    if (!hasToken) return res.status(401).json({ error: 'OAUTH_REQUIRED' });
+    try {
+      // ?ids=a,b 只查指定的表（新增 / 修改后补查）；不传则查清单里全部
+      const ids = typeof req.query.ids === 'string' && req.query.ids
+        ? req.query.ids.split(',')
+        : filelistEditor.readFilelistRaw(req.ctx.cfg.filelistPath).entries.map(e => String(e.spreadsheetId || '').trim());
+      res.json(await tree().locateMany(ids));
+    } catch (err) {
+      sendEditorError(res, err);
+    }
+  });
+
   // 云端根目录映射：查看（未配置时返回自动推断结果）
   projectRouter.get('/filelist/cloud-root', async (req, res) => {
     if (!hasToken) return res.status(401).json({ error: 'OAUTH_REQUIRED' });
