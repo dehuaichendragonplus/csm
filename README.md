@@ -80,25 +80,38 @@ npm run dist:mac   # 输出 dist/ 下的 arm64 + x64 dmg
 | `title` | 否 | 标签页上显示的项目名，默认目录名 |
 | `sidecar` | 否 | 入仓的版本记录文件，用于 `git pull` 后避免误判「有更新」；不填则不启用 |
 | `export.url` / `export.password` | 否 | 内部导出服务。**不填则直接用 Drive API 导出 xlsx**（单表 ≤10MB） |
+| `cloudRoot` | 否 | 云端目录映射 `{ "folderId": "云端根文件夹 ID", "local": "Datas" }`，新增配置表时按云端子目录放到本地对应目录；不填则自动推断，见「云端目录映射」 |
 | `allowUpload` | 否 | 是否显示每行的「上传」按钮，默认 true |
 | `actions` | 否 | 自定义动作列表，每项 `{ id, label, steps:[{ label, cwd, command }] }`，渲染成顶部按钮，点击后依次执行各步骤（任一步失败即中止），日志实时显示；`command` 可写字符串，或 `{ "unix": "...", "win": "..." }`，在 `cwd` 下经 shell 执行。动作只手动触发，下载后不会自动执行 |
 
 ## 配置表清单（filelist.json）预览与编辑
 
-项目栏右侧「📋 配置表清单」打开当前项目的 `filelist.json`，可以直接在界面里增删改，不用手改 JSON。
+项目栏右侧「📋 配置表清单」打开当前项目 `filelist.json` 的列表，不用手改 JSON。
 
-- **预览**：列出每个条目的表名、本地路径、备注、云端链接，以及本地 xlsx 是否已下载（大小、修改时间），支持筛选
-- **新增**：粘贴 Google 表格链接（或 spreadsheetId），会自动查询云端表名并推荐：
-  - 表名：取云端表名括号里的中文，如「MX11-DeepBoard2（深度小棋盘2-购物节）」→「深度小棋盘2-购物节」
-  - 本地路径：放在清单里最常用的目录，文件名取去掉项目前缀的英文名 → `Datas/Activity/DeepBoard2.xlsx`（路径框有已有目录的下拉提示）
-  - 备注：完整的云端表名
-  - 同时提示：该云端表是否已在清单中、是否不是 Google 表格
-  支持的链接：`docs.google.com/spreadsheets/d/<id>/...`、`drive.google.com/file/d/<id>/...`、`...?id=<id>`，或直接粘贴 ID
-- **修改**：点「编辑」后修改表名、路径、备注；粘贴新链接可以换绑云端表（只补空字段，不覆盖已填的表名和路径）。原条目里的其他字段（如 `mergeCells`）会保留
+- **列表**：表名、本地路径、备注、云端链接、本地 xlsx 是否已下载（大小、修改时间），支持筛选；双击行或点「编辑」修改
+- **新增 / 编辑**：点「＋ 新增配置表」或「编辑」弹出独立窗口，确认后直接写回 `filelist.json` 并刷新列表（新行会高亮）
+  - 粘贴 Google 表格链接（或 ID）自动解析：云端表名、所在云端目录，并填好表名（括号里的中文）、本地路径、备注（完整云端表名）
+  - **本地路径与云端目录对齐**：云端 `MX11 / Data / Activity / 表` → 本地 `Configs/Input/Datas/Activity/表.xlsx`
+  - 表名、本地路径、备注都可以留空：保存时按云端表自动生成
+  - 编辑时粘贴新链接可以换绑云端表（只补空字段）；`mergeCells` 等其他字段会保留
+  - 支持的链接：`docs.google.com/spreadsheets/d/<id>/...`、`drive.google.com/file/d/<id>/...`、`...?id=<id>`，或直接粘贴 ID
 - **删除**：只从 `filelist.json` 里移除条目，**不删除本地 xlsx，也不动云端表**
-- **校验**：路径必须是相对 `filelist.json` 所在目录的 `.xlsx` 路径，不能跳出该目录；路径重复直接拒绝；同一个云端表已在清单中时会弹窗确认（现有清单里本来就有这种情况，所以只提醒、不禁止）
-- **写回格式**：保留原文件的缩进、字段顺序和末尾换行。格式不规范的地方（例如 `}` 和 `,` 分在两行）在第一次保存时会被规整，提交前留意一下 diff
-- 改完 `filelist.json` 记得在项目仓库里提交
+- **校验**：路径必须是相对 `filelist.json` 所在目录的 `.xlsx` 路径且不能跳出该目录；路径重复直接拒绝；同一个云端表已在清单中时弹窗确认（现有清单里本来就有这种情况，所以只提醒、不禁止）
+- **写回格式**：保留原文件的缩进、字段顺序和末尾换行；格式不规范的地方（如 `}` 和 `,` 分在两行）第一次保存时会被规整，提交前看一下 diff
+- 改完记得在项目仓库里提交 `filelist.json`
+
+### 云端目录映射
+
+决定「云端哪个文件夹」对应「本地哪个目录」，列表顶部会显示当前生效的映射。按以下优先级取：
+
+1. **项目配置**：点「设置映射」，粘贴云端根文件夹链接（`https://drive.google.com/drive/folders/…`）和本地目录（默认 `Datas`），写入项目的 `syncmanager.config.json`：
+   ```json
+   "cloudRoot": { "folderId": "<云端文件夹 ID>", "local": "Datas" }
+   ```
+2. **自动推断**（未配置时）：抽样清单里已有的条目，对比它们的云端目录和本地路径，推断出映射。例如 MergeX11 推断为云端 `MX11 / Data` ↔ 本地 `Datas`。首次需要几秒，之后会缓存
+3. **按所在文件夹**（清单为空推断不出时）：放到 `Datas/<云端所在文件夹名>/`
+
+新表不在映射的云端根目录下时，同样按所在文件夹放置，并在界面上提示需要人工确认路径。
 
 ## 搜索配置表
 
@@ -148,6 +161,7 @@ npm run dist:mac   # 输出 dist/ 下的 arm64 + x64 dmg
 - `lib/` — 各功能模块（status、sync-state、drive-api、downloader、gen-client-runner、version-sidecar 等）
 - `public/` — HTML / CSS / JS 前端
 - `lib/filelist-editor.js` — filelist.json 的增删改、链接解析、表名与路径推荐
+- `lib/drive-tree.js` — 云端目录链查询、云端根目录推断与本地路径对齐
 - `electron/main.js` — 桌面 App 外壳（启动 server.js、窗口、系统浏览器授权、原生选目录）
 - `build/icon.png` — App 图标（electron-builder 自动转换为 icns / ico）
 - `.sync_state.json` — 本机每个表上次同步时的 size / mtime / 云端 `modifiedTime`（gitignore）

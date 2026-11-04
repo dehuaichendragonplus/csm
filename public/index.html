@@ -75,33 +75,16 @@
         <div><strong>配置表清单</strong> <span id="fl-file" class="fl-file"></span></div>
         <button id="fl-close" type="button" title="关闭">✕</button>
       </header>
-
-      <section class="fl-form">
-        <div class="fl-form-title"><span id="fl-form-title">新增配置表</span><span class="dir-tip">粘贴 Google 表格链接，自动识别云端表并推荐表名与路径</span></div>
-        <div class="fl-link-row">
-          <input id="fl-link" type="text" placeholder="粘贴 Google 表格链接或 spreadsheetId，例如 https://docs.google.com/spreadsheets/d/…/edit" autocomplete="off" spellcheck="false">
-          <button id="fl-resolve" type="button">解析</button>
-        </div>
-        <div id="fl-cloud" class="fl-cloud"></div>
-        <div class="fl-grid">
-          <label>表名<input id="fl-name" type="text" placeholder="界面上显示的名称" autocomplete="off"></label>
-          <label>本地路径<input id="fl-path" type="text" list="fl-dirs" placeholder="相对 filelist.json 的路径，如 Datas/Activity/Xxx.xlsx" autocomplete="off" spellcheck="false"></label>
-          <label>备注<input id="fl-desc" type="text" placeholder="可选，默认为云端表名" autocomplete="off"></label>
-          <label>spreadsheetId<input id="fl-id" type="text" placeholder="粘贴链接后自动填入" autocomplete="off" spellcheck="false"></label>
-        </div>
-        <datalist id="fl-dirs"></datalist>
-        <div class="fl-form-foot">
-          <p id="fl-msg" class="fl-msg"></p>
-          <div>
-            <button id="fl-cancel" type="button" class="hidden">取消编辑</button>
-            <button id="fl-save" type="button" class="primary">添加到清单</button>
-          </div>
-        </div>
-      </section>
-
+      <div class="fl-root-bar">
+        <span class="fl-root-label">云端目录映射</span>
+        <span id="fl-root" class="fl-root">—</span>
+        <button id="fl-root-edit" type="button" class="fl-link-btn">设置映射</button>
+      </div>
       <div class="fl-list-bar">
         <input id="fl-filter" type="search" placeholder="筛选：表名 / 路径 / 备注 / ID" autocomplete="off" spellcheck="false">
         <span id="fl-count" class="dir-tip"></span>
+        <span id="fl-flash" class="fl-msg"></span>
+        <button id="fl-add" type="button" class="fl-primary">＋ 新增配置表</button>
       </div>
       <div class="fl-table-wrap">
         <table class="fl-table">
@@ -109,6 +92,65 @@
           <tbody id="fl-tbody"></tbody>
         </table>
       </div>
+    </div>
+  </div>
+
+  <div id="fl-edit-modal" class="modal modal-top hidden">
+    <div class="modal-box fl-edit-box">
+      <header class="modal-head">
+        <strong id="fl-form-title">新增配置表</strong>
+        <button id="fl-edit-close" type="button" title="关闭">✕</button>
+      </header>
+      <section class="fl-form">
+        <label class="fl-field">Google 表格链接
+          <div class="fl-link-row">
+            <input id="fl-link" type="text" placeholder="粘贴链接或 spreadsheetId，例如 https://docs.google.com/spreadsheets/d/…/edit" autocomplete="off" spellcheck="false">
+            <button id="fl-resolve" type="button">解析</button>
+          </div>
+        </label>
+        <div id="fl-cloud" class="fl-cloud"></div>
+        <div class="fl-grid">
+          <label class="fl-field">表名<input id="fl-name" type="text" placeholder="留空则取云端表名" autocomplete="off"></label>
+          <label class="fl-field"><span>本地路径（相对 <span id="fl-base"></span>）</span><input id="fl-path" type="text" list="fl-dirs" placeholder="留空则按云端目录自动生成" autocomplete="off" spellcheck="false"></label>
+          <label class="fl-field">备注<input id="fl-desc" type="text" placeholder="留空则为云端表名" autocomplete="off"></label>
+          <label class="fl-field">spreadsheetId<input id="fl-id" type="text" placeholder="粘贴链接后自动填入" autocomplete="off" spellcheck="false"></label>
+        </div>
+        <datalist id="fl-dirs"></datalist>
+      </section>
+      <footer class="modal-foot">
+        <p id="fl-msg" class="fl-msg"></p>
+        <div class="fl-foot-btns">
+          <button id="fl-cancel" type="button">取消</button>
+          <button id="fl-save" type="button" class="primary">添加到清单</button>
+        </div>
+      </footer>
+    </div>
+  </div>
+
+  <div id="fl-root-modal" class="modal modal-top hidden">
+    <div class="modal-box fl-root-box">
+      <header class="modal-head">
+        <strong>云端目录映射</strong>
+        <button id="fl-root-close" type="button" title="关闭">✕</button>
+      </header>
+      <section class="fl-form">
+        <p class="fl-help">新增配置表时，按「云端表格相对云端根目录的子目录」放到本地目录下，例如云端 <code>Data / Activity / 表</code> → 本地 <code>Datas/Activity/表.xlsx</code>。<br>不设置时会根据清单里已有的条目自动推断；清单为空推断不出来时，按云端表格所在文件夹放到 <code>Datas/&lt;文件夹名&gt;</code>。</p>
+        <label class="fl-field">云端根目录（Google Drive 文件夹链接或 ID）
+          <input id="fl-root-folder" type="text" placeholder="https://drive.google.com/drive/folders/…" autocomplete="off" spellcheck="false">
+        </label>
+        <label class="fl-field"><span>对应的本地目录（相对 <span id="fl-root-base"></span>）</span>
+          <input id="fl-root-local" type="text" placeholder="Datas" autocomplete="off" spellcheck="false">
+        </label>
+        <p class="fl-help">保存后写入项目的 syncmanager.config.json（cloudRoot 字段），记得随项目提交。</p>
+      </section>
+      <footer class="modal-foot">
+        <p id="fl-root-msg" class="fl-msg"></p>
+        <div class="fl-foot-btns">
+          <button id="fl-root-clear" type="button" class="hidden">清除映射，改回自动推断</button>
+          <button id="fl-root-cancel" type="button">取消</button>
+          <button id="fl-root-save" type="button" class="primary">保存</button>
+        </div>
+      </footer>
     </div>
   </div>
 

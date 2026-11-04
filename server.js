@@ -9,6 +9,7 @@ const { loadFilelist } = require('./lib/filelist-loader');
 const { loadState, saveState, updateEntry } = require('./lib/sync-state');
 const { getModifiedTimes, uploadXlsxToSheet, downloadViaDrive, getFileInfo } = require('./lib/drive-api');
 const filelistEditor = require('./lib/filelist-editor');
+const driveTree = require('./lib/drive-tree');
 const { aggregateTables } = require('./lib/table-aggregator');
 const { downloadOne } = require('./lib/downloader');
 const { CONFIG_FILENAME, loadConfig, publicConfig } = require('./lib/config');
@@ -359,6 +360,65 @@ async function main(opts = {}) {
   const editorStatus = err => ({ INVALID: 400, INVALID_JSON: 500, NOT_FOUND: 404, DUPLICATE_PATH: 409, DUPLICATE_ID: 409 }[err.code] || 500);
   const sendEditorError = (res, err) => res.status(err.status || editorStatus(err)).json({ error: err.message, code: err.code, paths: err.paths });
 
+  // 云端目录树：文件夹元信息全局缓存；云端根目录按项目缓存
+  let treeClient = null;
+  const tree = () => (treeClient = treeClient || driveTree.createTreeClient(oauth2Client));
+  const rootResolver = driveTree.createRootResolver();
+
+  // 当前项目的「云端根目录 ↔ 本地目录」：优先用配置里的 cloudRoot，否则按已有条目推断
+  async function projectRoot(ctx, entries) {
+    const conf = ctx.cfg.cloudRoot;
+    if (conf) {
+      const meta = await tree().getMeta(conf.folderId);
+      if (!meta) return { error: `配置的云端根目录无法访问（${conf.folderId}）`, source: 'config' };
+      const chain = await tree().parentChain(conf.folderId, meta);
+      return {
+        rootId: meta.id,
+        rootName: meta.name,
+        rootPath: [...chain.map(f => f.name), meta.name].join(' / '),
+        localRoot: conf.local,
+        source: 'config'
+      };
+    }
+    return rootResolver.resolve({ projectId: ctx.id, cacheKey: ctx.cfg.filelistPath, entries, tree: tree() });
+  }
+
+  // 根据云端表的位置推荐表名 / 本地路径 / 备注
+  async function suggestForSheet(ctx, spreadsheetId, entries) {
+    const info = await getFileInfo(spreadsheetId, oauth2Client);
+    const chain = await tree().parentChain(spreadsheetId, info.parents ? info : null);
+    const root = await projectRoot(ctx, entries);
+    const usable = root && !root.error ? root : null;
+    const align = driveTree.alignDir(chain, usable);
+    return {
+      info,
+      suggestion: filelistEditor.suggestEntry(info.name, entries, align.dir),
+      location: {
+        cloudDir: align.cloudDir,
+        mode: align.mode,
+        root: root ? { rootPath: root.rootPath, localRoot: root.localRoot, source: root.source, error: root.error } : null
+      }
+    };
+  }
+
+  // 保存时没填路径（或新增时没填表名 / 备注）：按云端表自动补全
+  async function fillFromCloud(ctx, entry, isAdd) {
+    if (!entry || typeof entry !== 'object') return entry;
+    const id = filelistEditor.parseSpreadsheetId(entry.spreadsheetId) || String(entry.spreadsheetId || '').trim();
+    const needPath = !String(entry.path || '').trim();
+    const needMeta = isAdd && (!String(entry.name || '').trim() || entry.description == null || entry.description === '');
+    if (!id || (!needPath && !needMeta) || !hasToken) return { ...entry, spreadsheetId: id };
+    const { entries } = filelistEditor.readFilelistRaw(ctx.cfg.filelistPath);
+    const { suggestion } = await suggestForSheet(ctx, id, entries);
+    return {
+      ...entry,
+      spreadsheetId: id,
+      path: needPath ? suggestion.path : entry.path,
+      name: String(entry.name || '').trim() || suggestion.name,
+      description: entry.description || (isAdd ? suggestion.description : entry.description)
+    };
+  }
+
   // 新增 / 修改后只补查这一个表的云端修改时间，避免整表刷新
   async function refreshOneInCache(ctx, spreadsheetId) {
     if (!hasToken || !spreadsheetId) return;
@@ -381,8 +441,11 @@ async function main(opts = {}) {
         } catch (_) { /* 本地还没有这个文件 */ }
         return { ...e, local };
       });
+      const relBase = path.relative(project.dir, baseDir);
       res.json({
         filelist: path.relative(project.dir, cfg.filelistPath) || path.basename(cfg.filelistPath),
+        // 条目路径相对的目录，用于界面展示，如 Configs/Input/
+        baseLabel: `${[path.basename(project.dir), relBase].filter(Boolean).join('/')}/`,
         entries: rows,
         dirs: filelistEditor.listDirs(entries),
         defaultDir: filelistEditor.mostCommonDir(entries)
@@ -400,12 +463,12 @@ async function main(opts = {}) {
     if (!hasToken) return res.status(401).json({ error: 'OAUTH_REQUIRED' });
     try {
       const { entries } = filelistEditor.readFilelistRaw(req.ctx.cfg.filelistPath);
-      const info = await getFileInfo(spreadsheetId, oauth2Client);
-      const dir = typeof req.body.dir === 'string' ? req.body.dir : undefined;
+      const { info, suggestion, location } = await suggestForSheet(req.ctx, spreadsheetId, entries);
       res.json({
         spreadsheetId,
         cloud: info,
-        suggestion: filelistEditor.suggestEntry(info.name, entries, dir),
+        suggestion,
+        location,
         existing: entries.filter(e => String(e.spreadsheetId || '').trim() === spreadsheetId).map(e => ({ path: e.path, name: e.name }))
       });
     } catch (err) {
@@ -416,7 +479,8 @@ async function main(opts = {}) {
   projectRouter.post('/filelist', async (req, res) => {
     const body = req.body || {};
     try {
-      const entry = filelistEditor.addEntry(req.ctx.cfg.filelistPath, body.entry, { allowDuplicateId: !!body.allowDuplicateId });
+      const input = await fillFromCloud(req.ctx, body.entry, true);
+      const entry = filelistEditor.addEntry(req.ctx.cfg.filelistPath, input, { allowDuplicateId: !!body.allowDuplicateId });
       await refreshOneInCache(req.ctx, entry.spreadsheetId);
       res.json({ entry });
     } catch (err) {
@@ -428,9 +492,62 @@ async function main(opts = {}) {
     const body = req.body || {};
     if (!body.originalPath) return res.status(400).json({ error: 'originalPath 不能为空' });
     try {
-      const entry = filelistEditor.updateEntry(req.ctx.cfg.filelistPath, body.originalPath, body.entry, { allowDuplicateId: !!body.allowDuplicateId });
+      const input = await fillFromCloud(req.ctx, body.entry, false);
+      const entry = filelistEditor.updateEntry(req.ctx.cfg.filelistPath, body.originalPath, input, { allowDuplicateId: !!body.allowDuplicateId });
       await refreshOneInCache(req.ctx, entry.spreadsheetId);
       res.json({ entry });
+    } catch (err) {
+      sendEditorError(res, err);
+    }
+  });
+
+  // 云端根目录映射：查看（未配置时返回自动推断结果）
+  projectRouter.get('/filelist/cloud-root', async (req, res) => {
+    if (!hasToken) return res.status(401).json({ error: 'OAUTH_REQUIRED' });
+    try {
+      const { entries } = filelistEditor.readFilelistRaw(req.ctx.cfg.filelistPath);
+      res.json({ root: await projectRoot(req.ctx, entries), configured: req.ctx.cfg.cloudRoot });
+    } catch (err) {
+      sendEditorError(res, err);
+    }
+  });
+
+  // 设置 / 清除映射：写入项目的 syncmanager.config.json（cloudRoot 字段）
+  function writeCloudRoot(ctx, value) {
+    const configPath = ctx.cfg.configPath;
+    const rawText = fs.readFileSync(configPath, 'utf8');
+    const raw = JSON.parse(rawText);
+    if (value) raw.cloudRoot = value; else delete raw.cloudRoot;
+    filelistEditor.writeFilelistRaw(configPath, raw, filelistEditor.detectFormat(rawText));
+    rootResolver.invalidate(ctx.id);
+  }
+
+  projectRouter.put('/filelist/cloud-root', async (req, res) => {
+    const body = req.body || {};
+    const folderId = filelistEditor.parseSpreadsheetId(body.folder);
+    if (!folderId) return res.status(400).json({ error: '请粘贴 Google Drive 文件夹链接（https://drive.google.com/drive/folders/…）或文件夹 ID' });
+    if (!hasToken) return res.status(401).json({ error: 'OAUTH_REQUIRED' });
+    const local = String(body.local == null ? '' : body.local).trim().replace(/\\/g, '/').replace(/^\.\/+/, '').replace(/\/+$/, '');
+    if (local && (local.startsWith('/') || local.split('/').includes('..'))) {
+      return res.status(400).json({ error: '本地目录必须是相对 filelist.json 所在目录的相对路径' });
+    }
+    try {
+      const meta = await tree().getMeta(folderId);
+      if (!meta) return res.status(404).json({ error: '找不到这个文件夹，或当前 Google 账号没有访问权限' });
+      if (meta.mimeType !== 'application/vnd.google-apps.folder') return res.status(400).json({ error: `这不是文件夹（${meta.name}）` });
+      writeCloudRoot(req.ctx, { folderId, local });
+      const ctx = getCtx(req.ctx.id);
+      const { entries } = filelistEditor.readFilelistRaw(ctx.cfg.filelistPath);
+      res.json({ root: await projectRoot(ctx, entries), configured: ctx.cfg.cloudRoot });
+    } catch (err) {
+      sendEditorError(res, err);
+    }
+  });
+
+  projectRouter.delete('/filelist/cloud-root', async (req, res) => {
+    try {
+      writeCloudRoot(req.ctx, null);
+      res.json({ ok: true });
     } catch (err) {
       sendEditorError(res, err);
     }
