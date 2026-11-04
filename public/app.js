@@ -52,6 +52,10 @@
     btnClearState: document.getElementById('btn-clear-state'),
     btnClearLog: document.getElementById('btn-clear-log'),
     authBanner: document.getElementById('auth-banner'),
+    projectPanel: document.getElementById('project-panel'),
+    summaryBar: document.getElementById('summary-bar'),
+    projectName: document.getElementById('project-name'),
+    projectDir: document.getElementById('project-dir'),
     search: document.getElementById('table-search')
   };
 
@@ -467,7 +471,19 @@
   }
 
   // ---------- 多项目 ----------
+  // 当前项目的信息与功能区：没有选中项目时整块隐藏
+  function renderProjectPanel() {
+    const p = projects.find(x => x.id === currentId);
+    els.projectPanel.classList.toggle('hidden', !p);
+    els.summaryBar.classList.toggle('hidden', !p);
+    if (!p) return;
+    els.projectName.textContent = p.name;
+    els.projectDir.textContent = p.dir;
+    els.projectDir.title = p.dir;
+  }
+
   function renderTabs() {
+    renderProjectPanel();
     els.projectTabs.innerHTML = '';
     projects.forEach(p => {
       const tab = document.createElement('span');

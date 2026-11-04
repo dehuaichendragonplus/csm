@@ -7,23 +7,30 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header class="toolbar">
+  <!-- 顶部：项目切换 -->
+  <header class="topbar">
     <h1 id="app-title">CSM</h1>
+    <nav id="project-tabs" class="project-tabs"></nav>
+    <button id="btn-add-project" type="button" class="add-project">＋ 添加项目</button>
+  </header>
+
+  <!-- 当前项目：项目信息与项目内的功能 -->
+  <section id="project-panel" class="project-panel hidden">
+    <div class="project-head">
+      <span id="project-name" class="project-name"></span>
+      <span id="project-dir" class="project-dir"></span>
+    </div>
     <div class="actions">
       <button id="btn-refresh" type="button">刷新</button>
       <button id="btn-sync-all" type="button">下载所有更新</button>
       <span id="custom-actions" class="custom-actions"></span>
-      <button id="btn-clear-state" type="button" class="btn-danger">清除缓存</button>
+      <button id="btn-filelist" type="button" title="预览与编辑当前项目的 filelist.json">📋 配置表清单</button>
+      <span class="actions-spacer"></span>
+      <button id="btn-clear-state" type="button" class="btn-danger" title="清除当前项目的本地同步状态">清除缓存</button>
     </div>
-  </header>
+  </section>
 
-  <nav class="project-bar">
-    <div id="project-tabs" class="project-tabs"></div>
-    <button id="btn-filelist" type="button" class="filelist-btn" title="预览与编辑当前项目的 filelist.json">📋 配置表清单</button>
-    <button id="btn-add-project" type="button" class="add-project">＋ 添加项目</button>
-  </nav>
-
-  <section class="summary">
+  <section id="summary-bar" class="summary hidden">
     <span id="summary" class="summary-text">加载中…</span>
     <div class="search-box">
       <input id="table-search" type="search" placeholder="搜索配置表：表名 / 路径 / 云端表名" autocomplete="off" spellcheck="false">

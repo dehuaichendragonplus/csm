@@ -5,20 +5,30 @@ html, body {
   background: #f5f5f7;
   color: #1d1d1f;
 }
-.toolbar {
+/* 顶部：项目切换 */
+.topbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 12px 24px;
+  gap: 20px;
+  padding: 10px 24px;
   background: #fff;
   border-bottom: 1px solid #e5e5ea;
   position: sticky;
   top: 0;
-  z-index: 10;
+  z-index: 5;
 }
-.toolbar h1 { font-size: 18px; margin: 0; }
+.topbar h1 { font-size: 18px; margin: 0; flex-shrink: 0; }
+.topbar .project-tabs { flex: 1; min-width: 0; }
+
+/* 当前项目：信息 + 功能按钮 */
+.project-panel { padding: 14px 24px 12px; background: #fff; border-bottom: 1px solid #e5e5ea; }
+.project-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; min-width: 0; }
+.project-name { font-size: 16px; font-weight: 600; flex-shrink: 0; }
+.project-dir { font-size: 12px; color: #999; font-family: ui-monospace, "SF Mono", Menlo, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.custom-actions { display: contents; }
+.actions-spacer { flex: 1; }
 .actions button {
-  margin-left: 8px;
   padding: 6px 14px;
   border: 1px solid #d0d0d5;
   background: #fff;
@@ -179,13 +189,12 @@ html, body {
   word-break: break-all;
 }
 
-.project-bar { display: flex; align-items: center; gap: 12px; padding: 8px 24px; background: #fff; border-bottom: 1px solid #e5e5ea; }
 .project-tabs { display: flex; gap: 6px; flex-wrap: wrap; flex: 1; }
 .project-tab { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border: 1px solid #d1d1d6; border-radius: 16px; background: #fff; cursor: pointer; font-size: 13px; }
 .project-tab.active { background: #007aff; border-color: #007aff; color: #fff; }
 .project-tab .tab-close { opacity: 0.55; font-size: 12px; }
 .project-tab .tab-close:hover { opacity: 1; }
-.add-project { padding: 5px 12px; border: 1px dashed #007aff; background: #fff; color: #007aff; border-radius: 16px; cursor: pointer; font-size: 13px; }
+.add-project { flex-shrink: 0; padding: 5px 12px; border: 1px dashed #007aff; background: #fff; color: #007aff; border-radius: 16px; cursor: pointer; font-size: 13px; }
 .empty-tip { text-align: center; color: #888; padding: 48px 16px; }
 .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.35); display: flex; align-items: center; justify-content: center; z-index: 10; }
 .modal.hidden { display: none; }
@@ -220,8 +229,6 @@ html, body {
 @keyframes row-spin { to { transform: rotate(360deg); } }
 
 /* ---------- 配置表清单弹窗 ---------- */
-.filelist-btn { padding: 5px 12px; border: 1px solid #d1d1d6; background: #fff; color: #333; border-radius: 16px; cursor: pointer; font-size: 13px; }
-.filelist-btn:hover { border-color: #007aff; color: #007aff; }
 .hidden { display: none !important; }
 .modal-top { z-index: 20; background: rgba(0,0,0,0.25); }
 .fl-box { width: 1080px; height: 82vh; max-height: 88vh; }
