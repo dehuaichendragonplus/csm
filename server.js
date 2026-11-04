@@ -19,43 +19,60 @@ const { runSteps } = require('./lib/gen-client-runner');
 const { loadSidecar, updateSidecar } = require('./lib/version-sidecar');
 
 const ROOT = __dirname;
-// 平台数据目录：项目注册表、Google 令牌、各项目的同步状态都在这里，与被管理的项目仓库互不污染
-const DATA_DIR = process.env.SYNC_MANAGER_DATA ? path.resolve(process.env.SYNC_MANAGER_DATA) : path.join(ROOT, 'data');
-const REGISTRY_PATH = path.join(DATA_DIR, 'projects.json');
-const TOKEN_PATH = path.join(DATA_DIR, '.tokens/token.json');
-const CREDENTIALS_PATH = path.join(ROOT, 'credentials.json');
 const DEFAULT_PORT = 7321;
 
-function buildOAuthClient(port) {
-  const credentials = oauth.loadCredentials(CREDENTIALS_PATH);
+// 平台数据目录：项目注册表、Google 令牌、各项目的同步状态都在这里，与被管理的项目仓库互不污染
+function defaultDataDir() {
+  return process.env.SYNC_MANAGER_DATA ? path.resolve(process.env.SYNC_MANAGER_DATA) : path.join(ROOT, 'data');
+}
+
+function buildOAuthClient(port, credentialsPath, tokenPath) {
+  const credentials = oauth.loadCredentials(credentialsPath);
   const redirectUri = `http://localhost:${port}/oauth2callback`;
   const client = oauth.createOAuthClient(credentials, redirectUri);
-  const token = oauth.loadToken(TOKEN_PATH);
+  const token = oauth.loadToken(tokenPath);
   if (token) {
     client.setCredentials(token);
-    attachTokenListener(client);
+    attachTokenListener(client, tokenPath);
   }
   return { client, hasToken: !!token };
 }
 
-function attachTokenListener(client) {
+function attachTokenListener(client, tokenPath) {
   client.removeAllListeners('tokens');
   client.on('tokens', updated => {
-    oauth.saveToken(TOKEN_PATH, { ...oauth.loadToken(TOKEN_PATH), ...updated });
+    oauth.saveToken(tokenPath, { ...oauth.loadToken(tokenPath), ...updated });
   });
 }
 
 // 旧版把令牌放在工具目录 .tokens/，迁移到数据目录
-function migrateLegacyToken() {
+function migrateLegacyToken(tokenPath) {
   const legacy = path.join(ROOT, '.tokens/token.json');
-  if (!fs.existsSync(TOKEN_PATH) && fs.existsSync(legacy)) {
-    fs.mkdirSync(path.dirname(TOKEN_PATH), { recursive: true });
-    fs.copyFileSync(legacy, TOKEN_PATH);
+  if (!fs.existsSync(tokenPath) && fs.existsSync(legacy)) {
+    fs.mkdirSync(path.dirname(tokenPath), { recursive: true });
+    fs.copyFileSync(legacy, tokenPath);
   }
 }
 
-async function main() {
-  migrateLegacyToken();
+/**
+ * 启动服务。命令行直接运行时全部用默认值；桌面 App（electron/main.js）会传入：
+ * - dataDir：数据目录（App 内部只读，放到系统的应用数据目录）
+ * - credentialsPath：OAuth 客户端凭证路径
+ * - openBrowser：是否自动拉起系统浏览器（App 自己有窗口，传 false）
+ * - pickFolder：替换原生选目录实现（App 用 Electron 自带对话框）
+ * - onAuthorized：授权完成回调（App 收到后刷新窗口）
+ * 返回 { port, url, hasToken, server }。
+ */
+async function main(opts = {}) {
+  const DATA_DIR = opts.dataDir ? path.resolve(opts.dataDir) : defaultDataDir();
+  const REGISTRY_PATH = path.join(DATA_DIR, 'projects.json');
+  const TOKEN_PATH = path.join(DATA_DIR, '.tokens/token.json');
+  const CREDENTIALS_PATH = opts.credentialsPath || path.join(ROOT, 'credentials.json');
+  const openBrowser = opts.openBrowser !== undefined ? opts.openBrowser : !process.env.SYNC_MANAGER_NO_OPEN;
+  const pickFolderImpl = opts.pickFolder || pickFolder;
+  const onAuthorized = opts.onAuthorized || (() => {});
+
+  migrateLegacyToken(TOKEN_PATH);
   const port = await findAvailablePort(DEFAULT_PORT);
   const app = express();
 
@@ -71,7 +88,7 @@ async function main() {
   });
   app.use(express.json());
 
-  let { client: oauth2Client, hasToken } = buildOAuthClient(port);
+  let { client: oauth2Client, hasToken } = buildOAuthClient(port, CREDENTIALS_PATH, TOKEN_PATH);
   const driveCaches = new Map(); // projectId -> Map(spreadsheetId -> { modifiedTime, name, error })
 
   const statePathOf = id => path.join(DATA_DIR, 'projects', id, '.sync_state.json');
@@ -135,10 +152,12 @@ async function main() {
       const tokens = await oauth.exchangeCodeForToken(oauth2Client, code);
       oauth.saveToken(TOKEN_PATH, tokens);
       oauth2Client.setCredentials(tokens);
-      attachTokenListener(oauth2Client);
+      attachTokenListener(oauth2Client, TOKEN_PATH);
       hasToken = true;
       driveCaches.clear();
-      res.redirect('/');
+      if (opts.authSuccessHtml) res.type('html').send(opts.authSuccessHtml);
+      else res.redirect('/');
+      onAuthorized();
     } catch (err) {
       res.status(500).send(`oauth error: ${err.message}`);
     }
@@ -196,7 +215,7 @@ async function main() {
   // 弹出系统原生选目录对话框（macOS 访达 / Windows 资源管理器）
   app.post('/api/fs/pick', async (req, res) => {
     try {
-      res.json(await pickFolder(req.body && req.body.start));
+      res.json(await pickFolderImpl(req.body && req.body.start));
     } catch (err) {
       res.status(501).json({ error: err.message });
     }
@@ -361,19 +380,22 @@ async function main() {
   app.use('/api/p/:pid', projectRouter);
   app.use(express.static(path.join(ROOT, 'public')));
 
-  app.listen(port, '127.0.0.1', async () => {
-    const url = `http://localhost:${port}/`;
-    console.log(`[sync-manager] listening on ${url}`);
-    console.log(`[sync-manager] data dir: ${DATA_DIR}`);
-    if (!hasToken) {
-      console.log(`[sync-manager] no OAuth token; visit ${url}auth/start to authorize`);
-    }
-    if (!process.env.SYNC_MANAGER_NO_OPEN) {
-      try {
-        await open(hasToken ? url : `${url}auth/start`);
-      } catch (_err) { /* ignore */ }
-    }
+  const url = `http://localhost:${port}/`;
+  const server = await new Promise((resolve, reject) => {
+    const srv = app.listen(port, '127.0.0.1', () => resolve(srv));
+    srv.once('error', reject);
   });
+  console.log(`[sync-manager] listening on ${url}`);
+  console.log(`[sync-manager] data dir: ${DATA_DIR}`);
+  if (!hasToken) {
+    console.log(`[sync-manager] no OAuth token; visit ${url}auth/start to authorize`);
+  }
+  if (openBrowser) {
+    try {
+      await open(hasToken ? url : `${url}auth/start`);
+    } catch (_err) { /* ignore */ }
+  }
+  return { port, url, hasToken, server };
 }
 
 if (require.main === module) {

@@ -581,5 +581,10 @@
   els.btnClearState.addEventListener('click', clearState);
   els.btnClearLog.addEventListener('click', () => { els.log.textContent = ''; });
 
+  // 还没有项目时也提示授权（桌面 App 不会像命令行那样启动即打开授权页）
+  fetch('/api/auth-status').then(r => r.json()).then(s => {
+    if (!s.authorized) els.authBanner.classList.remove('hidden');
+  }).catch(() => {});
+
   loadProjects();
 })();

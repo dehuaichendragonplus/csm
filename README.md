@@ -2,11 +2,46 @@
 
 > 通用工具：项目相关的内容（表格清单、导出服务、生成命令）全部在 `syncmanager.config.json` 里，代码本身与项目无关，可直接复用到其他项目，见下文「复用到其他项目」。
 
-基于浏览器的图形化工具，用于检测配置文件里 `filelist` 所指的的 Google Sheets 表格哪些与本地 xlsx 文件存在差异，并支持下载到本地、或把本地 xlsx 上传覆盖云端。
+图形化工具（桌面 App，或浏览器访问本地服务），用于检测配置文件里 `filelist` 所指的的 Google Sheets 表格哪些与本地 xlsx 文件存在差异，并支持下载到本地、或把本地 xlsx 上传覆盖云端。
 
 可同时管理多个项目（见「多项目平台」）。
 
-## 环境要求
+## 桌面 App（推荐，仅 macOS）
+
+不需要安装 Node，双击即用。安装包由维护者构建后分发（见下文「构建 App 安装包」）：
+
+| 系统 | 安装包 |
+|---|---|
+| macOS Apple 芯片（M 系列） | `SyncManager-<版本>-mac-arm64.dmg` |
+| macOS Intel 芯片 | `SyncManager-<版本>-mac-x64.dmg` |
+
+**首次打开（macOS）**：安装包没有 Apple 开发者签名，第一次双击会被系统拦截。把 App 拖进「应用程序」后，在 Finder 里**右键 → 打开 → 打开**即可，之后正常双击。如果提示「已损坏，无法打开」，在终端执行一次：
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/Sync Manager.app"
+```
+
+App 与命令行版的区别：
+
+- **Google 授权在系统浏览器里完成**（Google 不允许在 App 内嵌窗口里登录）。点「前往授权」后会打开默认浏览器，授权完成后回到 App，App 会自动刷新。
+- **数据目录**改为系统应用数据目录：`~/Library/Application Support/Sync Manager/`。目录结构与命令行版的 `data/` 相同；从命令行版迁移时，把工具目录 `data/` 下的内容复制过去即可。运行日志在该目录的 `logs/main.log`。
+- **OAuth 凭证**：构建时工具目录里有 `credentials.json` 就会打进安装包，用户无需再配置；没有打进去时，App 首次启动会让用户选择一次 `credentials.json`，并保存到数据目录。
+- **自定义动作的环境变量**：从访达或 Dock 启动的 App 拿不到终端里的 PATH，App 启动时会读取一次登录 shell 的环境变量（Homebrew、dotnet 等），所以 `actions` 里的命令和在终端里执行时一样。
+- 同一时间只能运行一个实例；macOS 关闭窗口后 App 仍在 Dock 中，点 Dock 图标可以重新打开窗口。
+
+### 构建 App 安装包（维护者）
+
+```bash
+npm install
+npm run app        # 开发模式直接运行（不打包）
+npm run dist:mac   # 输出 dist/ 下的 arm64 + x64 dmg
+```
+
+- 版本号取 `package.json` 的 `version`，发新版前先改这里。
+- 构建前把 `credentials.json` 放在工具目录，就会打进安装包（`Contents/Resources/credentials.json`）。不要把安装包发到团队以外。
+- 目前**不签名**（`build.mac.identity: null`）。有公司 Apple Developer ID 后，删掉这一项并配置签名和公证，用户就不用再「右键打开」。
+
+## 环境要求（命令行 / 浏览器方式）
 
 - Node.js ≥ 18（项目使用 Node 内置测试运行器）
 - 拥有各项目表格读取权限（要上传覆盖则需编辑权限）的 Google 账号
@@ -33,7 +68,7 @@
 | 项目自己的配置 | 项目目录下的 `syncmanager.config.json`（建议随项目入库） |
 | OAuth 客户端凭证 | 工具目录 `credentials.json` |
 
-可用环境变量 `SYNC_MANAGER_DATA` 改变数据目录。配置文件每次请求都会重新读取，改完无需重启。
+以上是命令行版的位置；桌面 App 的数据目录见「桌面 App」一节。两种方式都可用环境变量 `SYNC_MANAGER_DATA` 改变数据目录。配置文件每次请求都会重新读取，改完无需重启。
 
 ### 项目配置 `syncmanager.config.json`
 
@@ -86,6 +121,8 @@
 - `server.js` — Express 服务，默认监听端口 7321（被占用时自动递增寻找可用端口）
 - `lib/` — 各功能模块（status、sync-state、drive-api、downloader、gen-client-runner、version-sidecar 等）
 - `public/` — HTML / CSS / JS 前端
+- `electron/main.js` — 桌面 App 外壳（启动 server.js、窗口、系统浏览器授权、原生选目录）
+- `build/icon.png` — App 图标（electron-builder 自动转换为 icns / ico）
 - `.sync_state.json` — 本机每个表上次同步时的 size / mtime / 云端 `modifiedTime`（gitignore）
 - `.tokens/token.json` — OAuth refresh token（gitignore）
 - `credentials.json` — OAuth 客户端 ID / Secret

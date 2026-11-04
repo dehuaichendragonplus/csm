@@ -1,11 +1,14 @@
 {
   "name": "sync-manager",
+  "productName": "Sync Manager",
   "version": "1.0.0",
   "private": true,
-  "description": "Browser-based GUI to sync Google Sheets xlsx files and trigger gen_client",
-  "main": "server.js",
+  "description": "Sync Manager：Google Sheets 表格与本地 xlsx 同步工具（浏览器 / 桌面 App）",
+  "main": "electron/main.js",
   "scripts": {
     "start": "node server.js",
+    "app": "electron .",
+    "dist:mac": "electron-builder --mac",
     "test": "node --test 'test/**/*.test.js'"
   },
   "engines": {
@@ -15,5 +18,55 @@
     "express": "^4.19.2",
     "googleapis": "^144.0.0",
     "open": "^8.4.2"
+  },
+  "devDependencies": {
+    "electron": "^45.2.2",
+    "electron-builder": "^26.18.0"
+  },
+  "author": "DragonPlus",
+  "build": {
+    "appId": "com.dragonplus.syncmanager",
+    "productName": "Sync Manager",
+    "copyright": "DragonPlus",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "server.js",
+      "lib/**/*",
+      "public/**/*",
+      "electron/**/*",
+      "package.json",
+      "!lib/.gitkeep"
+    ],
+    "extraResources": [
+      {
+        "from": ".",
+        "to": ".",
+        "filter": [
+          "credentials.json"
+        ]
+      }
+    ],
+    "asar": true,
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "identity": null,
+      "artifactName": "SyncManager-${version}-mac-${arch}.${ext}"
+    },
+    "electronLanguages": [
+      "zh_CN",
+      "en"
+    ]
   }
 }
