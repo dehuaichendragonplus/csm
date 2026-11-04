@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const { parseEnvOutput, mergeEnv } = require('../lib/shell-env');
 
-const M = '__SYNC_MANAGER_ENV__';
+const M = '__CSM_ENV__';
 
 test('parseEnvOutput 忽略 shell 启动时打印的噪声，只取标记之间的内容', () => {
   const out = `Welcome!\n${M}PATH=/opt/homebrew/bin:/usr/bin\0FOO=a=b\0MULTI=x\ny\0${M}bye`;

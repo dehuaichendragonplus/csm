@@ -560,7 +560,7 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ start: dirCurrent })
       });
-      if (resp.status === 404) { dirEls.msg.textContent = '服务端还没有该接口，请重启 Sync Manager 后再试（暂时可用下方列表浏览）'; return; }
+      if (resp.status === 404) { dirEls.msg.textContent = '服务端还没有该接口，请重启 CSM 后再试（暂时可用下方列表浏览）'; return; }
       const data = await resp.json();
       if (!resp.ok) { dirEls.msg.textContent = `${data.error}，请用下方列表浏览`; return; }
       if (data.path) await browse(data.path); // 跳到所选目录，确认后点「添加此目录」

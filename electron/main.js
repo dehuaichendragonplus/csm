@@ -1,5 +1,5 @@
 'use strict';
-// Sync Manager 桌面 App 外壳：在主进程里启动原有的 Express 服务，窗口加载本地页面。
+// CSM（Config Sync Manager）桌面 App 外壳：在主进程里启动原有的 Express 服务，窗口加载本地页面。
 // 业务逻辑全部复用 server.js / lib/，这里只处理桌面环境特有的问题：
 // 数据目录、OAuth 凭证、Google 登录走系统浏览器、PATH 补全、原生选目录。
 const path = require('node:path');
@@ -9,7 +9,10 @@ const { fixProcessEnv } = require('../lib/shell-env');
 const oauth = require('../lib/oauth');
 
 const ROOT = path.join(__dirname, '..');
-const DATA_DIR = process.env.SYNC_MANAGER_DATA ? path.resolve(process.env.SYNC_MANAGER_DATA) : app.getPath('userData');
+const ENV_DATA_DIR = process.env.CSM_DATA || process.env.SYNC_MANAGER_DATA; // 旧变量名继续兼容
+const DATA_DIR = ENV_DATA_DIR ? path.resolve(ENV_DATA_DIR) : app.getPath('userData');
+// 改名前（Sync Manager）的数据目录，首次启动时迁移过来
+const LEGACY_DATA_DIR = path.join(app.getPath('appData'), 'Sync Manager');
 const USER_CREDENTIALS = path.join(DATA_DIR, 'credentials.json');
 
 let mainWindow = null;
@@ -47,7 +50,7 @@ async function resolveCredentials() {
   while (true) {
     const { response } = await dialog.showMessageBox({
       type: 'info',
-      title: 'Sync Manager',
+      title: 'CSM',
       message: '首次使用需要 Google OAuth 客户端凭证',
       detail: '请选择 credentials.json（从团队 wiki 或维护者处获取，格式见 credentials.json.example）。\n选择后会保存到：\n' + USER_CREDENTIALS,
       buttons: ['选择文件…', '退出'],
@@ -85,7 +88,7 @@ async function pickFolder(startDir) {
 const AUTH_SUCCESS_HTML = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>授权完成</title>
 <style>body{font:16px -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f6f7f9;color:#222}
 div{text-align:center}h1{font-size:22px;margin:0 0 8px}p{color:#666;margin:0}</style></head>
-<body><div><h1>✅ Google 授权完成</h1><p>可以关闭此页面，回到 Sync Manager。</p></div></body></html>`;
+<body><div><h1>✅ Google 授权完成</h1><p>可以关闭此页面，回到 CSM。</p></div></body></html>`;
 
 function onAuthorized() {
   if (!mainWindow) return;
@@ -110,7 +113,7 @@ function createWindow() {
     height: 860,
     minWidth: 900,
     minHeight: 600,
-    title: 'Sync Manager',
+    title: 'CSM',
     show: false,
     webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true }
   });
@@ -133,8 +136,26 @@ function createWindow() {
   mainWindow.loadURL(serverInfo.url);
 }
 
+// 只搬业务数据（项目注册表、令牌、同步状态、凭证），不搬 Chromium 缓存；旧目录原样保留
+const LEGACY_ITEMS = ['projects.json', '.tokens', 'projects', 'credentials.json'];
+
+function migrateLegacyDataDir() {
+  if (ENV_DATA_DIR) return false;
+  if (fs.existsSync(path.join(DATA_DIR, 'projects.json'))) return false;
+  if (!fs.existsSync(path.join(LEGACY_DATA_DIR, 'projects.json'))) return false;
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  for (const item of LEGACY_ITEMS) {
+    const from = path.join(LEGACY_DATA_DIR, item);
+    const to = path.join(DATA_DIR, item);
+    if (fs.existsSync(from) && !fs.existsSync(to)) fs.cpSync(from, to, { recursive: true, preserveTimestamps: true });
+  }
+  return true;
+}
+
 async function start() {
+  const migrated = migrateLegacyDataDir();
   setupFileLog();
+  if (migrated) console.log(`[app] migrated data from ${LEGACY_DATA_DIR}`);
   const envOk = fixProcessEnv();
   console.log(`[app] version ${app.getVersion()}, data dir ${DATA_DIR}, shell env ${envOk ? 'loaded' : 'fallback'}`);
 
@@ -165,7 +186,7 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady().then(start).catch(err => {
     console.error('[app] fatal:', err && err.stack || err);
-    dialog.showErrorBox('Sync Manager 启动失败', `${err && err.message || err}\n\n日志：${path.join(DATA_DIR, 'logs', 'main.log')}`);
+    dialog.showErrorBox('CSM 启动失败', `${err && err.message || err}\n\n日志：${path.join(DATA_DIR, 'logs', 'main.log')}`);
     app.quit();
   });
 

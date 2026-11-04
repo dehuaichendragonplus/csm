@@ -1,4 +1,4 @@
-# Sync Manager
+# CSM（Config Sync Manager）
 
 > 通用工具：项目相关的内容（表格清单、导出服务、生成命令）全部在 `syncmanager.config.json` 里，代码本身与项目无关，可直接复用到其他项目，见下文「复用到其他项目」。
 
@@ -12,19 +12,19 @@
 
 | 系统 | 安装包 |
 |---|---|
-| macOS Apple 芯片（M 系列） | `SyncManager-<版本>-mac-arm64.dmg` |
-| macOS Intel 芯片 | `SyncManager-<版本>-mac-x64.dmg` |
+| macOS Apple 芯片（M 系列） | `CSM-<版本>-mac-arm64.dmg` |
+| macOS Intel 芯片 | `CSM-<版本>-mac-x64.dmg` |
 
 **首次打开（macOS）**：安装包没有 Apple 开发者签名，第一次双击会被系统拦截。把 App 拖进「应用程序」后，在 Finder 里**右键 → 打开 → 打开**即可，之后正常双击。如果提示「已损坏，无法打开」，在终端执行一次：
 
 ```bash
-xattr -dr com.apple.quarantine "/Applications/Sync Manager.app"
+xattr -dr com.apple.quarantine "/Applications/CSM.app"
 ```
 
 App 与命令行版的区别：
 
 - **Google 授权在系统浏览器里完成**（Google 不允许在 App 内嵌窗口里登录）。点「前往授权」后会打开默认浏览器，授权完成后回到 App，App 会自动刷新。
-- **数据目录**改为系统应用数据目录：`~/Library/Application Support/Sync Manager/`。目录结构与命令行版的 `data/` 相同；从命令行版迁移时，把工具目录 `data/` 下的内容复制过去即可。运行日志在该目录的 `logs/main.log`。
+- **数据目录**改为系统应用数据目录：`~/Library/Application Support/CSM/`（由旧版 Sync Manager App 升级时，首次启动会自动把旧目录的项目、授权和同步状态复制过来）。目录结构与命令行版的 `data/` 相同；从命令行版迁移时，把工具目录 `data/` 下的内容复制过去即可。运行日志在该目录的 `logs/main.log`。
 - **OAuth 凭证**：构建时工具目录里有 `credentials.json` 就会打进安装包，用户无需再配置；没有打进去时，App 首次启动会让用户选择一次 `credentials.json`，并保存到数据目录。
 - **自定义动作的环境变量**：从访达或 Dock 启动的 App 拿不到终端里的 PATH，App 启动时会读取一次登录 shell 的环境变量（Homebrew、dotnet 等），所以 `actions` 里的命令和在终端里执行时一样。
 - 同一时间只能运行一个实例；macOS 关闭窗口后 App 仍在 Dock 中，点 Dock 图标可以重新打开窗口。
@@ -49,7 +49,7 @@ npm run dist:mac   # 输出 dist/ 下的 arm64 + x64 dmg
 
 ## 多项目平台
 
-一个 Sync Manager 管理多个项目。页面顶部是项目标签栏：
+一个 CSM 管理多个项目。页面顶部是项目标签栏：
 
 - **添加项目**：点「＋ 添加项目」，在弹窗里逐级浏览目录，选中项目的**配置表目录**（含 `syncmanager.config.json` 或 `filelist.json` 的目录会标 ★），点「添加此目录」。
   - 目录里已有 `syncmanager.config.json` → 直接使用。
@@ -68,7 +68,7 @@ npm run dist:mac   # 输出 dist/ 下的 arm64 + x64 dmg
 | 项目自己的配置 | 项目目录下的 `syncmanager.config.json`（建议随项目入库） |
 | OAuth 客户端凭证 | 工具目录 `credentials.json` |
 
-以上是命令行版的位置；桌面 App 的数据目录见「桌面 App」一节。两种方式都可用环境变量 `SYNC_MANAGER_DATA` 改变数据目录。配置文件每次请求都会重新读取，改完无需重启。
+以上是命令行版的位置；桌面 App 的数据目录见「桌面 App」一节。两种方式都可用环境变量 `CSM_DATA` 改变数据目录（旧名 `SYNC_MANAGER_DATA` 仍然有效）。配置文件每次请求都会重新读取，改完无需重启。
 
 ### 项目配置 `syncmanager.config.json`
 

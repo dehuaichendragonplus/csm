@@ -23,7 +23,8 @@ const DEFAULT_PORT = 7321;
 
 // 平台数据目录：项目注册表、Google 令牌、各项目的同步状态都在这里，与被管理的项目仓库互不污染
 function defaultDataDir() {
-  return process.env.SYNC_MANAGER_DATA ? path.resolve(process.env.SYNC_MANAGER_DATA) : path.join(ROOT, 'data');
+  const dir = process.env.CSM_DATA || process.env.SYNC_MANAGER_DATA; // 旧变量名继续兼容
+  return dir ? path.resolve(dir) : path.join(ROOT, 'data');
 }
 
 function buildOAuthClient(port, credentialsPath, tokenPath) {
@@ -68,7 +69,7 @@ async function main(opts = {}) {
   const REGISTRY_PATH = path.join(DATA_DIR, 'projects.json');
   const TOKEN_PATH = path.join(DATA_DIR, '.tokens/token.json');
   const CREDENTIALS_PATH = opts.credentialsPath || path.join(ROOT, 'credentials.json');
-  const openBrowser = opts.openBrowser !== undefined ? opts.openBrowser : !process.env.SYNC_MANAGER_NO_OPEN;
+  const openBrowser = opts.openBrowser !== undefined ? opts.openBrowser : !(process.env.CSM_NO_OPEN || process.env.SYNC_MANAGER_NO_OPEN);
   const pickFolderImpl = opts.pickFolder || pickFolder;
   const onAuthorized = opts.onAuthorized || (() => {});
 
@@ -385,10 +386,10 @@ async function main(opts = {}) {
     const srv = app.listen(port, '127.0.0.1', () => resolve(srv));
     srv.once('error', reject);
   });
-  console.log(`[sync-manager] listening on ${url}`);
-  console.log(`[sync-manager] data dir: ${DATA_DIR}`);
+  console.log(`[csm] listening on ${url}`);
+  console.log(`[csm] data dir: ${DATA_DIR}`);
   if (!hasToken) {
-    console.log(`[sync-manager] no OAuth token; visit ${url}auth/start to authorize`);
+    console.log(`[csm] no OAuth token; visit ${url}auth/start to authorize`);
   }
   if (openBrowser) {
     try {
@@ -400,7 +401,7 @@ async function main(opts = {}) {
 
 if (require.main === module) {
   main().catch(err => {
-    console.error('[sync-manager] fatal:', err.message);
+    console.error('[csm] fatal:', err.message);
     process.exit(1);
   });
 }
