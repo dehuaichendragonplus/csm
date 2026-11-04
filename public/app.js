@@ -622,6 +622,15 @@
   els.btnClearState.addEventListener('click', clearState);
   els.btnClearLog.addEventListener('click', () => { els.log.textContent = ''; });
 
+  // 供 filelist-manager.js 使用
+  window.CSM = {
+    api,
+    currentId: () => currentId,
+    reloadTables: () => loadTables(),
+    appendLog,
+    showAuthBanner: () => els.authBanner.classList.remove('hidden')
+  };
+
   // ---------- 配置表搜索 ----------
   els.search.addEventListener('input', () => {
     searchTerms = TableSearch.parseQuery(els.search.value);
@@ -641,7 +650,7 @@
   });
   // ⌘F / Ctrl+F 或 / 聚焦搜索框（弹窗打开时不抢焦点）
   document.addEventListener('keydown', e => {
-    if (!dirEls.modal.classList.contains('hidden')) return;
+    if (document.querySelector('.modal:not(.hidden)')) return;
     const typing = /^(INPUT|TEXTAREA)$/.test(document.activeElement && document.activeElement.tagName);
     if (((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f') || (e.key === '/' && !typing)) {
       e.preventDefault();

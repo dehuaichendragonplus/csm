@@ -7,7 +7,8 @@ const { findAvailablePort } = require('./lib/port-scanner');
 const oauth = require('./lib/oauth');
 const { loadFilelist } = require('./lib/filelist-loader');
 const { loadState, saveState, updateEntry } = require('./lib/sync-state');
-const { getModifiedTimes, uploadXlsxToSheet, downloadViaDrive } = require('./lib/drive-api');
+const { getModifiedTimes, uploadXlsxToSheet, downloadViaDrive, getFileInfo } = require('./lib/drive-api');
+const filelistEditor = require('./lib/filelist-editor');
 const { aggregateTables } = require('./lib/table-aggregator');
 const { downloadOne } = require('./lib/downloader');
 const { CONFIG_FILENAME, loadConfig, publicConfig } = require('./lib/config');
@@ -351,6 +352,96 @@ async function main(opts = {}) {
       res.json({ ok: true, modifiedTime: info.modifiedTime, size: buf.length });
     } catch (err) {
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ---------- 配置表清单（filelist.json）预览与编辑 ----------
+  const editorStatus = err => ({ INVALID: 400, INVALID_JSON: 500, NOT_FOUND: 404, DUPLICATE_PATH: 409, DUPLICATE_ID: 409 }[err.code] || 500);
+  const sendEditorError = (res, err) => res.status(err.status || editorStatus(err)).json({ error: err.message, code: err.code, paths: err.paths });
+
+  // 新增 / 修改后只补查这一个表的云端修改时间，避免整表刷新
+  async function refreshOneInCache(ctx, spreadsheetId) {
+    if (!hasToken || !spreadsheetId) return;
+    try {
+      const m = await getModifiedTimes([spreadsheetId], oauth2Client);
+      driveCaches.get(ctx.id).set(spreadsheetId, m.get(spreadsheetId));
+    } catch (_) { /* 下次刷新时再查 */ }
+  }
+
+  projectRouter.get('/filelist', (req, res) => {
+    const { cfg, project } = req.ctx;
+    try {
+      const { entries } = filelistEditor.readFilelistRaw(cfg.filelistPath);
+      const baseDir = path.dirname(cfg.filelistPath);
+      const rows = entries.map(e => {
+        let local = null;
+        try {
+          const st = fs.statSync(path.resolve(baseDir, String(e.path || '')));
+          local = { size: st.size, mtime: st.mtime.toISOString() };
+        } catch (_) { /* 本地还没有这个文件 */ }
+        return { ...e, local };
+      });
+      res.json({
+        filelist: path.relative(project.dir, cfg.filelistPath) || path.basename(cfg.filelistPath),
+        entries: rows,
+        dirs: filelistEditor.listDirs(entries),
+        defaultDir: filelistEditor.mostCommonDir(entries)
+      });
+    } catch (err) {
+      sendEditorError(res, err);
+    }
+  });
+
+  // 粘贴 Google 表格链接 / ID → 查询云端表名，给出推荐的表名、路径，并提示是否已在清单中
+  projectRouter.post('/filelist/resolve', async (req, res) => {
+    const input = req.body && req.body.input;
+    const spreadsheetId = filelistEditor.parseSpreadsheetId(input);
+    if (!spreadsheetId) return res.status(400).json({ error: '无法从输入中识别出 Google 表格 ID，请粘贴形如 https://docs.google.com/spreadsheets/d/xxxx/edit 的链接' });
+    if (!hasToken) return res.status(401).json({ error: 'OAUTH_REQUIRED' });
+    try {
+      const { entries } = filelistEditor.readFilelistRaw(req.ctx.cfg.filelistPath);
+      const info = await getFileInfo(spreadsheetId, oauth2Client);
+      const dir = typeof req.body.dir === 'string' ? req.body.dir : undefined;
+      res.json({
+        spreadsheetId,
+        cloud: info,
+        suggestion: filelistEditor.suggestEntry(info.name, entries, dir),
+        existing: entries.filter(e => String(e.spreadsheetId || '').trim() === spreadsheetId).map(e => ({ path: e.path, name: e.name }))
+      });
+    } catch (err) {
+      sendEditorError(res, err);
+    }
+  });
+
+  projectRouter.post('/filelist', async (req, res) => {
+    const body = req.body || {};
+    try {
+      const entry = filelistEditor.addEntry(req.ctx.cfg.filelistPath, body.entry, { allowDuplicateId: !!body.allowDuplicateId });
+      await refreshOneInCache(req.ctx, entry.spreadsheetId);
+      res.json({ entry });
+    } catch (err) {
+      sendEditorError(res, err);
+    }
+  });
+
+  projectRouter.put('/filelist', async (req, res) => {
+    const body = req.body || {};
+    if (!body.originalPath) return res.status(400).json({ error: 'originalPath 不能为空' });
+    try {
+      const entry = filelistEditor.updateEntry(req.ctx.cfg.filelistPath, body.originalPath, body.entry, { allowDuplicateId: !!body.allowDuplicateId });
+      await refreshOneInCache(req.ctx, entry.spreadsheetId);
+      res.json({ entry });
+    } catch (err) {
+      sendEditorError(res, err);
+    }
+  });
+
+  // 只从清单移除，不删除本地 xlsx
+  projectRouter.delete('/filelist', (req, res) => {
+    try {
+      res.json({ removed: filelistEditor.removeEntry(req.ctx.cfg.filelistPath, req.query.path) });
+    } catch (err) {
+      sendEditorError(res, err);
     }
   });
 
