@@ -189,18 +189,35 @@
     const nameCell = document.createElement('div');
     nameCell.append(nameDiv, metaDiv);
 
+    // 「云端」点击打开云端表，「本地」点击在访达中定位本地文件
     const cloudCell = document.createElement('div');
     cloudCell.className = 'meta';
-    cloudCell.textContent = row.cloudModifiedTime ? `云端: ${formatTime(row.cloudModifiedTime)}` : '—';
+    if (row.spreadsheetId) {
+      const a = document.createElement('a');
+      a.className = 'entry-link';
+      a.href = `https://docs.google.com/spreadsheets/d/${encodeURIComponent(row.spreadsheetId)}/edit`;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.textContent = row.cloudModifiedTime ? `云端: ${formatTime(row.cloudModifiedTime)}` : '云端: —';
+      a.title = '打开云端表';
+      a.addEventListener('click', e => e.stopPropagation());
+      cloudCell.appendChild(a);
+    } else {
+      cloudCell.textContent = '—';
+    }
 
     const localCell = document.createElement('div');
     localCell.className = 'meta';
     if (row.error) {
       localCell.textContent = `错误: ${row.error}`;
-    } else if (row.lastSyncedModifiedTime) {
-      localCell.textContent = `本地: ${formatTime(row.lastSyncedModifiedTime)}`;
     } else {
-      localCell.textContent = '本地: —';
+      const a = document.createElement('a');
+      a.className = 'entry-link';
+      a.href = '#';
+      a.textContent = row.lastSyncedModifiedTime ? `本地: ${formatTime(row.lastSyncedModifiedTime)}` : '本地: —';
+      a.title = row.localExists ? '在访达中显示本地文件' : '本地还没有这个文件，打开所在目录';
+      a.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); revealLocal(row.path); });
+      localCell.appendChild(a);
     }
 
     div.appendChild(iconCell);
@@ -640,7 +657,22 @@
   els.btnClearLog.addEventListener('click', () => { els.log.textContent = ''; });
 
   // 供 filelist-manager.js 使用
+  // 在访达中定位本地文件（相对 filelist 所在目录）；文件不存在时打开最近的上级目录
+  async function revealLocal(relPath) {
+    try {
+      const resp = await fetch(api('/reveal'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: relPath || '' }) });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) { appendLog(`! 打开本地位置失败：${data.error || resp.status}\n`); return null; }
+      if (!data.exact) appendLog(`（本地还没有 ${relPath}，已打开所在目录）\n`);
+      return data;
+    } catch (err) {
+      appendLog(`! 打开本地位置失败：${err.message}\n`);
+      return null;
+    }
+  }
+
   window.CSM = {
+    revealLocal,
     api,
     currentId: () => currentId,
     reloadTables: () => loadTables(),

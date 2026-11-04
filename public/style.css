@@ -319,3 +319,9 @@ html, body {
 .fl-col-ops .fl-ul { color: #b26a00; border-color: #f0cf9c; }
 .fl-col-ops button:disabled { opacity: 0.45; cursor: not-allowed; }
 .fl-busy { font-size: 12px; color: #888; margin-right: 6px; }
+
+/* 本地 / 云端入口 */
+.fl-path-link { cursor: pointer; }
+.fl-path-link:hover { color: #007aff; text-decoration: underline; }
+.row .meta .entry-link { color: inherit; text-decoration: none; }
+.row .meta .entry-link:hover { color: #007aff; text-decoration: underline; }

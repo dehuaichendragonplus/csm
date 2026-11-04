@@ -168,6 +168,14 @@ async function start() {
     credentialsPath,
     openBrowser: false,
     pickFolder,
+    // 文件存在时在访达中选中它，目录则直接打开
+    revealPath: async target => {
+      const { nearestExisting } = require('../lib/reveal');
+      const p = nearestExisting(target);
+      if (!p) throw new Error(`路径不存在：${target}`);
+      if (fs.statSync(p).isFile()) shell.showItemInFolder(p);
+      else { const err = await shell.openPath(p); if (err) throw new Error(err); }
+    },
     onAuthorized,
     authSuccessHtml: AUTH_SUCCESS_HTML
   });

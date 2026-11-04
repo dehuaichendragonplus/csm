@@ -9,6 +9,7 @@ const { loadFilelist } = require('./lib/filelist-loader');
 const { loadState, saveState, updateEntry, hashFile } = require('./lib/sync-state');
 const { getModifiedTimes, uploadXlsxToSheet, downloadViaDrive, getFileInfo, resolveFolderPath, findSheetInFolder, createSheetFromXlsx } = require('./lib/drive-api');
 const localTables = require('./lib/local-tables');
+const reveal = require('./lib/reveal');
 const filelistEditor = require('./lib/filelist-editor');
 const driveTree = require('./lib/drive-tree');
 const { aggregateTables } = require('./lib/table-aggregator');
@@ -74,6 +75,7 @@ async function main(opts = {}) {
   const CREDENTIALS_PATH = opts.credentialsPath || path.join(ROOT, 'credentials.json');
   const openBrowser = opts.openBrowser !== undefined ? opts.openBrowser : !(process.env.CSM_NO_OPEN || process.env.SYNC_MANAGER_NO_OPEN);
   const pickFolderImpl = opts.pickFolder || pickFolder;
+  const revealImpl = opts.revealPath || reveal.revealPath;
   const onAuthorized = opts.onAuthorized || (() => {});
 
   migrateLegacyToken(TOKEN_PATH);
@@ -687,6 +689,22 @@ async function main(opts = {}) {
       res.json(ids.length ? await persistCloudLocations(req.ctx, ids) : { updated: 0, failed: {}, queried: 0 });
     } catch (err) {
       sendEditorError(res, err);
+    }
+  });
+
+  // 在访达中定位本地文件 / 打开目录。body: { path: 相对 filelist 所在目录的路径 }，空则打开该目录本身；
+  // 文件不存在时打开最近的存在的上级目录。只允许打开 filelist 所在目录之内的路径
+  projectRouter.post('/reveal', async (req, res) => {
+    const baseDir = path.dirname(req.ctx.cfg.filelistPath);
+    const rel = String((req.body && req.body.path) || '').replace(/\\/g, '/');
+    const target = path.resolve(baseDir, rel || '.');
+    if (!reveal.insideBase(baseDir, target)) return res.status(400).json({ error: '只能打开配置表目录之内的路径' });
+    try {
+      const shown = reveal.nearestExisting(target);
+      await revealImpl(target);
+      res.json({ ok: true, shown, exact: shown === target });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
     }
   });
 

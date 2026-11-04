@@ -216,7 +216,7 @@
   function renderLocalRow(t) {
     const tr = document.createElement('tr');
     tr.appendChild(td(t.name, 'fl-col-name'));
-    tr.appendChild(pathCell(relLocalParts(t.path), '/', 'fl-col-path', `${baseLabel}${t.path}`));
+    tr.appendChild(localPathCell(t.path, true));
     const target = cloudTargetOf(t.path);
     let tc;
     if (!rootInfo) { tc = td('正在识别云端目录…', 'fl-muted'); }
@@ -422,6 +422,20 @@
     return c;
   }
 
+  // 本地路径单元格：点击在访达中显示文件（不存在则打开所在目录）
+  function localPathCell(relPath, exists) {
+    const c = pathCell(relLocalParts(relPath), '/', 'fl-col-path fl-path-link',
+      `${exists ? '在访达中显示' : '本地还没有这个文件，点击打开所在目录'}\n${baseLabel}${relPath}`);
+    c.addEventListener('click', ev => { ev.stopPropagation(); revealLocal(relPath); });
+    c.addEventListener('dblclick', ev => ev.stopPropagation());
+    return c;
+  }
+
+  async function revealLocal(relPath) {
+    const data = await window.CSM.revealLocal(relPath);
+    if (data && !data.exact) setText(el.flash, `本地还没有 ${relPath}，已打开所在目录`);
+  }
+
   function cloudPathCell(e) {
     if (!e.spreadsheetId) {
       const c = td('缺少 ID', 'fl-col-cloud fl-bad');
@@ -508,7 +522,7 @@
   function renderRow(e) {
     const tr = document.createElement('tr');
     tr.appendChild(td(e.name, 'fl-col-name'));
-    tr.appendChild(pathCell(relLocalParts(e.path), '/', 'fl-col-path', `${baseLabel}${e.path}`));
+    tr.appendChild(localPathCell(e.path, !!e.local));
     tr.appendChild(cloudPathCell(e));
     tr.appendChild(td(e.description, 'fl-col-desc'));
 
@@ -911,6 +925,8 @@
   el.add.addEventListener('click', () => openEditor(null));
   el.rootEdit.addEventListener('click', openRootEditor);
   $('fl-cloud-refresh').addEventListener('click', () => syncCloudPaths(true));
+  // 打开映射的本地目录（如 Configs/Input/Datas）
+  $('fl-open-local').addEventListener('click', () => revealLocal(localRootParts().join('/')));
 
   el.editClose.addEventListener('click', closeEditor);
   el.cancel.addEventListener('click', closeEditor);
