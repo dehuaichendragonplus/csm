@@ -2,7 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { makeXlsx, zip } = require('./helpers/make-xlsx');
 const { readWorkbook, colName, colIndex, normalizeNumber, decodeXml } = require('../lib/xlsx-reader');
-const { diffWorkbooks, alignRows, sameCell } = require('../lib/xlsx-diff');
+const { diffWorkbooks, alignRows, alignedEntries, buildView, sameCell } = require('../lib/xlsx-diff');
 
 test('readWorkbook：按工作表顺序读出共享字符串、数字、布尔，去掉尾部空行空列', () => {
   const buf = makeXlsx({
@@ -84,4 +84,35 @@ test('diffWorkbooks：工作表增删、Luban 表头作为列名、改动数量�
 test('alignRows：数字的浮点尾数差异不影响相同行判断以外的配对', () => {
   const ops = alignRows([['a'], ['b'], ['c']], [['a'], ['c']]);
   assert.deepStrictEqual(ops.map(o => o.op), ['same', 'local', 'same']);
+});
+
+test('view：小表带上全部相同行，修改行标出改动列，本地 / 云端行号各自独立', () => {
+  const local = [{ name: 'S', rows: [['id', 'v'], ['1', 'a'], ['2', 'b'], ['3', 'c']] }];
+  const cloud = [{ name: 'S', rows: [['id', 'v'], ['1', 'a'], ['new', 'x'], ['2', 'B'], ['3', 'c']] }];
+  const v = diffWorkbooks(local, cloud).sheets[0].view;
+  assert.strictEqual(v.full, true);
+  assert.strictEqual(v.cols, 2);
+  assert.deepStrictEqual(v.rows.map(r => [r.k, r.l, r.c]), [['=', 1, 1], ['=', 2, 2], ['C', undefined, 3], ['~', 3, 4], ['=', 4, 5]]);
+  const mod = v.rows.find(r => r.k === '~');
+  assert.deepStrictEqual([mod.lv, mod.cv, mod.d], [['2', 'b'], ['2', 'B'], [1]]);
+});
+
+test('view：大表只保留改动前后的上下文，其余相同行折叠成 gap；改动太多时截断', () => {
+  const L = Array.from({ length: 100 }, (_, i) => [String(i)]);
+  const C = L.map(r => r.slice());
+  C[50] = ['x'];
+  const entries = alignedEntries(L, C, alignRows(L, C));
+  const v = buildView(L, C, entries, { full: false, context: 2 });
+  assert.deepStrictEqual(v.rows.map(r => r.k), ['gap', '=', '=', '~', '=', '=', 'gap']);
+  assert.deepStrictEqual([v.rows[0].n, v.rows[0].l, v.rows[0].c], [48, 1, 1]);
+  assert.deepStrictEqual([v.rows[6].n, v.rows[6].l], [47, 54]);
+  const many = L.map(() => ['y']);
+  const t = buildView(L, many, alignedEntries(L, many, alignRows(L, many)), { maxChanges: 10 });
+  assert.strictEqual(t.truncated, true);
+  assert.strictEqual(t.rows.filter(r => r.k !== '=').length, 10);
+});
+
+test('view：只在一边的工作表，全部行作为新增 / 删除展示', () => {
+  const d = diffWorkbooks([{ name: 'A', rows: [['a'], ['b']] }], []);
+  assert.deepStrictEqual(d.sheets[0].view.rows.map(r => [r.k, r.l]), [['L', 1], ['L', 2]]);
 });

@@ -222,7 +222,24 @@
         <button id="diff-close" type="button" title="关闭">✕</button>
       </header>
       <div id="diff-meta" class="diff-meta"></div>
-      <div id="diff-body" class="diff-body"></div>
+      <div class="diff-toolbar">
+        <div class="diff-seg" id="diff-mode-seg">
+          <button type="button" data-v="unified" title="上下排列：旧行在上、新行在下">统一</button>
+          <button type="button" data-v="split" title="左右并排：左边旧、右边新">并排</button>
+        </div>
+        <button type="button" id="diff-swap" title="交换旧 / 新两边">⇄ 交换</button>
+        <label title="只显示有改动的列（以及主键列）"><input type="checkbox" id="diff-onlycols"> 只看改动列</label>
+        <label title="不折叠相同的行"><input type="checkbox" id="diff-allrows"> 显示全部行</label>
+        <span class="diff-spacer"></span>
+        <span id="diff-pos" class="diff-pos"></span>
+        <button type="button" id="diff-prev" title="上一处改动（K / ⌥↑）">↑</button>
+        <button type="button" id="diff-next" title="下一处改动（J / ⌥↓）">↓</button>
+      </div>
+      <div class="diff-main">
+        <aside id="diff-tree" class="diff-tree"></aside>
+        <section id="diff-view" class="diff-view"></section>
+        <div id="diff-ruler" class="diff-ruler" title="点击跳转"></div>
+      </div>
       <footer class="modal-foot">
         <p id="diff-msg" class="fl-msg"></p>
         <div class="fl-foot-btns">
