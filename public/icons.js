@@ -34,6 +34,10 @@
     copy: svg('<rect x="7" y="7" width="9" height="9" rx="1.5"/><path d="M4 12V4.5A1.5 1.5 0 0 1 5.5 3H13"/>'),
     keyboard: svg('<rect x="2.5" y="4.5" width="15" height="11" rx="2"/><path d="M5 8h.01M8 8h.01M11 8h.01M14 8h.01M5 11h.01M8 11h4M14 11h.01"/>'),
     user: svg('<circle cx="10" cy="7" r="3"/><path d="M4 16a6 6 0 0 1 12 0"/>'),
+    edit: svg('<path d="M13.5 4.5l2 2M4 16l3.5-.5 8.5-8.5-3-3L4.5 12.5 4 16z"/>'),
+    sheet: svg('<path d="M4 3a1.5 1.5 0 0 1 1.5-1.5h6l4.5 4.5v11a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 4 17V3z"/><path d="M11.5 1.5v4.5h4.5M7 9.5h6M7 13h6"/>'),
+    link: svg('<path d="M8.5 11.5l3-3a2.8 2.8 0 0 1 4 4l-2 2a2.8 2.8 0 0 1-4 0M11.5 8.5l-3 3a2.8 2.8 0 0 1-4-4l2-2a2.8 2.8 0 0 1 4 0M7.5 12.5l5-5"/>'),
+    file: svg('<path d="M4 3a1.5 1.5 0 0 1 1.5-1.5h6l4.5 4.5v11a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 4 17V3z"/><path d="M11.5 1.5v4.5h4.5"/>'),
     status: {
       synced: svg('<circle cx="10" cy="10" r="7.5" fill="#ecfdf5" stroke="#10b981"/><path d="M7 10l2 2 4-4" stroke="#059669"/>', { className: 'csm-status-icon icon-synced' }),
       updated: svg('<circle cx="10" cy="10" r="7.5" fill="#eff6ff" stroke="#3b82f6"/><path d="M10 5.5v5.5M7.5 8.5L10 11l2.5-2.5M6.5 13.5h7" stroke="#2563eb"/>', { className: 'csm-status-icon icon-updated' }),

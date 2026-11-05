@@ -12,6 +12,10 @@
     root: $('fl-root'),
     rootEdit: $('fl-root-edit'),
     filter: $('fl-filter'),
+    filterClear: $('fl-filter-clear'),
+    tabAll: $('fl-tab-all'),
+    tabCloud: $('fl-tab-cloud'),
+    tabLocal: $('fl-tab-local'),
     count: $('fl-count'),
     flash: $('fl-flash'),
     add: $('fl-add'),
@@ -59,6 +63,7 @@
 
   let entries = [];
   let localTables = [];   // 本地目录下、未加入清单的 xlsx
+  let currentTab = 'all'; // 'all' | 'cloud' | 'local'
   const rowBusy = new Map(); // path -> 进行中的操作文案（下载中 / 上传中）
   let cloudQuerying = false; // 正在为缺少云端位置的条目查询
   let cloudFailed = {};      // { [spreadsheetId]: 错误信息 }
@@ -75,6 +80,16 @@
   const api = p => window.CSM.api(p);
   const json = body => ({ headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 
+  function escapeHtml(str) {
+    if (str == null) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+
   async function readJson(resp) {
     try { return await resp.json(); } catch (_) { return {}; }
   }
@@ -82,6 +97,9 @@
   function setText(node, text, kind, base) {
     node.textContent = text || '';
     node.className = `${base || 'fl-msg'}${kind ? ` ${kind}` : ''}`;
+    if (text && node === el.flash && window.showToast) {
+      window.showToast(text, kind === 'error' ? 'error' : kind === 'ok' ? 'success' : 'info');
+    }
   }
 
   function fmtSize(n) {
@@ -131,25 +149,48 @@
 
   function groupRow(key, title, count, tip, ops) {
     const tr = document.createElement('tr');
-    tr.className = 'fl-group';
+    tr.className = `fl-group ${collapsed[key] ? 'is-collapsed' : ''}`;
     const c = document.createElement('td');
     c.colSpan = 6;
+
+    const inner = document.createElement('div');
+    inner.className = 'fl-group-inner';
+
+    const left = document.createElement('div');
+    left.className = 'fl-group-left';
+
     const caret = document.createElement('span');
-    caret.className = 'caret';
-    caret.textContent = collapsed[key] ? '▶' : '▼';
+    caret.className = 'fl-caret';
+    caret.innerHTML = window.CSMIcons?.chevronDown || '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><path d="M5.5 8l4.5 4.5 4.5-4.5"/></svg>';
+
+    const iconSpan = document.createElement('span');
+    iconSpan.className = 'fl-group-icon';
+    iconSpan.textContent = key === 'cloud' ? '☁️' : '💻';
+
     const t = document.createElement('span');
-    t.textContent = `${title}（${count}）`;
+    t.className = 'fl-group-title';
+    t.textContent = title;
+
+    const countBadge = document.createElement('span');
+    countBadge.className = 'fl-group-count';
+    countBadge.textContent = count;
+
     const tipEl = document.createElement('span');
     tipEl.className = 'fl-group-tip';
     tipEl.textContent = tip || '';
-    c.append(caret, t, tipEl);
+
+    left.append(caret, iconSpan, t, countBadge, tipEl);
+    inner.appendChild(left);
+
     if (ops) {
-      const box = document.createElement('span');
+      const box = document.createElement('div');
       box.className = 'fl-group-ops';
       box.appendChild(ops);
       box.addEventListener('click', e => e.stopPropagation());
-      c.appendChild(box);
+      inner.appendChild(box);
     }
+
+    c.appendChild(inner);
     tr.appendChild(c);
     tr.addEventListener('click', () => { collapsed[key] = !collapsed[key]; renderList(); });
     return tr;
@@ -171,33 +212,47 @@
     const cloudShown = match(entries);
     const localShown = match(localTables);
     const total = entries.length + localTables.length;
-    el.count.textContent = terms.length
-      ? `匹配 ${cloudShown.length + localShown.length} / 共 ${total} 项`
-      : `云端表 ${entries.length} · 本地表 ${localTables.length}`;
+
+    // Update tab badges
+    if (el.tabAll) el.tabAll.textContent = total;
+    if (el.tabCloud) el.tabCloud.textContent = entries.length;
+    if (el.tabLocal) el.tabLocal.textContent = localTables.length;
+
+    if (el.count) {
+      el.count.textContent = terms.length
+        ? `匹配 ${cloudShown.length + localShown.length} / 共 ${total} 项`
+        : '';
+    }
+
     el.tbody.innerHTML = '';
     let target = null;
 
     // 云端表：已在 filelist.json 中
-    el.tbody.appendChild(groupRow('cloud', '云端表', cloudShown.length, '已在 filelist.json 中，与云端 Google 表格关联'));
-    if (!collapsed.cloud) {
-      if (!cloudShown.length) el.tbody.appendChild(emptyRow(entries.length ? '没有匹配的云端表' : '清单是空的：可以上传下方的本地表，或点「＋ 新增配置表」关联已有云端表'));
-      for (const e of cloudShown) {
-        const tr = renderRow(e);
-        if (highlightPath && e.path === highlightPath) { tr.classList.add('fl-flash'); target = tr; }
-        el.tbody.appendChild(tr);
+    if (currentTab === 'all' || currentTab === 'cloud') {
+      el.tbody.appendChild(groupRow('cloud', '云端已关联配置表', cloudShown.length, '已在 filelist.json 中，与云端 Google 表格保持关联'));
+      if (!collapsed.cloud) {
+        if (!cloudShown.length) el.tbody.appendChild(emptyRow(entries.length ? '没有匹配的云端配置表' : '清单是空的：可以上传下方的本地表，或点右上角「新增配置表」关联已有云端表'));
+        for (const e of cloudShown) {
+          const tr = renderRow(e);
+          if (highlightPath && e.path === highlightPath) { tr.classList.add('fl-flash'); target = tr; }
+          el.tbody.appendChild(tr);
+        }
       }
     }
 
     // 本地表：本地目录下存在、但还没加入清单
-    const batchBtn = document.createElement('button');
-    batchBtn.type = 'button';
-    batchBtn.textContent = terms.length ? `上传筛选出的 ${localShown.length} 张` : `全部上传（${localShown.length}）`;
-    batchBtn.disabled = !localShown.length || batchRunning;
-    batchBtn.addEventListener('click', () => uploadBatch(localShown));
-    el.tbody.appendChild(groupRow('local', '本地表', localShown.length, `${baseLabel}${localRoot}/ 下未加入清单的 xlsx`, localTables.length ? batchBtn : null));
-    if (!collapsed.local) {
-      if (!localShown.length) el.tbody.appendChild(emptyRow(localTables.length ? '没有匹配的本地表' : `${baseLabel}${localRoot}/ 下的 xlsx 都已在清单中`));
-      for (const t of localShown) el.tbody.appendChild(renderLocalRow(t));
+    if (currentTab === 'all' || currentTab === 'local') {
+      const batchBtn = document.createElement('button');
+      batchBtn.type = 'button';
+      batchBtn.className = 'fl-btn fl-btn-primary-tint fl-btn-sm';
+      batchBtn.innerHTML = `${window.CSMIcons?.upload || '⬆'} <span>${terms.length ? `上传筛选出的 ${localShown.length} 张` : `全部上传并关联 (${localShown.length})`}</span>`;
+      batchBtn.disabled = !localShown.length || batchRunning;
+      batchBtn.addEventListener('click', () => uploadBatch(localShown));
+      el.tbody.appendChild(groupRow('local', '本地未入库表格', localShown.length, `${baseLabel}${localRoot}/ 目录下未加入清单的 xlsx`, localTables.length ? batchBtn : null));
+      if (!collapsed.local) {
+        if (!localShown.length) el.tbody.appendChild(emptyRow(localTables.length ? '没有匹配的本地表格' : `${baseLabel}${localRoot}/ 下的 xlsx 都已在清单中`));
+        for (const t of localShown) el.tbody.appendChild(renderLocalRow(t));
+      }
     }
     if (target) target.scrollIntoView({ block: 'center' });
   }
@@ -215,31 +270,64 @@
 
   function renderLocalRow(t) {
     const tr = document.createElement('tr');
-    tr.appendChild(td(t.name, 'fl-col-name'));
+    tr.className = 'fl-row fl-row-local';
+    
+    // 表名
+    const nameTd = document.createElement('td');
+    nameTd.className = 'fl-col-name';
+    nameTd.innerHTML = `<span class="fl-name-strong">${escapeHtml(t.name)}</span>`;
+    tr.appendChild(nameTd);
+
+    // 本地路径
     tr.appendChild(localPathCell(t.path, true));
+
+    // 云端目标位置
     const target = cloudTargetOf(t.path);
     let tc;
-    if (!rootInfo) { tc = td('正在识别云端目录…', 'fl-muted'); }
-    else if (!target) { tc = td('未设置云端目录映射', 'fl-target warn'); }
-    else if (target.outside) { tc = td('不在映射的本地目录下', 'fl-target warn'); }
-    else {
+    if (!rootInfo) {
+      tc = td('正在识别云端目录…', 'fl-muted');
+    } else if (!target) {
+      tc = document.createElement('td');
+      tc.className = 'fl-col-cloud';
+      tc.innerHTML = '<span class="fl-status-pill status-warn"><span class="dot"></span>未设置目录映射</span>';
+    } else if (target.outside) {
+      tc = document.createElement('td');
+      tc.className = 'fl-col-cloud';
+      tc.innerHTML = '<span class="fl-status-pill status-warn"><span class="dot"></span>不在映射目录下</span>';
+    } else {
       // 上传后的云端位置（相对映射根目录）
       const dirs = target.dir.split(' / ');
       const rel = [...(stripPrefix(dirs, cloudRootParts()) || dirs), t.name];
-      tc = pathCell(rel, ' / ', 'fl-target', `上传后放到：${target.dir} / ${t.name}（缺的文件夹会自动创建）`);
-      tc.insertBefore(document.createTextNode('→ '), tc.firstChild);
+      tc = document.createElement('td');
+      tc.className = 'fl-col-cloud';
+      const targetPill = document.createElement('div');
+      targetPill.className = 'fl-target-pill';
+      targetPill.title = `上传后放到：${target.dir} / ${t.name}（缺少的文件夹会自动创建）`;
+      targetPill.innerHTML = `<span class="fl-target-arrow">→</span><span class="fl-target-path font-mono">${escapeHtml(rel.join(' / '))}</span>`;
+      tc.appendChild(targetPill);
     }
     tr.appendChild(tc);
-    tr.appendChild(td('未上传', 'fl-muted'));
-    const local = td(`✓ ${fmtSize(t.size)}`, 'fl-ok');
-    local.title = `本地修改时间：${fmtTime(t.mtime)}`;
-    tr.appendChild(local);
+
+    // 备注
+    const descTd = document.createElement('td');
+    descTd.className = 'fl-col-desc';
+    descTd.innerHTML = '<span class="fl-desc-empty">—</span>';
+    tr.appendChild(descTd);
+
+    // 本地文件状态
+    const statusTd = document.createElement('td');
+    statusTd.className = 'fl-col-status';
+    statusTd.innerHTML = `<span class="fl-status-pill status-unuploaded"><span class="dot"></span>未入库 · ${fmtSize(t.size)}</span>`;
+    statusTd.title = `本地修改时间：${fmtTime(t.mtime)}`;
+    tr.appendChild(statusTd);
+
+    // 操作
     const ops = document.createElement('td');
     ops.className = 'fl-col-ops';
     const up = document.createElement('button');
     up.type = 'button';
-    up.className = 'fl-up';
-    up.textContent = '上传';
+    up.className = 'fl-action-btn fl-btn-primary';
+    up.innerHTML = `${window.CSMIcons?.upload || '⬆'} <span>上传到云端</span>`;
     up.title = '在云端对应目录新建 Google 表格并加入清单';
     up.disabled = batchRunning;
     up.addEventListener('click', () => openUpload(t));
@@ -424,10 +512,28 @@
 
   // 本地路径单元格：点击在访达中显示文件（不存在则打开所在目录）
   function localPathCell(relPath, exists) {
-    const c = pathCell(relLocalParts(relPath), '/', 'fl-col-path fl-path-link',
-      `${exists ? '在访达中显示' : '本地还没有这个文件，点击打开所在目录'}\n${baseLabel}${relPath}`);
-    c.addEventListener('click', ev => { ev.stopPropagation(); revealLocal(relPath); });
-    c.addEventListener('dblclick', ev => ev.stopPropagation());
+    const c = document.createElement('td');
+    c.className = 'fl-col-path';
+    const pill = document.createElement('div');
+    pill.className = `fl-path-pill ${exists ? 'exists' : 'missing'}`;
+    pill.title = `${exists ? '在访达中显示' : '本地暂无该文件，点击打开所在目录'}\n${baseLabel}${relPath}`;
+
+    const icon = document.createElement('span');
+    icon.className = 'fl-path-icon';
+    icon.innerHTML = window.CSMIcons?.file || '<svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 3a1.5 1.5 0 0 1 1.5-1.5h6l4.5 4.5v11a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 4 17V3z"/><path d="M11.5 1.5v4.5h4.5"/></svg>';
+
+    const pathText = document.createElement('span');
+    pathText.className = 'fl-path-text font-mono';
+    const parts = relLocalParts(relPath);
+    parts.forEach((p, i) => {
+      pathText.appendChild(document.createTextNode(i < parts.length - 1 ? `${p}/` : p));
+      if (i < parts.length - 1) pathText.appendChild(document.createElement('wbr'));
+    });
+
+    pill.append(icon, pathText);
+    pill.addEventListener('click', ev => { ev.stopPropagation(); revealLocal(relPath); });
+    pill.addEventListener('dblclick', ev => ev.stopPropagation());
+    c.appendChild(pill);
     return c;
   }
 
@@ -437,24 +543,42 @@
   }
 
   function cloudPathCell(e) {
-    if (!e.spreadsheetId) {
-      const c = td('缺少 ID', 'fl-col-cloud fl-bad');
-      return c;
-    }
     const c = document.createElement('td');
     c.className = 'fl-col-cloud';
+    if (!e.spreadsheetId) {
+      c.innerHTML = '<span class="fl-status-pill status-error"><span class="dot"></span>缺少 ID</span>';
+      return c;
+    }
+    const linkWrap = document.createElement('div');
+    linkWrap.className = 'fl-cloud-wrap';
+
     const a = document.createElement('a');
     a.href = sheetUrl(e.spreadsheetId);
     a.target = '_blank';
     a.rel = 'noopener noreferrer';
+    a.className = 'fl-sheet-link';
+
+    const icon = document.createElement('span');
+    icon.className = 'fl-sheet-icon';
+    icon.innerHTML = window.CSMIcons?.sheet || '<svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 3a1.5 1.5 0 0 1 1.5-1.5h6l4.5 4.5v11a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 4 17V3z"/><path d="M11.5 1.5v4.5h4.5M7 9.5h6M7 13h6"/></svg>';
+
+    const titleWrap = document.createElement('span');
+    titleWrap.className = 'fl-sheet-title';
+
     if (e.cloudDir && e.cloudFile) {
       const parts = [...relCloudDirs(e), e.cloudFile];
       parts.forEach((p, i) => {
-        a.appendChild(document.createTextNode(i < parts.length - 1 ? `${p} / ` : p));
-        if (i < parts.length - 1) a.appendChild(document.createElement('wbr'));
+        titleWrap.appendChild(document.createTextNode(i < parts.length - 1 ? `${p} / ` : p));
+        if (i < parts.length - 1) titleWrap.appendChild(document.createElement('wbr'));
       });
-      a.title = `${e.cloudDir.split('/').join(' / ')} / ${e.cloudFile}\n${e.spreadsheetId}\n点击打开云端表`;
-      c.appendChild(a);
+      a.title = `${e.cloudDir.split('/').join(' / ')} / ${e.cloudFile}\n${e.spreadsheetId}\n点击在浏览器中打开云端 Google 表格`;
+
+      const ext = document.createElement('span');
+      ext.className = 'fl-ext-arrow';
+      ext.textContent = '↗';
+      a.append(icon, titleWrap, ext);
+      linkWrap.appendChild(a);
+
       // 云端子目录与本地子目录不一致时提示
       const cloudSub = relCloudDirs(e).join('/');
       const localUnder = stripPrefix(String(e.path).split('/').filter(Boolean), localRootParts());
@@ -462,22 +586,23 @@
       // 本地不在映射目录下（如 DDatas/...）的不比较
       if (localSub !== null && cloudRootParts().length && lower(cloudSub) !== lower(localSub)) {
         const w = document.createElement('span');
-        w.className = 'fl-path-warn';
-        w.textContent = ' ⚠';
-        w.title = `云端目录与本地目录不一致\n云端：${cloudSub || '（根目录）'}\n本地：${localSub || '（根目录）'}`;
-        c.appendChild(w);
+        w.className = 'fl-path-warn-pill';
+        w.textContent = '⚠️ 路径不一致';
+        w.title = `云端目录与本地相对目录不一致\n云端：${cloudSub || '（根目录）'}\n本地：${localSub || '（根目录）'}`;
+        linkWrap.appendChild(w);
       }
     } else if (cloudFailed[e.spreadsheetId]) {
-      a.textContent = `⚠ ${cloudFailed[e.spreadsheetId]}`;
-      a.className = 'fl-bad';
+      a.innerHTML = `<span class="fl-sheet-fail">⚠ ${escapeHtml(cloudFailed[e.spreadsheetId])}</span>`;
+      a.className = 'fl-sheet-link fl-bad';
       a.title = `${e.spreadsheetId}\n点击打开云端表`;
-      c.appendChild(a);
+      linkWrap.appendChild(a);
     } else {
-      a.textContent = cloudQuerying ? '查询中…' : '未记录';
-      a.className = 'fl-muted';
+      a.innerHTML = `<span class="fl-sheet-muted">${cloudQuerying ? '查询中…' : '未记录云端位置'}</span>`;
+      a.className = 'fl-sheet-link fl-muted';
       a.title = `${e.spreadsheetId}\n点击打开云端表`;
-      c.appendChild(a);
+      linkWrap.appendChild(a);
     }
+    c.appendChild(linkWrap);
     return c;
   }
 
@@ -519,50 +644,6 @@
     return c;
   }
 
-  function renderRow(e) {
-    const tr = document.createElement('tr');
-    tr.appendChild(td(e.name, 'fl-col-name'));
-    tr.appendChild(localPathCell(e.path, !!e.local));
-    tr.appendChild(cloudPathCell(e));
-    tr.appendChild(td(e.description, 'fl-col-desc'));
-
-    tr.appendChild(syncStateCell(e));
-
-    const ops = document.createElement('td');
-    ops.className = 'fl-col-ops';
-    const busy = rowBusy.get(e.path);
-    const dir = e.sync && e.sync.direction;
-    if (busy) {
-      const b = document.createElement('span');
-      b.className = 'fl-busy';
-      b.textContent = busy;
-      ops.appendChild(b);
-    } else if (dir) {
-      const sb = document.createElement('button');
-      sb.type = 'button';
-      sb.className = dir === 'download' ? 'fl-dl' : dir === 'conflict' ? 'fl-cf' : 'fl-ul';
-      sb.textContent = dir === 'download' ? '⬇ 下载' : dir === 'conflict' ? '⚠ 解决冲突' : '⬆ 上传';
-      sb.title = `${dir === 'download' ? '用云端表覆盖本地 xlsx（覆盖前自动备份）' : dir === 'conflict' ? '两边都改过：查看差异后选择保留哪一边' : '先预览差异，确认后用本地 xlsx 覆盖云端表'}\n${timesText(e)}`;
-      sb.addEventListener('click', () => (dir === 'download' ? downloadEntry(e) : resolveViaDiff(e, dir)));
-      ops.appendChild(sb);
-    }
-    const edit = document.createElement('button');
-    edit.type = 'button';
-    edit.textContent = '编辑';
-    edit.disabled = !!busy;
-    edit.addEventListener('click', () => openEditor(e));
-    const del = document.createElement('button');
-    del.type = 'button';
-    del.className = 'fl-del';
-    del.textContent = '删除';
-    del.disabled = !!busy;
-    del.addEventListener('click', () => removeEntry(e));
-    ops.append(edit, del);
-    tr.appendChild(ops);
-    tr.addEventListener('dblclick', () => openEditor(e));
-    return tr;
-  }
-
   // ---------- 本地 ↔ 云端同步 ----------
   function timesText(e) {
     const cloud = e.sync && e.sync.cloudModifiedTime;
@@ -570,32 +651,113 @@
     return `云端修改：${cloud ? fmtTime(cloud) : '—'}${by}\n本地修改：${e.local ? fmtTime(e.local.mtime) : '本地没有文件'}`;
   }
 
-  // 「本地文件」列：大小 + 与云端的关系
+  // 「本地文件」列：微状态胶囊徽标
   function syncStateCell(e) {
     const c = document.createElement('td');
-    c.className = 'fl-sync';
+    c.className = 'fl-col-status';
     const dir = e.sync && e.sync.direction;
+    let pillClass = '';
+    let text = '';
     if (!e.local) {
-      c.textContent = '未下载';
-      c.classList.add('fl-muted');
+      pillClass = 'status-missing';
+      text = '未下载';
     } else if (dir === 'download') {
-      c.textContent = `云端较新 · ${fmtSize(e.local.size)}`;
-      c.classList.add('fl-newer-cloud');
+      pillClass = 'status-cloud';
+      text = `云端较新 · ${fmtSize(e.local.size)}`;
     } else if (dir === 'upload') {
-      c.textContent = `本地较新 · ${fmtSize(e.local.size)}`;
-      c.classList.add('fl-newer-local');
+      pillClass = 'status-local';
+      text = `本地较新 · ${fmtSize(e.local.size)}`;
     } else if (dir === 'conflict') {
-      c.textContent = `⚠ 冲突 · ${fmtSize(e.local.size)}`;
-      c.classList.add('fl-conflict');
+      pillClass = 'status-conflict';
+      text = `⚠️ 冲突 · ${fmtSize(e.local.size)}`;
     } else if (e.sync && e.sync.status === 'synced') {
-      c.textContent = `✓ 已同步 · ${fmtSize(e.local.size)}`;
-      c.classList.add('fl-ok');
+      pillClass = 'status-synced';
+      text = `✓ 已同步 · ${fmtSize(e.local.size)}`;
     } else {
-      c.textContent = `✓ ${fmtSize(e.local.size)}`;
-      c.classList.add('fl-ok');
+      pillClass = 'status-synced';
+      text = `✓ ${fmtSize(e.local.size)}`;
     }
+    c.innerHTML = `<span class="fl-status-pill ${pillClass}"><span class="dot"></span>${escapeHtml(text)}</span>`;
     c.title = timesText(e);
     return c;
+  }
+
+  function renderRow(e) {
+    const tr = document.createElement('tr');
+    tr.className = 'fl-row';
+
+    // 表名
+    const nameTd = document.createElement('td');
+    nameTd.className = 'fl-col-name';
+    nameTd.innerHTML = `<span class="fl-name-strong">${escapeHtml(e.name)}</span>`;
+    tr.appendChild(nameTd);
+
+    // 本地路径
+    tr.appendChild(localPathCell(e.path, !!e.local));
+
+    // 云端路径
+    tr.appendChild(cloudPathCell(e));
+
+    // 备注
+    const descTd = document.createElement('td');
+    descTd.className = 'fl-col-desc';
+    descTd.innerHTML = e.description
+      ? `<span class="fl-desc-text" title="${escapeHtml(e.description)}">${escapeHtml(e.description)}</span>`
+      : '<span class="fl-desc-empty">—</span>';
+    tr.appendChild(descTd);
+
+    // 本地文件同步状态
+    tr.appendChild(syncStateCell(e));
+
+    // 操作按钮组
+    const ops = document.createElement('td');
+    ops.className = 'fl-col-ops';
+    const busy = rowBusy.get(e.path);
+    const dir = e.sync && e.sync.direction;
+
+    const group = document.createElement('div');
+    group.className = 'fl-actions-group';
+
+    if (busy) {
+      const b = document.createElement('span');
+      b.className = 'fl-busy-pill';
+      b.textContent = busy;
+      group.appendChild(b);
+    } else if (dir) {
+      const sb = document.createElement('button');
+      sb.type = 'button';
+      sb.className = `fl-action-btn fl-sync-btn ${dir === 'download' ? 'btn-dl' : dir === 'conflict' ? 'btn-cf' : 'btn-ul'}`;
+      sb.innerHTML = dir === 'download'
+        ? `${window.CSMIcons?.download || '⬇'} <span>下载</span>`
+        : dir === 'conflict'
+          ? `${window.CSMIcons?.alert || '⚠'} <span>解决冲突</span>`
+          : `${window.CSMIcons?.upload || '⬆'} <span>上传</span>`;
+      sb.title = `${dir === 'download' ? '用云端表覆盖本地 xlsx（覆盖前自动备份）' : dir === 'conflict' ? '两边都改过：查看差异后选择保留哪一边' : '先预览差异，确认后用本地 xlsx 覆盖云端表'}\n${timesText(e)}`;
+      sb.addEventListener('click', () => (dir === 'download' ? downloadEntry(e) : resolveViaDiff(e, dir)));
+      group.appendChild(sb);
+    }
+
+    const edit = document.createElement('button');
+    edit.type = 'button';
+    edit.className = 'fl-action-btn fl-btn-ghost';
+    edit.innerHTML = `${window.CSMIcons?.edit || '✏️'} <span>编辑</span>`;
+    edit.title = '编辑配置表信息';
+    edit.disabled = !!busy;
+    edit.addEventListener('click', () => openEditor(e));
+
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'fl-action-btn fl-btn-danger';
+    del.innerHTML = `${window.CSMIcons?.trash || '🗑'} <span>删除</span>`;
+    del.title = '从清单移除（保留本地与云端文件）';
+    del.disabled = !!busy;
+    del.addEventListener('click', () => removeEntry(e));
+
+    group.append(edit, del);
+    ops.appendChild(group);
+    tr.appendChild(ops);
+    tr.addEventListener('dblclick', () => openEditor(e));
+    return tr;
   }
 
   function setRowBusy(path, label) {
@@ -630,21 +792,49 @@
   // ---------- 云端目录映射 ----------
   function renderRoot() {
     el.root.innerHTML = '';
-    el.root.className = 'fl-root';
-    if (!rootInfo) { el.root.textContent = '正在识别云端目录…'; return; }
-    if (rootInfo.error) { el.root.textContent = rootInfo.error; el.root.classList.add('warn'); return; }
-    const r = rootInfo.root;
-    if (!r) {
-      el.root.append('未设置，且清单为空无法推断 —— 新表按云端所在文件夹放到 ', code(`${baseLabel}Datas/<文件夹名>/`));
+    if (!rootInfo) {
+      el.root.innerHTML = '<div class="fl-root-loading"><span class="fl-spinner"></span> 正在识别云端目录…</div>';
       return;
     }
-    if (r.error) { el.root.textContent = `⚠ ${r.error}`; el.root.classList.add('warn'); return; }
-    const tag = document.createElement('span');
-    tag.className = 'tag';
-    tag.textContent = r.source === 'config'
-      ? '（项目配置）'
-      : `（未设置，按已有条目自动推断：${r.votes}/${r.sampled} 一致）`;
-    el.root.append('云端 ', code(r.rootPath), ' ↔ 本地 ', code(`${baseLabel}${r.localRoot ? `${r.localRoot}/` : ''}`), tag);
+    if (rootInfo.error) {
+      el.root.innerHTML = `<div class="fl-root-error">⚠ ${escapeHtml(rootInfo.error)}</div>`;
+      return;
+    }
+    const r = rootInfo.root;
+    if (!r) {
+      el.root.innerHTML = `
+        <div class="fl-root-empty">
+          <span class="fl-root-warn-badge">未设置映射</span>
+          <span class="fl-root-sub">清单为空无法推断 —— 新表将按云端所属文件夹自动存放至 <code>${escapeHtml(baseLabel)}Datas/&lt;文件夹名&gt;/</code></span>
+        </div>
+      `;
+      return;
+    }
+    if (r.error) {
+      el.root.innerHTML = `<div class="fl-root-error">⚠ ${escapeHtml(r.error)}</div>`;
+      return;
+    }
+
+    const isConfig = r.source === 'config';
+    const tagText = isConfig ? '项目专属配置' : `自动推断 (${r.votes}/${r.sampled} 一致)`;
+    const tagClass = isConfig ? 'badge-config' : 'badge-inferred';
+
+    el.root.innerHTML = `
+      <div class="fl-map-pathway">
+        <div class="fl-map-node cloud" title="云端根目录：${escapeHtml(r.rootPath)}">
+          <span class="fl-map-icon">☁️</span>
+          <span class="fl-map-tag">云端根目录</span>
+          <span class="fl-map-val">${escapeHtml(r.rootPath)}</span>
+        </div>
+        <div class="fl-map-connector">⇄</div>
+        <div class="fl-map-node local" title="本地映射目录：${escapeHtml(baseLabel + (r.localRoot ? r.localRoot + '/' : ''))}">
+          <span class="fl-map-icon">💻</span>
+          <span class="fl-map-tag">本地映射</span>
+          <span class="fl-map-val">${escapeHtml(baseLabel + (r.localRoot ? r.localRoot + '/' : ''))}</span>
+        </div>
+        <span class="fl-map-status ${tagClass}">${tagText}</span>
+      </div>
+    `;
   }
 
   async function loadRoot() {
@@ -732,34 +922,59 @@
     el.cloud.innerHTML = '';
     el.cloud.className = 'fl-cloud ok';
     const c = data.cloud;
-    const a = document.createElement('a');
-    a.href = c.webViewLink || sheetUrl(data.spreadsheetId);
-    a.target = '_blank';
-    a.rel = 'noopener noreferrer';
-    a.textContent = c.name;
-    el.cloud.append('✓ 云端表：', a, `　最后修改 ${fmtTime(c.modifiedTime)}`);
+
+    const card = document.createElement('div');
+    card.className = 'fl-cloud-card';
+
+    const header = document.createElement('div');
+    header.className = 'fl-cloud-card-header';
+
+    const titleRow = document.createElement('div');
+    titleRow.className = 'fl-cloud-card-title';
+    titleRow.innerHTML = `
+      <span class="fl-cloud-badge">${window.CSMIcons?.sheet || '📊'} Google Sheets</span>
+      <a href="${escapeHtml(c.webViewLink || sheetUrl(data.spreadsheetId))}" target="_blank" rel="noopener noreferrer" class="fl-cloud-link">
+        <span>${escapeHtml(c.name)}</span>
+        <span class="fl-ext-arrow">↗</span>
+      </a>
+    `;
+
+    const timeTag = document.createElement('span');
+    timeTag.className = 'fl-cloud-time';
+    timeTag.textContent = `云端修改: ${fmtTime(c.modifiedTime)}`;
+
+    header.append(titleRow, timeTag);
+    card.appendChild(header);
 
     const loc = data.location;
     if (loc) {
       const line = document.createElement('div');
-      line.className = loc.mode === 'outside' ? 'fl-warn' : 'fl-loc';
+      line.className = loc.mode === 'outside' ? 'fl-loc-line warn' : 'fl-loc-line';
       const dir = (data.suggestion && data.suggestion.path || '').replace(/[^/]*$/, '');
-      line.append(loc.mode === 'outside' ? '⚠ ' : '', '云端位置 ', code(loc.cloudDir || '（根目录）'), ' → 本地 ', code(`${baseLabel}${dir}`), `　${MODE_TEXT[loc.mode] || ''}`);
-      el.cloud.appendChild(line);
+      line.innerHTML = `
+        <div class="fl-loc-flow">
+          <span class="fl-loc-item"><span class="fl-loc-lbl">云端目录</span><code>${escapeHtml(loc.cloudDir || '（根目录）')}</code></span>
+          <span class="fl-loc-arrow">➔</span>
+          <span class="fl-loc-item"><span class="fl-loc-lbl">推荐本地</span><code>${escapeHtml(baseLabel + dir)}</code></span>
+        </div>
+        <span class="fl-loc-mode">${escapeHtml(MODE_TEXT[loc.mode] || '')}</span>
+      `;
+      card.appendChild(line);
     }
     if (!c.isGoogleSheet) {
       const w = document.createElement('div');
-      w.className = 'fl-warn';
-      w.textContent = `⚠ 这不是 Google 表格（类型 ${c.mimeType}），同步可能失败`;
-      el.cloud.appendChild(w);
+      w.className = 'fl-cloud-alert warn';
+      w.innerHTML = `⚠ 这不是标准 Google 表格文件（类型：${escapeHtml(c.mimeType)}），同步可能失败`;
+      card.appendChild(w);
     }
     const dup = (data.existing || []).filter(x => x.path !== editingPath);
     if (dup.length) {
       const w = document.createElement('div');
-      w.className = 'fl-warn';
-      w.textContent = `⚠ 清单里已有这个云端表：${dup.map(x => `${x.name}（${x.path}）`).join('、')}`;
-      el.cloud.appendChild(w);
+      w.className = 'fl-cloud-alert warn';
+      w.innerHTML = `⚠ 清单中已存在该云端表：<strong>${escapeHtml(dup.map(x => `${x.name} (${x.path})`).join('、'))}</strong>`;
+      card.appendChild(w);
     }
+    el.cloud.appendChild(card);
   }
 
   async function resolveLink() {
@@ -876,7 +1091,10 @@
     rootInfo = null;
     cloudQuerying = false;
     cloudFailed = {};
+    currentTab = 'all';
+    document.querySelectorAll('.fl-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === 'all'));
     el.filter.value = '';
+    if (el.filterClear) el.filterClear.classList.add('hidden');
     setText(el.flash, '');
     el.modal.classList.remove('hidden');
     el.filter.focus();
@@ -895,7 +1113,30 @@
   el.modal.addEventListener('keydown', e => {
     if (e.key === 'Escape' && !document.querySelector('#diff-modal:not(.hidden), #bk-modal:not(.hidden)')) el.modal.classList.add('hidden');
   });
-  el.filter.addEventListener('input', () => renderList());
+
+  // 分段筛选标签点击
+  document.querySelectorAll('.fl-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.fl-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      currentTab = tab.dataset.tab || 'all';
+      renderList();
+    });
+  });
+
+  // 搜索框输入与清空
+  if (el.filterClear) {
+    el.filterClear.addEventListener('click', () => {
+      el.filter.value = '';
+      el.filterClear.classList.add('hidden');
+      renderList();
+      el.filter.focus();
+    });
+  }
+  el.filter.addEventListener('input', () => {
+    if (el.filterClear) el.filterClear.classList.toggle('hidden', !el.filter.value);
+    renderList();
+  });
   el.add.addEventListener('click', () => openEditor(null));
   el.rootEdit.addEventListener('click', openRootEditor);
   $('fl-cloud-refresh').addEventListener('click', () => syncCloudPaths(true));
