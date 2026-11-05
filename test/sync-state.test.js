@@ -61,3 +61,18 @@ test('updateEntry preserves existing entries', () => {
   assert.strictEqual(state['foo.xlsx'].lastSyncedModifiedTime, 'A');
   assert.strictEqual(state['bar.xlsx'].lastSyncedModifiedTime, 'B');
 });
+
+test('hashFile：内容不变时复用缓存；内容和修改时间变了会重新计算', () => {
+  const { hashFile } = require('../lib/sync-state');
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const os = require('node:os');
+  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'hash-')), 'a.xlsx');
+  fs.writeFileSync(f, 'one');
+  const h1 = hashFile(f);
+  assert.strictEqual(hashFile(f), h1);
+  fs.writeFileSync(f, 'two');
+  fs.utimesSync(f, new Date(), new Date(Date.now() + 5000));
+  assert.notStrictEqual(hashFile(f), h1);
+  assert.strictEqual(hashFile(path.join(path.dirname(f), 'missing.xlsx')), null);
+});

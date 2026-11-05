@@ -144,3 +144,16 @@ test('aggregateTables：只改修改时间、内容指纹相同时不算本地�
   [row] = aggregateTables([entry], drive, { 'A.xlsx': { ...base, lastSyncedHash: hash } });
   assert.strictEqual(row.localChanged, true);
 });
+
+test('云端更新且本地内容也改过 → conflict，方向为 conflict，带上云端修改人', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agg-'));
+  const savePath = path.join(dir, 'X.xlsx');
+  fs.writeFileSync(savePath, 'local edit, longer');
+  const filelist = [makeEntry({ savePath })];
+  const driveMap = new Map([['abc', { modifiedTime: '2026-06-01T00:00:00.000Z', name: 'X', modifiedBy: '张三', error: null }]]);
+  const state = { 'Datas/X.xlsx': { lastSyncedModifiedTime: '2026-05-20T08:15:22.000Z', lastSyncedSize: 1, lastSyncedMtime: '2026-05-20T08:30:00.000Z' } };
+  const [row] = aggregateTables(filelist, driveMap, state);
+  assert.strictEqual(row.status, 'conflict');
+  assert.strictEqual(row.direction, 'conflict');
+  assert.strictEqual(row.cloudModifiedBy, '张三');
+});

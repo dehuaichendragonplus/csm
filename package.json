@@ -9,7 +9,8 @@
     "start": "node server.js",
     "app": "electron .",
     "dist:mac": "electron-builder --mac",
-    "test": "node --test 'test/**/*.test.js'"
+    "test": "node --test 'test/**/*.test.js'",
+    "release:manifest": "node scripts/make-update-manifest.js"
   },
   "engines": {
     "node": ">=18.0.0"
@@ -24,6 +25,9 @@
     "electron-builder": "^26.18.0"
   },
   "author": "DragonPlus",
+  "csm": {
+    "updateUrl": ""
+  },
   "build": {
     "appId": "com.dragonplus.csm",
     "productName": "CSM",

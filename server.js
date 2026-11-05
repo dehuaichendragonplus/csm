@@ -7,7 +7,14 @@ const { findAvailablePort } = require('./lib/port-scanner');
 const oauth = require('./lib/oauth');
 const { loadFilelist } = require('./lib/filelist-loader');
 const { loadState, saveState, updateEntry, hashFile } = require('./lib/sync-state');
-const { getModifiedTimes, uploadXlsxToSheet, downloadViaDrive, getFileInfo, resolveFolderPath, findSheetInFolder, createSheetFromXlsx } = require('./lib/drive-api');
+const { google } = require('googleapis');
+const { getModifiedTimes, getCloudInfo, getCurrentUser, withRetry, uploadXlsxToSheet, downloadViaDrive, getFileInfo, resolveFolderPath, findSheetInFolder, createSheetFromXlsx } = require('./lib/drive-api');
+const backups = require('./lib/backups');
+const { appendHistory, readHistory } = require('./lib/history');
+const { readWorkbook } = require('./lib/xlsx-reader');
+const { diffWorkbooks } = require('./lib/xlsx-diff');
+const updateCheck = require('./lib/update-check');
+const PKG = require('./package.json');
 const localTables = require('./lib/local-tables');
 const reveal = require('./lib/reveal');
 const filelistEditor = require('./lib/filelist-editor');
@@ -15,6 +22,7 @@ const driveTree = require('./lib/drive-tree');
 const { aggregateTables } = require('./lib/table-aggregator');
 const { downloadOne } = require('./lib/downloader');
 const { CONFIG_FILENAME, loadConfig, publicConfig } = require('./lib/config');
+const { uploadConflict } = require('./lib/status');
 const { loadProjects, addProject, removeProject, renameProject, findProject } = require('./lib/projects');
 const { listDirs } = require('./lib/fs-browser');
 const { pickFolder } = require('./lib/native-picker');
@@ -24,6 +32,7 @@ const { loadSidecar, updateSidecar } = require('./lib/version-sidecar');
 
 const ROOT = __dirname;
 const DEFAULT_PORT = 7321;
+const SYNC_CONCURRENCY = 3; // 批量下载同时进行的表数（Drive 导出较慢，并发能明显缩短「下载所有更新」）
 
 // 平台数据目录：项目注册表、Google 令牌、各项目的同步状态都在这里，与被管理的项目仓库互不污染
 function defaultDataDir() {
@@ -98,6 +107,23 @@ async function main(opts = {}) {
   const driveCaches = new Map(); // projectId -> Map(spreadsheetId -> { modifiedTime, name, error })
 
   const statePathOf = id => path.join(DATA_DIR, 'projects', id, '.sync_state.json');
+  const backupRootOf = id => path.join(DATA_DIR, 'projects', id, 'backups');
+  const historyPathOf = id => path.join(DATA_DIR, 'projects', id, 'history.jsonl');
+  const TMP_DIR = path.join(DATA_DIR, 'tmp');
+
+  // 当前 Google 账号（写操作历史用），授权后首次需要时查询一次
+  let currentUser = null;
+  async function actor() {
+    if (!currentUser && hasToken) {
+      try { currentUser = await getCurrentUser(oauth2Client); } catch (_) { currentUser = { name: null, email: null }; }
+    }
+    let osUser = null;
+    try { osUser = require('node:os').userInfo().username; } catch (_) { /* 忽略 */ }
+    return { account: (currentUser && (currentUser.email || currentUser.name)) || null, osUser };
+  }
+  async function logHistory(ctx, record) {
+    try { appendHistory(historyPathOf(ctx.id), { ...(await actor()), ...record }); } catch (err) { console.error('[csm] history write failed:', err.message); }
+  }
 
   // 每次请求都重新读取项目配置，改完 syncmanager.config.json 无需重启即可生效
   function getCtx(id) {
@@ -178,6 +204,7 @@ async function main(opts = {}) {
       oauth2Client.setCredentials(tokens);
       attachTokenListener(oauth2Client, TOKEN_PATH);
       hasToken = true;
+      currentUser = null;
       driveCaches.clear();
       if (opts.authSuccessHtml) res.type('html').send(opts.authSuccessHtml);
       else res.redirect('/');
@@ -193,6 +220,32 @@ async function main(opts = {}) {
 
   app.get('/api/health', (_req, res) => {
     res.json({ ok: true, time: new Date().toISOString() });
+  });
+
+  // ---------- 版本更新提示 ----------
+  const updateSource = () => process.env.CSM_UPDATE_URL || (PKG.csm && PKG.csm.updateUrl) || '';
+  let updateCache = null; // { at, result }
+  const UPDATE_TTL_MS = 60 * 60 * 1000;
+  app.get('/api/update-check', async (req, res) => {
+    const source = updateSource();
+    if (!source) return res.json({ configured: false, current: PKG.version, hasUpdate: false });
+    if (updateCache && req.query.force !== '1' && Date.now() - updateCache.at < UPDATE_TTL_MS) return res.json(updateCache.result);
+    try {
+      const result = await updateCheck.checkForUpdate({
+        source,
+        current: PKG.version,
+        fetchJson: url => updateCheck.httpJson(url),
+        fetchDrive: hasToken ? async fileId => {
+          const drive = google.drive({ version: 'v3', auth: oauth2Client });
+          const resp = await withRetry(() => drive.files.get({ fileId, alt: 'media', supportsAllDrives: true }, { responseType: 'text' }));
+          return typeof resp.data === 'string' ? JSON.parse(resp.data) : resp.data;
+        } : null
+      });
+      updateCache = { at: Date.now(), result };
+      res.json(result);
+    } catch (err) {
+      res.json({ configured: true, current: PKG.version, hasUpdate: false, error: err.message });
+    }
   });
 
   // ---------- 项目管理 ----------
@@ -283,70 +336,93 @@ async function main(opts = {}) {
     }
   });
 
+  // 把云端表导出成 xlsx 写到 savePath（与「下载」同一种方式：配置了内部导出服务就用它，否则走 Drive 导出）
+  async function exportCloud(cfg, entry, savePath, { onProgress, onRetry } = {}) {
+    if (cfg.exportUrl) {
+      await downloadOne({
+        baseUrl: cfg.exportUrl,
+        spreadsheetId: entry.spreadsheetId,
+        password: cfg.exportPassword,
+        savePath,
+        mergeCells: !!entry.mergeCells,
+        onProgress,
+        onRetry
+      });
+    } else {
+      await downloadViaDrive(entry.spreadsheetId, savePath, oauth2Client);
+    }
+  }
+
+  // 下载一张表：先查云端当前修改时间（作为同步基准）→ 备份本地 → 导出覆盖 → 记录同步状态与历史
+  async function downloadTable(ctx, entry, log) {
+    const { cfg, id } = ctx;
+    // 先取修改时间再导出：导出期间云端又被改了，记下的是较早的时间，下次刷新会显示「有更新」，不会漏
+    const info = await getCloudInfo(entry.spreadsheetId, oauth2Client);
+    const backup = backups.backupFile(backupRootOf(id), entry.path, entry.savePath, { reason: '下载前自动备份' });
+    if (backup && !backup.deduped) log(`  ↳ 已备份本地文件（${backup.id}）\n`);
+    await exportCloud(cfg, entry, entry.savePath, {
+      onRetry: ({ attempt, waitMs, error }) => log(`  ⟳ retrying (${attempt}/3) after ${waitMs / 1000}s… (${error.message})\n`)
+    });
+    const stat = fs.statSync(entry.savePath);
+    updateEntry(cfg.statePath, entry.path, {
+      lastSyncedModifiedTime: info.modifiedTime,
+      lastSyncedSize: stat.size,
+      lastSyncedMtime: stat.mtime.toISOString(),
+      lastSyncedHash: hashFile(entry.savePath)
+    });
+    if (cfg.sidecarPath) updateSidecar(cfg.sidecarPath, entry.path, info.modifiedTime);
+    driveCaches.get(id).set(entry.spreadsheetId, info);
+    return { info, backup };
+  }
+
   projectRouter.post('/sync', async (req, res) => {
-    const { cfg, id } = req.ctx;
+    const { cfg } = req.ctx;
     const { paths } = req.body || {};
     if (!Array.isArray(paths)) return res.status(400).json({ error: 'paths must be an array' });
     if (!hasToken) return res.status(401).json({ error: 'OAUTH_REQUIRED' });
 
     sseSetup(res);
+    let aborted = false;
+    res.on('close', () => { aborted = !res.writableFinished; });
+    const emit = (ev, data) => { if (!aborted) sseEmit(res, ev, data); };
 
     const byPath = new Map(loadFilelist(cfg.filelistPath).map(e => [e.path, e]));
     let successCount = 0;
     let failedCount = 0;
+    const queue = [...new Set(paths)];
 
-    for (const p of paths) {
-      const entry = byPath.get(p);
-      if (!entry) {
-        sseEmit(res, 'log', `! unknown path: ${p}\n`);
-        failedCount++;
-        continue;
-      }
-      if (entry.incomplete) {
-        sseEmit(res, 'log', `! skipped (incomplete): ${p} - ${entry.incompleteReason}\n`);
-        failedCount++;
-        continue;
-      }
-      sseEmit(res, 'table-start', { path: entry.path });
-      sseEmit(res, 'log', `→ downloading ${entry.name} (${p})\n`);
-      try {
-        if (cfg.exportUrl) {
-          await downloadOne({
-            baseUrl: cfg.exportUrl,
-            spreadsheetId: entry.spreadsheetId,
-            password: cfg.exportPassword,
-            savePath: entry.savePath,
-            mergeCells: !!entry.mergeCells,
-            onProgress: ({ received, total }) => {
-              if (total > 0) sseEmit(res, 'progress', { table: entry.name, pct: Math.round(received / total * 100) });
-            },
-            onRetry: ({ attempt, waitMs, error }) => {
-              sseEmit(res, 'log', `  ⟳ retrying (${attempt}/${3}) after ${waitMs / 1000}s… (${error.message})\n`);
-            }
-          });
-        } else {
-          await downloadViaDrive(entry.spreadsheetId, entry.savePath, oauth2Client);
+    async function worker() {
+      while (queue.length) {
+        const p = queue.shift();
+        const entry = byPath.get(p);
+        if (!entry) {
+          emit('log', `! unknown path: ${p}\n`);
+          failedCount++;
+          continue;
         }
-        const driveInfo = driveCaches.get(id).get(entry.spreadsheetId);
-        const modifiedTime = driveInfo ? driveInfo.modifiedTime : new Date().toISOString();
-        const stat = fs.statSync(entry.savePath);
-        updateEntry(cfg.statePath, entry.path, {
-          lastSyncedModifiedTime: modifiedTime,
-          lastSyncedSize: stat.size,
-          lastSyncedMtime: stat.mtime.toISOString(),
-          lastSyncedHash: hashFile(entry.savePath)
-        });
-        if (cfg.sidecarPath) updateSidecar(cfg.sidecarPath, entry.path, modifiedTime);
-        sseEmit(res, 'table-done', { path: entry.path, success: true });
-        successCount++;
-      } catch (err) {
-        sseEmit(res, 'log', `✗ failed: ${p} — ${err.message}\n`);
-        sseEmit(res, 'table-done', { path: entry.path, success: false, error: err.message });
-        failedCount++;
+        if (entry.incomplete) {
+          emit('log', `! skipped (incomplete): ${p} - ${entry.incompleteReason}\n`);
+          failedCount++;
+          continue;
+        }
+        emit('table-start', { path: entry.path });
+        emit('log', `→ downloading ${entry.name} (${p})\n`);
+        try {
+          const { info, backup } = await downloadTable(req.ctx, entry, line => emit('log', line));
+          await logHistory(req.ctx, { op: 'download', path: entry.path, name: entry.name, ok: true, cloudModifiedTime: info.modifiedTime, cloudModifiedBy: info.modifiedBy, backup: backup && backup.id });
+          emit('table-done', { path: entry.path, success: true, backup: backup && backup.id });
+          successCount++;
+        } catch (err) {
+          await logHistory(req.ctx, { op: 'download', path: entry.path, name: entry.name, ok: false, error: err.message });
+          emit('log', `✗ failed: ${p} — ${err.message}\n`);
+          emit('table-done', { path: entry.path, success: false, error: err.message });
+          failedCount++;
+        }
       }
     }
+    await Promise.all(Array.from({ length: Math.min(SYNC_CONCURRENCY, queue.length) }, worker));
 
-    sseEmit(res, 'done', { successCount, failedCount, exitCode: null });
+    emit('done', { successCount, failedCount, exitCode: null });
     res.end();
   });
 
@@ -369,6 +445,30 @@ async function main(opts = {}) {
     if (buf.length < 4 || buf[0] !== 0x50 || buf[1] !== 0x4b) {
       return res.status(400).json({ error: '本地文件不是有效的 xlsx' });
     }
+    // 冲突检测：上传前重新查一次云端。用户确认上传时看到的云端时间（expect）或上次同步的时间之后云端又被改过，
+    // 直接覆盖会把别人的改动冲掉 —— 返回 409，由用户看过差异后决定是否强制覆盖（force=1）
+    let before;
+    try { before = await getCloudInfo(entry.spreadsheetId, oauth2Client); } catch (err) {
+      return res.status(502).json({ error: `查询云端状态失败：${err.message}` });
+    }
+    const stateRow = loadState(cfg.statePath)[entry.path] || null;
+    const cached = driveCaches.get(id).get(entry.spreadsheetId);
+    const conflict = uploadConflict({
+      cloudModifiedTime: before.modifiedTime,
+      expect: req.query.expect,
+      lastSyncedModifiedTime: stateRow && stateRow.lastSyncedModifiedTime,
+      cachedModifiedTime: cached && cached.modifiedTime,
+      force: req.query.force === '1'
+    });
+    if (conflict) {
+      return res.status(409).json({
+        error: 'CLOUD_CHANGED',
+        message: `云端在 ${before.modifiedTime} 被${before.modifiedBy ? `「${before.modifiedBy}」` : '其他人'}修改过，晚于你确认时看到的版本`,
+        cloudModifiedTime: before.modifiedTime,
+        cloudModifiedBy: before.modifiedBy,
+        baseline: conflict.baseline
+      });
+    }
     try {
       const info = await uploadXlsxToSheet(entry.spreadsheetId, buf, oauth2Client);
       // 云端内容已与本地一致：记为已同步（并等 Drive 转换后修改时间稳定再记一次），避免上传后显示「有更新」
@@ -376,12 +476,17 @@ async function main(opts = {}) {
         const st = fs.statSync(entry.savePath);
         updateEntry(cfg.statePath, entry.path, { lastSyncedModifiedTime: modifiedTime, lastSyncedSize: st.size, lastSyncedMtime: st.mtime.toISOString(), lastSyncedHash: hashFile(entry.savePath) });
         if (cfg.sidecarPath) updateSidecar(cfg.sidecarPath, entry.path, modifiedTime);
-        driveCaches.get(id).set(entry.spreadsheetId, { modifiedTime, name: info.name, error: null });
+        driveCaches.get(id).set(entry.spreadsheetId, { modifiedTime, name: info.name, modifiedBy: currentUser && (currentUser.name || currentUser.email), error: null });
       };
       markSynced(info.modifiedTime);
       settleModifiedTime(entry.spreadsheetId, info.modifiedTime).then(t => { if (t !== info.modifiedTime) markSynced(t); }).catch(() => {});
+      await logHistory(req.ctx, {
+        op: 'upload', path: entry.path, name: entry.name, ok: true, forced: req.query.force === '1',
+        cloudModifiedTime: info.modifiedTime, replacedCloudModifiedTime: before.modifiedTime, replacedCloudModifiedBy: before.modifiedBy
+      });
       res.json({ ok: true, modifiedTime: info.modifiedTime, size: buf.length });
     } catch (err) {
+      await logHistory(req.ctx, { op: 'upload', path: entry.path, name: entry.name, ok: false, error: err.message });
       res.status(500).json({ error: err.message });
     }
   });
@@ -493,6 +598,7 @@ async function main(opts = {}) {
         const sync = t ? {
           status: t.status,
           cloudModifiedTime: t.cloudModifiedTime,
+          cloudModifiedBy: t.cloudModifiedBy,
           direction: t.direction // 与主列表同一个判定结果
         } : null;
         return { ...e, local, sync };
@@ -647,6 +753,7 @@ async function main(opts = {}) {
         // Drive 把 xlsx 转成表格后约 1 秒还会再改一次修改时间；后台等它稳定后再记一次，避免刚上传就显示「有更新」
         settleModifiedTime(cloud.id, cloud.modifiedTime).then(t => { if (t !== cloud.modifiedTime) markSynced(t); }).catch(() => {});
       }
+      await logHistory(req.ctx, { op: linked ? 'link' : 'create', path: entry.path, name: entry.name, ok: true, cloudModifiedTime: cloud.modifiedTime, cloudDir });
       res.json({ entry, cloud, cloudDir, createdFolders, linked });
     } catch (err) {
       sendEditorError(res, err);
@@ -783,14 +890,97 @@ async function main(opts = {}) {
     const action = req.ctx.cfg.actions.find(a => a.id === req.params.id);
     if (!action) return res.status(404).json({ error: `unknown action: ${req.params.id}` });
     sseSetup(res);
+    const startedAt = Date.now();
     try {
       const code = await runSteps({ steps: action.steps, onLog: line => sseEmit(res, 'log', line) });
+      await logHistory(req.ctx, { op: 'action', action: action.id, name: action.label, ok: code === 0, exitCode: code, durationMs: Date.now() - startedAt });
       sseEmit(res, 'done', { exitCode: code });
     } catch (err) {
+      await logHistory(req.ctx, { op: 'action', action: action.id, name: action.label, ok: false, error: err.message });
       sseEmit(res, 'error', { message: err.message });
       sseEmit(res, 'done', { exitCode: -1 });
     }
     res.end();
+  });
+
+  // ---------- 差异预览：本地 xlsx 与云端表逐单元格比较 ----------
+  projectRouter.get('/diff', async (req, res) => {
+    const { cfg } = req.ctx;
+    if (!hasToken) return res.status(401).json({ error: 'OAUTH_REQUIRED' });
+    const entry = loadFilelist(cfg.filelistPath).find(e => e.path === req.query.path);
+    if (!entry) return res.status(404).json({ error: `unknown path: ${req.query.path}` });
+    if (!entry.spreadsheetId) return res.status(400).json({ error: '该表没有 spreadsheetId' });
+    fs.mkdirSync(TMP_DIR, { recursive: true });
+    const tmp = path.join(TMP_DIR, `diff-${req.ctx.id}-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.xlsx`);
+    try {
+      const info = await getCloudInfo(entry.spreadsheetId, oauth2Client);
+      await exportCloud(cfg, entry, tmp);
+      let localStat = null;
+      let localWb = [];
+      try {
+        localStat = fs.statSync(entry.savePath);
+        localWb = readWorkbook(entry.savePath);
+      } catch (err) {
+        if (localStat) return res.status(422).json({ error: `本地文件无法解析：${err.message}` });
+      }
+      const cloudWb = readWorkbook(tmp);
+      res.json({
+        path: entry.path,
+        name: entry.name,
+        local: localStat ? { exists: true, size: localStat.size, mtime: localStat.mtime.toISOString() } : { exists: false },
+        cloud: { modifiedTime: info.modifiedTime, modifiedBy: info.modifiedBy, name: info.name },
+        diff: diffWorkbooks(localWb, cloudWb)
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    } finally {
+      fs.rmSync(tmp, { force: true });
+    }
+  });
+
+  // ---------- 本地备份 ----------
+  function entryOf(ctx, p) {
+    const entry = loadFilelist(ctx.cfg.filelistPath).find(e => e.path === p);
+    if (!entry) { const e = new Error(`unknown path: ${p}`); e.status = 404; throw e; }
+    return entry;
+  }
+
+  projectRouter.get('/backups', (req, res) => {
+    try {
+      const entry = entryOf(req.ctx, req.query.path);
+      res.json({ path: entry.path, backups: backups.listBackups(backupRootOf(req.ctx.id), entry.path) });
+    } catch (err) {
+      res.status(err.status || 400).json({ error: err.message });
+    }
+  });
+
+  projectRouter.post('/backups/restore', async (req, res) => {
+    const body = req.body || {};
+    try {
+      const entry = entryOf(req.ctx, body.path);
+      const result = backups.restoreBackup(backupRootOf(req.ctx.id), entry.path, body.id, entry.savePath);
+      await logHistory(req.ctx, { op: 'restore', path: entry.path, name: entry.name, ok: true, backup: body.id, backupBefore: result.backupBefore && result.backupBefore.id });
+      res.json(result);
+    } catch (err) {
+      res.status(err.status || 400).json({ error: err.message });
+    }
+  });
+
+  projectRouter.post('/backups/reveal', async (req, res) => {
+    const body = req.body || {};
+    try {
+      const entry = entryOf(req.ctx, body.path);
+      await revealImpl(backups.backupPath(backupRootOf(req.ctx.id), entry.path, body.id));
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(err.status || 400).json({ error: err.message });
+    }
+  });
+
+  // ---------- 操作历史 ----------
+  projectRouter.get('/history', (req, res) => {
+    const limit = Math.min(1000, Math.max(1, parseInt(req.query.limit, 10) || 200));
+    res.json(readHistory(historyPathOf(req.ctx.id), { limit, path: req.query.path || undefined }));
   });
 
   app.use('/api/p/:pid', projectRouter);

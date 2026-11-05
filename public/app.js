@@ -2,6 +2,7 @@
   'use strict';
 
   const STATUS_LABELS = {
+    conflict: { label: '冲突（两边都改过）', icon: '⚠' },
     error: { label: '错误', icon: '✖' },
     missing_local: { label: '本地缺失', icon: '⊘' },
     local_changed: { label: '本地变更', icon: '⟲' },
@@ -10,7 +11,7 @@
     synced: { label: '已同步', icon: '●' }
   };
 
-  const GROUP_ORDER = ['updated', 'never_synced', 'missing_local', 'local_changed', 'error', 'synced'];
+  const GROUP_ORDER = ['conflict', 'updated', 'never_synced', 'missing_local', 'local_changed', 'error', 'synced'];
   // 由 /api/config 填充：标题、是否允许上传、同步后动作名、自定义动作按钮
   let appConfig = { allowUpload: true, actions: [] };
   const DEFAULT_COLLAPSED = new Set(['synced', 'local_changed']);
@@ -56,7 +57,13 @@
     summaryBar: document.getElementById('summary-bar'),
     projectName: document.getElementById('project-name'),
     projectDir: document.getElementById('project-dir'),
-    search: document.getElementById('table-search')
+    search: document.getElementById('table-search'),
+    btnHistory: document.getElementById('btn-history'),
+    prefAutoRefresh: document.getElementById('pref-auto-refresh'),
+    prefNotify: document.getElementById('pref-notify'),
+    prefAfterWrap: document.getElementById('pref-after-wrap'),
+    prefAfterDownload: document.getElementById('pref-after-download'),
+    lastRefresh: document.getElementById('last-refresh')
   };
 
   // 搜索：render() 记住最近一次完整列表，输入关键词时只在前端过滤重绘，不再请求服务端
@@ -84,15 +91,16 @@
   function render(rows) {
     if (rows) lastRows = rows; else rows = lastRows;
     if (!rows) return;
-    const counts = { error: 0, missing_local: 0, local_changed: 0, never_synced: 0, updated: 0, synced: 0 };
-    rows.forEach(r => { counts[r.status]++; });
+    const counts = {};
+    const buckets = {};
+    GROUP_ORDER.forEach(k => { counts[k] = 0; buckets[k] = []; });
+    rows.forEach(r => { counts[r.status] = (counts[r.status] || 0) + 1; });
     const searching = searchTerms.length > 0;
     const shown = searching ? rows.filter(r => TableSearch.matchRow(r, searchTerms)) : rows;
-    const buckets = { error: [], missing_local: [], local_changed: [], never_synced: [], updated: [], synced: [] };
-    shown.forEach(r => { buckets[r.status].push(r); });
+    shown.forEach(r => { (buckets[r.status] || (buckets[r.status] = [])).push(r); });
 
     els.summary.textContent =
-      `${rows.length} 个表 | 有更新 ${counts.updated} | 未同步 ${counts.never_synced} | 本地缺失 ${counts.missing_local} | 本地变更 ${counts.local_changed} | 已同步 ${counts.synced} | 错误 ${counts.error}`
+      `${rows.length} 个表 | ${counts.conflict ? `⚠ 冲突 ${counts.conflict} | ` : ''}有更新 ${counts.updated} | 未同步 ${counts.never_synced} | 本地缺失 ${counts.missing_local} | 本地变更 ${counts.local_changed} | 已同步 ${counts.synced} | 错误 ${counts.error}`
       + (searching ? ` ｜ 搜索命中 ${shown.length} 个` : '');
 
     els.groups.innerHTML = '';
@@ -199,7 +207,13 @@
       a.target = '_blank';
       a.rel = 'noopener noreferrer';
       a.textContent = row.cloudModifiedTime ? `云端: ${formatTime(row.cloudModifiedTime)}` : '云端: —';
-      a.title = '打开云端表';
+      a.title = row.cloudModifiedBy ? `打开云端表\n最后修改：${row.cloudModifiedBy}` : '打开云端表';
+      if (row.cloudModifiedBy) {
+        const by = document.createElement('span');
+        by.className = 'cloud-by';
+        by.textContent = ` · ${row.cloudModifiedBy}`;
+        a.appendChild(by);
+      }
       a.addEventListener('click', e => e.stopPropagation());
       cloudCell.appendChild(a);
     } else {
@@ -245,13 +259,41 @@
       upBtn.type = 'button';
       upBtn.className = 'row-btn upload-btn';
       upBtn.textContent = '上传';
-      upBtn.title = `本地较新：用本地 xlsx 覆盖云端表\n${timesTip}`;
+      upBtn.title = `本地较新：先预览差异，确认后用本地 xlsx 覆盖云端表\n${timesTip}`;
       upBtn.addEventListener('click', e => {
         e.stopPropagation();
-        pickAndUpload(row);
+        openDiff(row.path, 'upload');
       });
       actionCell.appendChild(upBtn);
+    } else if (row.direction === 'conflict') {
+      const cfBtn = document.createElement('button');
+      cfBtn.type = 'button';
+      cfBtn.className = 'row-btn conflict-btn';
+      cfBtn.textContent = '解决冲突';
+      cfBtn.title = `上次同步后云端和本地都改过，不能自动决定方向。\n查看差异后选择保留哪一边。\n${timesTip}`;
+      cfBtn.addEventListener('click', e => {
+        e.stopPropagation();
+        openDiff(row.path, 'conflict');
+      });
+      actionCell.appendChild(cfBtn);
     }
+    // 差异 / 备份入口（所有可比较的行都有）
+    if (row.spreadsheetId && row.status !== 'error') {
+      const diffBtn = document.createElement('button');
+      diffBtn.type = 'button';
+      diffBtn.className = 'row-icon-btn';
+      diffBtn.textContent = '⇄';
+      diffBtn.title = '比较本地与云端的差异（逐单元格）';
+      diffBtn.addEventListener('click', e => { e.stopPropagation(); openDiff(row.path, 'view'); });
+      actionCell.appendChild(diffBtn);
+    }
+    const bkBtn = document.createElement('button');
+    bkBtn.type = 'button';
+    bkBtn.className = 'row-icon-btn';
+    bkBtn.textContent = '🕘';
+    bkBtn.title = '本地备份（下载覆盖前自动保存，可恢复）';
+    bkBtn.addEventListener('click', e => { e.stopPropagation(); window.CSMPanels && window.CSMPanels.openBackups(row); });
+    actionCell.appendChild(bkBtn);
     actionCell.appendChild(stateEl);
     div.appendChild(actionCell);
     if (busyPaths.has(row.path)) applyRowBusy(div, true, busyPaths.get(row.path));
@@ -269,8 +311,10 @@
       }
       els.authBanner.classList.add('hidden');
       const data = await resp.json();
-      if (resp.ok) render(data);
-      else appendLog(`! /api/tables error: ${data.error}\n`);
+      if (resp.ok) {
+        render(data);
+        if (!knownAlerts) knownAlerts = new Set(alertRows(data).map(alertKey));
+      } else appendLog(`! /api/tables error: ${data.error}\n`);
     } catch (err) {
       appendLog(`! fetch error: ${err.message}\n`);
     }
@@ -287,7 +331,7 @@
         return;
       }
       const data = await resp.json();
-      if (resp.ok) { render(data); appendLog('✓ 刷新完成\n'); }
+      if (resp.ok) { render(data); markRefreshed(data, false); appendLog('✓ 刷新完成\n'); }
       else appendLog(`! refresh error: ${data.error}\n`);
     } catch (err) {
       appendLog(`! ${err.message}\n`);
@@ -299,7 +343,9 @@
   function streamSync(paths) {
     // 本批所有表先标「排队中」，轮到谁再切换为「下载中」
     paths.forEach(p => { if (!busyPaths.has(p)) setRowBusy(p, true, '排队中…'); });
-    return new Promise((resolve) => {
+    const summary = { successCount: 0, failedCount: 0 };
+    return new Promise((done) => {
+      const resolve = () => done(summary);
       fetch(api('/sync'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -316,7 +362,7 @@
           resolve();
           return;
         }
-        await consumeSSE(response, resolve);
+        await consumeSSE(response, resolve, summary);
       }).catch(err => {
         appendLog(`! ${err.message}\n`);
         resolve();
@@ -324,7 +370,7 @@
     });
   }
 
-  async function consumeSSE(response, onComplete) {
+  async function consumeSSE(response, onComplete, summary) {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
@@ -340,13 +386,13 @@
         if (!evMatch || !dataMatch) continue;
         const event = evMatch[1].trim();
         const data = dataMatch[1].trim();
-        handleSseEvent(event, data);
+        handleSseEvent(event, data, summary);
       }
     }
     onComplete();
   }
 
-  function handleSseEvent(event, data) {
+  function handleSseEvent(event, data, summary) {
     if (event === 'log') {
       appendLog(data);
       if (!data.endsWith('\n')) appendLog('\n');
@@ -363,6 +409,7 @@
     } else if (event === 'done') {
       try {
         const obj = JSON.parse(data);
+        if (summary) Object.assign(summary, obj);
         appendLog(`\n=== done: success=${obj.successCount ?? 'n/a'} failed=${obj.failedCount ?? 'n/a'} exit=${obj.exitCode ?? '—'} ===\n`);
       } catch (_) {}
     } else if (event === 'error') {
@@ -373,20 +420,16 @@
     }
   }
 
-  async function pickAndUpload(row) {
-    const times = `云端修改：${formatTime(row.cloudModifiedTime)}\n本地文件修改：${row.localMtime ? formatTime(row.localMtime) : '—'}`;
-    if (!confirm(`确定用本地文件覆盖云端表「${row.name}」吗？\n\n${times}\n\n云端现有内容将被替换（可在 Google 表格版本历史中恢复）。`)) return;
-    await uploadOne(row);
-  }
-
-  async function uploadOne(row) {
+  // 上传请求（确认流程在差异预览里）：expect = 用户确认时看到的云端修改时间，force = 云端已变仍强制覆盖。
+  // 返回 { ok, status, data }；授权类错误在这里统一提示
+  async function uploadRequest(p, { expect, force } = {}) {
+    const q = new URLSearchParams({ path: p });
+    if (expect) q.set('expect', expect);
+    if (force) q.set('force', '1');
     setBusy(true);
-    setRowBusy(row.path, true, '上传中…');
-    appendLog(`→ 上传本地 ${row.name} 覆盖云端…\n`);
+    setRowBusy(p, true, '上传中…');
     try {
-      const resp = await fetch(api(`/upload?path=${encodeURIComponent(row.path)}`), {
-        method: 'POST'
-      });
+      const resp = await fetch(api(`/upload?${q}`), { method: 'POST' });
       const data = await resp.json().catch(() => ({}));
       if (resp.status === 401) {
         els.authBanner.classList.remove('hidden');
@@ -395,25 +438,42 @@
         appendLog('! 当前授权不含写权限，请重新授权后再上传\n');
         if (confirm('当前 Google 授权只有只读权限，需要重新授权才能上传。现在去授权吗？')) location.href = '/auth/start';
       } else if (resp.ok) {
-        appendLog(`✓ 已覆盖云端 ${row.name}（云端修改时间 ${formatTime(data.modifiedTime)}）\n`);
-        await loadTables();
-      } else {
+        appendLog(`✓ 已用本地覆盖云端 ${p}（云端修改时间 ${formatTime(data.modifiedTime)}）\n`);
+      } else if (resp.status !== 409) {
         appendLog(`✗ 上传失败: ${data.error || resp.status}\n`);
       }
+      return { ok: resp.ok, status: resp.status, data };
     } catch (err) {
       appendLog(`! ${err.message}\n`);
+      return { ok: false, status: 0, data: { error: err.message } };
     } finally {
-      setRowBusy(row.path, false);
+      setRowBusy(p, false);
+      setBusy(false);
+      loadTables();
+    }
+  }
+
+  // 下载一批表（主列表、清单弹窗、差异预览共用）：结束后刷新列表，并按偏好执行「下载后动作」
+  async function downloadPaths(paths) {
+    setBusy(true);
+    try {
+      const summary = await streamSync(paths);
+      releaseRows(paths);
+      await loadTables();
+      await runAfterDownload(summary);
+      return summary;
+    } finally {
       setBusy(false);
     }
   }
 
+  function openDiff(p, mode) {
+    if (window.CSMPanels) return window.CSMPanels.openDiff(p, { mode });
+    return Promise.resolve(null);
+  }
+
   async function syncOne(p) {
-    setBusy(true);
-    await streamSync([p]);
-    releaseRows([p]);
-    await loadTables();
-    setBusy(false);
+    await downloadPaths([p]);
   }
 
   async function syncAllUpdated() {
@@ -424,15 +484,15 @@
     // 只下载云端较新（或本地缺失）的表；本地较新的不覆盖，留给用户逐个确认上传
     const paths = rows.filter(r => r.direction === 'download').map(r => r.path);
     const localNewer = rows.filter(r => r.direction === 'upload');
+    const conflicts = rows.filter(r => r.direction === 'conflict');
     if (localNewer.length) appendLog(`（${localNewer.length} 张表本地较新，不会被下载覆盖：${localNewer.map(r => r.name).join('、')}）\n`);
+    if (conflicts.length) appendLog(`（⚠ ${conflicts.length} 张表两边都改过，需逐个查看差异后处理：${conflicts.map(r => r.name).join('、')}）\n`);
     if (paths.length === 0) {
       appendLog('（没有需要下载的表）\n');
       setBusy(false);
       return;
     }
-    await streamSync(paths);
-    releaseRows(paths);
-    await loadTables();
+    await downloadPaths(paths);
     setBusy(false);
   }
 
@@ -470,6 +530,102 @@
     }
   }
 
+  // ---------- 偏好（本机）：自动刷新 / 通知 / 下载后动作 ----------
+  const PREF_AUTO = 'csm.autoRefreshMin';
+  const PREF_NOTIFY = 'csm.notify';
+  const afterKey = () => `csm.afterDownload.${currentId}`;
+  const lsGet = k => { try { return localStorage.getItem(k); } catch (_) { return null; } };
+  const lsSet = (k, v) => { try { if (v == null || v === '') localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (_) {} };
+
+  function renderAfterDownloadPref() {
+    const actions = appConfig.actions || [];
+    els.prefAfterWrap.classList.toggle('hidden', actions.length === 0);
+    els.prefAfterDownload.innerHTML = '<option value="">不执行</option>';
+    actions.forEach(a => {
+      const o = document.createElement('option');
+      o.value = a.id;
+      o.textContent = a.label;
+      els.prefAfterDownload.appendChild(o);
+    });
+    const saved = lsGet(afterKey());
+    els.prefAfterDownload.value = actions.some(a => a.id === saved) ? saved : '';
+  }
+
+  async function runAfterDownload(summary) {
+    if (!summary || !summary.successCount) return;
+    const id = lsGet(afterKey());
+    const action = id && (appConfig.actions || []).find(a => a.id === id);
+    if (!action) return;
+    appendLog(`→ 下载完成，按设置自动执行「${action.label}」\n`);
+    await runAction(action);
+  }
+
+  // 自动刷新：定时 + 窗口重新获得焦点；发现新的「有更新 / 冲突」时发系统通知
+  let autoTimer = null;
+  let lastRefreshAt = 0;
+  let knownAlerts = null; // 当前项目已提示过的 path|云端时间
+  const FOCUS_REFRESH_MS = 2 * 60 * 1000;
+  const alertRows = rows => rows.filter(r => r.direction === 'download' || r.direction === 'conflict');
+  const alertKey = r => `${r.path}|${r.cloudModifiedTime || ''}`;
+
+  function markRefreshed(rows, notify) {
+    lastRefreshAt = Date.now();
+    els.lastRefresh.textContent = `上次刷新 ${new Date(lastRefreshAt).toLocaleTimeString('zh-CN', { hour12: false })}`;
+    const fresh = alertRows(rows).filter(r => !knownAlerts || !knownAlerts.has(alertKey(r)));
+    const first = !knownAlerts;
+    knownAlerts = new Set(alertRows(rows).map(alertKey));
+    if (first || !notify || fresh.length === 0) return;
+    const conflicts = fresh.filter(r => r.direction === 'conflict');
+    const names = fresh.slice(0, 5).map(r => r.name).join('、') + (fresh.length > 5 ? ` 等 ${fresh.length} 张` : '');
+    appendLog(`🔔 自动刷新发现 ${fresh.length} 张表云端有更新${conflicts.length ? `（其中 ${conflicts.length} 张冲突）` : ''}：${names}\n`);
+    if (els.prefNotify.checked && 'Notification' in window && Notification.permission === 'granted') {
+      const project = (projects.find(x => x.id === currentId) || {}).name || 'CSM';
+      const n = new Notification(`CSM · ${project}：${fresh.length} 张表云端有更新`, {
+        body: (conflicts.length ? `⚠ ${conflicts.length} 张冲突需人工处理\n` : '') + names,
+        tag: `csm-${currentId}`
+      });
+      n.onclick = () => { window.focus(); n.close(); };
+    }
+  }
+
+  async function silentRefresh() {
+    if (!currentId || busyCount > 0 || document.querySelector('.modal:not(.hidden)')) return;
+    const id = currentId;
+    try {
+      const resp = await fetch(api('/refresh'), { method: 'POST' });
+      if (!resp.ok || id !== currentId) return;
+      const data = await resp.json();
+      render(data);
+      markRefreshed(data, true);
+    } catch (_) { /* 网络问题等下次 */ }
+  }
+
+  function applyAutoRefresh() {
+    if (autoTimer) clearInterval(autoTimer);
+    autoTimer = null;
+    const min = parseInt(els.prefAutoRefresh.value, 10) || 0;
+    if (min > 0) autoTimer = setInterval(silentRefresh, min * 60 * 1000);
+  }
+
+  els.prefAutoRefresh.value = lsGet(PREF_AUTO) || '0';
+  els.prefNotify.checked = lsGet(PREF_NOTIFY) === '1';
+  applyAutoRefresh();
+  els.prefAutoRefresh.addEventListener('change', () => { lsSet(PREF_AUTO, els.prefAutoRefresh.value); applyAutoRefresh(); });
+  els.prefNotify.addEventListener('change', async () => {
+    if (els.prefNotify.checked && 'Notification' in window && Notification.permission !== 'granted') {
+      const perm = await Notification.requestPermission().catch(() => 'denied');
+      if (perm !== 'granted') {
+        els.prefNotify.checked = false;
+        appendLog('! 系统未允许通知：请在「系统设置 → 通知」中允许 CSM（或浏览器）发送通知\n');
+      }
+    }
+    lsSet(PREF_NOTIFY, els.prefNotify.checked ? '1' : '');
+  });
+  els.prefAfterDownload.addEventListener('change', () => lsSet(afterKey(), els.prefAfterDownload.value));
+  window.addEventListener('focus', () => {
+    if ((parseInt(els.prefAutoRefresh.value, 10) || 0) > 0 && Date.now() - lastRefreshAt > FOCUS_REFRESH_MS) silentRefresh();
+  });
+
   async function loadConfig() {
     appConfig = { allowUpload: true, actions: [] };
     try {
@@ -486,6 +642,7 @@
       b.addEventListener('click', () => runAction(action));
       els.customActions.appendChild(b);
     });
+    renderAfterDownloadPref();
   }
 
   // ---------- 多项目 ----------
@@ -527,6 +684,9 @@
     renderTabs();
     groupExpandedState.clear();
     lastRows = null; // 换项目后不能再拿旧项目的列表做搜索
+    knownAlerts = null;
+    lastRefreshAt = 0;
+    els.lastRefresh.textContent = '';
     els.groups.innerHTML = '';
     els.summary.textContent = '加载中…';
     await loadConfig();
@@ -671,9 +831,17 @@
     }
   }
 
+  els.btnHistory.addEventListener('click', () => window.CSMPanels && window.CSMPanels.openHistory());
+
   window.CSM = {
     revealLocal,
     api,
+    formatTime,
+    downloadPaths,
+    uploadRequest,
+    openDiff,
+    allowUpload: () => appConfig.allowUpload !== false,
+    tableRow: p => (lastRows || []).find(r => r.path === p) || null,
     currentId: () => currentId,
     reloadTables: () => loadTables(),
     appendLog,
@@ -694,7 +862,10 @@
     } else if (e.key === 'Enter') {
       // 回车：只命中一个表时直接下载它
       const hits = (lastRows || []).filter(r => TableSearch.matchRow(r, searchTerms));
-      if (searchTerms.length && hits.length === 1 && hits[0].status !== 'error' && !busyPaths.has(hits[0].path)) syncOne(hits[0].path);
+      if (searchTerms.length && hits.length === 1 && !busyPaths.has(hits[0].path)) {
+        if (hits[0].direction === 'download') syncOne(hits[0].path);
+        else if (hits[0].direction === 'conflict') openDiff(hits[0].path, 'conflict');
+      }
     }
   });
   // ⌘F / Ctrl+F 或 / 聚焦搜索框（弹窗打开时不抢焦点）

@@ -540,10 +540,10 @@
     } else if (dir) {
       const sb = document.createElement('button');
       sb.type = 'button';
-      sb.className = dir === 'download' ? 'fl-dl' : 'fl-ul';
-      sb.textContent = dir === 'download' ? '⬇ 下载' : '⬆ 上传';
-      sb.title = `${dir === 'download' ? '用云端表覆盖本地 xlsx' : '用本地 xlsx 覆盖云端表'}\n${timesText(e)}`;
-      sb.addEventListener('click', () => (dir === 'download' ? downloadEntry(e) : uploadEntry(e)));
+      sb.className = dir === 'download' ? 'fl-dl' : dir === 'conflict' ? 'fl-cf' : 'fl-ul';
+      sb.textContent = dir === 'download' ? '⬇ 下载' : dir === 'conflict' ? '⚠ 解决冲突' : '⬆ 上传';
+      sb.title = `${dir === 'download' ? '用云端表覆盖本地 xlsx（覆盖前自动备份）' : dir === 'conflict' ? '两边都改过：查看差异后选择保留哪一边' : '先预览差异，确认后用本地 xlsx 覆盖云端表'}\n${timesText(e)}`;
+      sb.addEventListener('click', () => (dir === 'download' ? downloadEntry(e) : resolveViaDiff(e, dir)));
       ops.appendChild(sb);
     }
     const edit = document.createElement('button');
@@ -566,7 +566,8 @@
   // ---------- 本地 ↔ 云端同步 ----------
   function timesText(e) {
     const cloud = e.sync && e.sync.cloudModifiedTime;
-    return `云端修改：${cloud ? fmtTime(cloud) : '—'}\n本地修改：${e.local ? fmtTime(e.local.mtime) : '本地没有文件'}`;
+    const by = e.sync && e.sync.cloudModifiedBy ? `（${e.sync.cloudModifiedBy}）` : '';
+    return `云端修改：${cloud ? fmtTime(cloud) : '—'}${by}\n本地修改：${e.local ? fmtTime(e.local.mtime) : '本地没有文件'}`;
   }
 
   // 「本地文件」列：大小 + 与云端的关系
@@ -583,6 +584,9 @@
     } else if (dir === 'upload') {
       c.textContent = `本地较新 · ${fmtSize(e.local.size)}`;
       c.classList.add('fl-newer-local');
+    } else if (dir === 'conflict') {
+      c.textContent = `⚠ 冲突 · ${fmtSize(e.local.size)}`;
+      c.classList.add('fl-conflict');
     } else if (e.sync && e.sync.status === 'synced') {
       c.textContent = `✓ 已同步 · ${fmtSize(e.local.size)}`;
       c.classList.add('fl-ok');
@@ -599,61 +603,28 @@
     renderList();
   }
 
-  // 复用主列表的下载接口（SSE），读完整个流后看 table-done 结果
+  // 复用主列表的下载流程（覆盖前自动备份本地文件、下载后按偏好执行动作）
   async function downloadEntry(e) {
-    if (e.local && !confirm(`用云端表覆盖本地「${e.name}」？\n\n${e.path}\n${timesText(e)}\n\n本地文件会被替换（可用 git 找回）。`)) return;
+    if (e.local && !confirm(`用云端表覆盖本地「${e.name}」？\n\n${e.path}\n${timesText(e)}\n\n本地文件会先自动备份（主列表该行的 🕘 可恢复）。`)) return;
     setRowBusy(e.path, '下载中…');
     window.CSM.appendLog(`→ 下载 ${e.name}（${e.path}）\n`);
     try {
-      const resp = await fetch(api('/sync'), { method: 'POST', ...json({ paths: [e.path] }) });
-      if (resp.status === 401) { setText(el.flash, '需要先完成 Google 授权', 'error'); return; }
-      const text = await resp.text();
-      const done = text.split('\n\n').map(block => {
-        const ev = (block.match(/^event: (.+)$/m) || [])[1];
-        const data = (block.match(/^data: (.*)$/m) || [])[1];
-        try { return ev === 'table-done' ? JSON.parse(data) : null; } catch (_) { return null; }
-      }).find(Boolean);
-      if (done && done.success) {
-        window.CSM.appendLog(`✓ 已用云端覆盖本地：${e.path}\n`);
-        setText(el.flash, `已下载：${e.path}`, 'ok');
-      } else {
-        const msg = done && done.error ? done.error : '下载失败';
-        window.CSM.appendLog(`✗ 下载失败：${e.path} — ${msg}\n`);
-        setText(el.flash, `下载失败：${msg}`, 'error');
-      }
+      const summary = await window.CSM.downloadPaths([e.path]);
+      if (summary && summary.successCount) setText(el.flash, `已下载：${e.path}`, 'ok');
+      else setText(el.flash, '下载失败，详情见主界面日志', 'error');
     } catch (err) {
       setText(el.flash, `下载失败：${err.message}`, 'error');
     } finally {
       rowBusy.delete(e.path);
       await loadList(e.path);
-      window.CSM.reloadTables();
     }
   }
 
-  async function uploadEntry(e) {
-    if (!confirm(`用本地 xlsx 覆盖云端表「${e.name}」？\n\n${e.path}\n${timesText(e)}\n\n云端现有内容会被替换（可在 Google 表格版本历史中恢复）。`)) return;
-    setRowBusy(e.path, '上传中…');
-    window.CSM.appendLog(`→ 上传本地 ${e.name} 覆盖云端（${e.path}）\n`);
-    try {
-      const resp = await fetch(api(`/upload?path=${encodeURIComponent(e.path)}`), { method: 'POST' });
-      const data = await readJson(resp);
-      if (resp.ok) {
-        window.CSM.appendLog(`✓ 已用本地覆盖云端：${e.path}（云端修改时间 ${fmtTime(data.modifiedTime)}）\n`);
-        setText(el.flash, `已上传：${e.path}`, 'ok');
-      } else {
-        const msg = resp.status === 401 ? '需要先完成 Google 授权'
-          : data.error === 'NEED_UPLOAD_SCOPE' ? '当前授权只有只读权限，请在主界面重新授权（/auth/start）'
-          : data.error || `上传失败（${resp.status}）`;
-        window.CSM.appendLog(`✗ 上传失败：${e.path} — ${msg}\n`);
-        setText(el.flash, `上传失败：${msg}`, 'error');
-      }
-    } catch (err) {
-      setText(el.flash, `上传失败：${err.message}`, 'error');
-    } finally {
-      rowBusy.delete(e.path);
-      await loadList(e.path);
-      window.CSM.reloadTables();
-    }
+  // 上传 / 冲突：走差异预览，看过差异再决定（上传会带上预览时的云端版本做冲突检测）
+  async function resolveViaDiff(e, dir) {
+    const result = await window.CSM.openDiff(e.path, dir === 'conflict' ? 'conflict' : 'upload');
+    if (result) setText(el.flash, result === 'uploaded' ? `已上传：${e.path}` : `已下载：${e.path}`, 'ok');
+    await loadList(e.path);
   }
 
   // ---------- 云端目录映射 ----------
@@ -920,7 +891,10 @@
     el.modal.classList.add('hidden');
   });
   el.modal.addEventListener('click', e => { if (e.target === el.modal) el.modal.classList.add('hidden'); });
-  el.modal.addEventListener('keydown', e => { if (e.key === 'Escape') el.modal.classList.add('hidden'); });
+  // 差异预览 / 备份弹窗叠在清单上时，Esc 只关上层弹窗（由 panels.js 处理）
+  el.modal.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && !document.querySelector('#diff-modal:not(.hidden), #bk-modal:not(.hidden)')) el.modal.classList.add('hidden');
+  });
   el.filter.addEventListener('input', () => renderList());
   el.add.addEventListener('click', () => openEditor(null));
   el.rootEdit.addEventListener('click', openRootEditor);
