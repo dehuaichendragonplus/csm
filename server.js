@@ -109,6 +109,23 @@ async function main(opts = {}) {
   const statePathOf = id => path.join(DATA_DIR, 'projects', id, '.sync_state.json');
   const backupRootOf = id => path.join(DATA_DIR, 'projects', id, 'backups');
   const historyPathOf = id => path.join(DATA_DIR, 'projects', id, 'history.jsonl');
+  const driveCachePathOf = id => path.join(DATA_DIR, 'projects', id, 'drive-cache.json');
+  const verifyCachePathOf = id => path.join(DATA_DIR, 'projects', id, 'verify-cache.json');
+  // 内存里的云端时间是不是本次运行实际查询过的（false = 从磁盘读的上次结果，界面会在后台补刷）
+  const driveCacheFresh = new Map(); // projectId -> boolean
+  const driveCacheFetchedAt = new Map(); // projectId -> ISO 时间
+
+  function readJson(file, fallback) {
+    try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (_) { return fallback; }
+  }
+  function writeJson(file, data) {
+    try {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      const tmp = `${file}.${process.pid}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify(data));
+      fs.renameSync(tmp, file);
+    } catch (err) { console.error('[csm] write cache failed:', err.message); }
+  }
   const TMP_DIR = path.join(DATA_DIR, 'tmp');
 
   // 当前 Google 账号（写操作历史用），授权后首次需要时查询一次
@@ -138,7 +155,33 @@ async function main(opts = {}) {
     if (!hasToken) throw new Error('OAUTH_REQUIRED');
     const filelist = loadFilelist(ctx.cfg.filelistPath);
     const ids = filelist.filter(e => e.spreadsheetId).map(e => e.spreadsheetId);
-    driveCaches.set(ctx.id, await getModifiedTimes(ids, oauth2Client));
+    const map = await getModifiedTimes(ids, oauth2Client);
+    driveCaches.set(ctx.id, map);
+    driveCacheFresh.set(ctx.id, true);
+    const fetchedAt = new Date().toISOString();
+    driveCacheFetchedAt.set(ctx.id, fetchedAt);
+    // 只存查询成功的条目：下次启动先用它显示列表（随后后台刷新），不用等全部查询完
+    writeJson(driveCachePathOf(ctx.id), { fetchedAt, items: Object.fromEntries([...map].filter(([, v]) => !v.error)) });
+  }
+
+  // 内存里还没有云端时间时：有上次的磁盘缓存就先用它（返回 true），否则需要现查
+  function loadDiskDriveCache(ctx) {
+    if (driveCaches.get(ctx.id).size > 0) return true;
+    const saved = readJson(driveCachePathOf(ctx.id), null);
+    if (!saved || !saved.items || !Object.keys(saved.items).length) return false;
+    driveCaches.set(ctx.id, new Map(Object.entries(saved.items)));
+    driveCacheFresh.set(ctx.id, false);
+    driveCacheFetchedAt.set(ctx.id, saved.fetchedAt || null);
+    return true;
+  }
+
+  // 列表要用云端时间：内存 → 磁盘缓存 → 现查。返回是否为旧数据
+  async function ensureDriveCache(ctx) {
+    if (!loadDiskDriveCache(ctx)) await refreshDriveCache(ctx);
+    return driveCacheFresh.get(ctx.id) === false;
+  }
+  function markStale(res, ctx) {
+    res.set('X-CSM-Stale', driveCacheFetchedAt.get(ctx.id) || '1');
   }
 
   // 用入仓的 sidecar 为尚无本地状态的条目补状态：xlsx 来自 git 而非过期下载，应视为已同步
@@ -206,6 +249,7 @@ async function main(opts = {}) {
       hasToken = true;
       currentUser = null;
       driveCaches.clear();
+      driveCacheFresh.clear();
       if (opts.authSuccessHtml) res.type('html').send(opts.authSuccessHtml);
       else res.redirect('/');
       onAuthorized();
@@ -277,6 +321,7 @@ async function main(opts = {}) {
   app.delete('/api/projects/:id', (req, res) => {
     if (!removeProject(REGISTRY_PATH, req.params.id)) return res.status(404).json({ error: 'unknown project' });
     driveCaches.delete(req.params.id);
+    driveCacheFresh.delete(req.params.id);
     res.json({ ok: true });
   });
 
@@ -318,7 +363,8 @@ async function main(opts = {}) {
   projectRouter.get('/tables', async (req, res) => {
     if (!hasToken) return res.status(401).json({ error: 'OAUTH_REQUIRED' });
     try {
-      if (driveCaches.get(req.ctx.id).size === 0) await refreshDriveCache(req.ctx);
+      // 启动时先用上次的云端时间立即显示，界面看到 X-CSM-Stale 后会在后台刷新
+      if (await ensureDriveCache(req.ctx)) markStale(res, req.ctx);
       res.json(tablesOf(req.ctx));
     } catch (err) {
       if (err.message === 'OAUTH_REQUIRED') return res.status(401).json({ error: 'OAUTH_REQUIRED' });
@@ -584,7 +630,7 @@ async function main(opts = {}) {
       const syncByPath = new Map();
       if (hasToken) {
         try {
-          if (driveCaches.get(req.ctx.id).size === 0) await refreshDriveCache(req.ctx);
+          await ensureDriveCache(req.ctx);
           for (const t of tablesOf(req.ctx)) syncByPath.set(t.path, t);
         } catch (_) { /* 查不到云端时只是不显示同步按钮 */ }
       }
@@ -935,6 +981,74 @@ async function main(opts = {}) {
       res.status(500).json({ error: err.message });
     } finally {
       fs.rmSync(tmp, { force: true });
+    }
+  });
+
+  // ---------- 内容核对：云端修改时间变了，但内容可能没变（有人打开又关闭、改了格式 / 批注等） ----------
+  // 对「有更新 / 冲突」的表导出云端、与本地逐单元格比较；值完全一致就记为已同步（等同于下载了一份相同的内容），
+  // 不再出现在「有更新」里。不一致的结果按「路径 + 云端时间 + 本地指纹」缓存，同一版本不重复导出。
+  const VERIFY_STATUSES = new Set(['updated', 'conflict']);
+  const VERIFY_CONCURRENCY = 2;
+  const verifyCaches = new Map(); // projectId -> { [path]: key }（已确认内容不同的版本）
+
+  function verifyCacheOf(id) {
+    if (!verifyCaches.has(id)) verifyCaches.set(id, readJson(verifyCachePathOf(id), {}) || {});
+    return verifyCaches.get(id);
+  }
+
+  async function verifyTable(ctx, row, entry) {
+    const cache = verifyCacheOf(ctx.id);
+    const localHash = hashFile(entry.savePath);
+    const key = `${row.cloudModifiedTime}|${localHash}`;
+    if (cache[entry.path] === key) return { path: entry.path, identical: false, cached: true };
+    fs.mkdirSync(TMP_DIR, { recursive: true });
+    const tmp = path.join(TMP_DIR, `verify-${ctx.id}-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.xlsx`);
+    try {
+      await exportCloud(ctx.cfg, entry, tmp);
+      const diff = diffWorkbooks(readWorkbook(entry.savePath), readWorkbook(tmp), { maxChanges: 1 });
+      if (!diff.identical) {
+        cache[entry.path] = key;
+        writeJson(verifyCachePathOf(ctx.id), cache);
+        return { path: entry.path, identical: false };
+      }
+      // 本地文件在核对期间被改过就不记（下次刷新再核对）
+      if (hashFile(entry.savePath) !== localHash) return { path: entry.path, identical: false, changed: true };
+      const stat = fs.statSync(entry.savePath);
+      updateEntry(ctx.cfg.statePath, entry.path, {
+        lastSyncedModifiedTime: row.cloudModifiedTime,
+        lastSyncedSize: stat.size,
+        lastSyncedMtime: stat.mtime.toISOString(),
+        lastSyncedHash: localHash
+      });
+      delete cache[entry.path];
+      writeJson(verifyCachePathOf(ctx.id), cache);
+      await logHistory(ctx, { op: 'verify', path: entry.path, name: entry.name, ok: true, cloudModifiedTime: row.cloudModifiedTime, cloudModifiedBy: row.cloudModifiedBy || null, previousStatus: row.status });
+      return { path: entry.path, identical: true };
+    } finally {
+      fs.rmSync(tmp, { force: true });
+    }
+  }
+
+  projectRouter.post('/verify', async (req, res) => {
+    if (!hasToken) return res.status(401).json({ error: 'OAUTH_REQUIRED' });
+    const ctx = req.ctx;
+    const want = Array.isArray(req.body && req.body.paths) ? new Set(req.body.paths) : null;
+    try {
+      const byPath = new Map(loadFilelist(ctx.cfg.filelistPath).map(e => [e.path, e]));
+      const rows = tablesOf(ctx).filter(r => VERIFY_STATUSES.has(r.status) && r.cloudModifiedTime && (!want || want.has(r.path)) && byPath.has(r.path));
+      const results = [];
+      const queue = [...rows];
+      async function worker() {
+        while (queue.length) {
+          const row = queue.shift();
+          try { results.push(await verifyTable(ctx, row, byPath.get(row.path))); }
+          catch (err) { results.push({ path: row.path, identical: false, error: err.message }); }
+        }
+      }
+      await Promise.all(Array.from({ length: Math.min(VERIFY_CONCURRENCY, queue.length) }, worker));
+      res.json({ results, tables: tablesOf(ctx) });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
     }
   });
 

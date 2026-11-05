@@ -686,7 +686,7 @@
   // ======================= 操作历史 =======================
   const h = { modal: $('hist-modal'), tbody: $('hist-tbody'), filter: $('hist-filter'), count: $('hist-count'), close: $('hist-close') };
   let histRows = [];
-  const OP_LABEL = { download: '⬇ 下载', upload: '⬆ 上传', create: '＋ 新建云端表', link: '🔗 关联云端表', restore: '↺ 恢复备份', action: '▶ 执行动作' };
+  const OP_LABEL = { download: '⬇ 下载', upload: '⬆ 上传', create: '＋ 新建云端表', link: '🔗 关联云端表', restore: '↺ 恢复备份', action: '▶ 执行动作', verify: '≡ 内容核对' };
 
   function histDetail(r) {
     if (!r.ok) return r.error ? `失败：${r.error}` : '失败';
@@ -695,6 +695,7 @@
       case 'upload': return `覆盖了云端 ${fmt(r.replacedCloudModifiedTime)}${r.replacedCloudModifiedBy ? `（${r.replacedCloudModifiedBy}）` : ''} 的版本${r.forced ? ' · 强制覆盖' : ''}`;
       case 'create': case 'link': return r.cloudDir || '';
       case 'restore': return `恢复到备份 ${r.backup}${r.backupBefore ? ` · 恢复前已备份 ${r.backupBefore}` : ''}`;
+      case 'verify': return `云端 ${fmt(r.cloudModifiedTime)}${r.cloudModifiedBy ? `（${r.cloudModifiedBy}）` : ''} 只改了时间，内容与本地一致，已标为已同步`;
       case 'action': return `退出码 ${r.exitCode}${r.durationMs != null ? ` · 耗时 ${(r.durationMs / 1000).toFixed(1)}s` : ''}`;
       default: return '';
     }

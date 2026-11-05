@@ -16,6 +16,7 @@
   let appConfig = { allowUpload: true, actions: [] };
   const DEFAULT_COLLAPSED = new Set(['synced', 'local_changed']);
   // 两边内容可能不一致、值得看差异的状态
+  const verifyingPaths = new Set(); // 正在核对内容的表
   const DIFF_STATUSES = new Set(['conflict', 'updated', 'never_synced', 'local_changed']);
   // Tracks each group's expanded/collapsed state across re-renders (render() rebuilds the DOM from scratch).
   // Populated lazily from DEFAULT_COLLAPSED the first time a group is seen, then mutated by user clicks.
@@ -249,6 +250,11 @@
     actionCell.className = 'action-cell';
     const stateEl = document.createElement('span');
     stateEl.className = 'row-state';
+    if (verifyingPaths.has(row.path)) {
+      div.classList.add('row-verifying');
+      stateEl.textContent = '核对内容中…';
+      stateEl.title = '云端修改时间变了：正在导出云端内容与本地逐单元格比较，内容一致会自动标为已同步';
+    }
     if (row.direction === 'download') {
       const btn = document.createElement('button');
       btn.type = 'button';
@@ -320,6 +326,12 @@
       if (resp.ok) {
         render(data);
         if (!knownAlerts) knownAlerts = new Set(alertRows(data).map(alertKey));
+        const stale = resp.headers.get('X-CSM-Stale');
+        if (stale) {
+          // 启动时先显示上次的云端状态，后台刷新（批量查询，通常几秒内完成）
+          els.lastRefresh.textContent = `显示的是 ${formatTime(stale) || '上次'} 的云端状态，正在后台刷新…`;
+          backgroundRefresh();
+        } else verifyUpdates(data);
       } else appendLog(`! /api/tables error: ${data.error}\n`);
     } catch (err) {
       appendLog(`! fetch error: ${err.message}\n`);
@@ -337,7 +349,7 @@
         return;
       }
       const data = await resp.json();
-      if (resp.ok) { render(data); markRefreshed(data, false); appendLog('✓ 刷新完成\n'); }
+      if (resp.ok) { render(data); markRefreshed(data, false); appendLog('✓ 刷新完成\n'); verifyUpdates(data); }
       else appendLog(`! refresh error: ${data.error}\n`);
     } catch (err) {
       appendLog(`! ${err.message}\n`);
@@ -602,8 +614,69 @@
       if (!resp.ok || id !== currentId) return;
       const data = await resp.json();
       render(data);
-      markRefreshed(data, true);
+      const verified = await verifyUpdates(data);
+      if (id !== currentId) return;
+      markRefreshed(verified || data, true);
     } catch (_) { /* 网络问题等下次 */ }
+  }
+
+  // 启动时用了上次的云端状态：后台刷新一次，再核对内容
+  async function backgroundRefresh() {
+    const id = currentId;
+    try {
+      const resp = await fetch(api('/refresh'), { method: 'POST' });
+      const data = await resp.json().catch(() => null);
+      if (id !== currentId) return;
+      if (!resp.ok || !data) {
+        els.lastRefresh.textContent = '后台刷新失败，显示的是上次的云端状态';
+        if (data && data.error) appendLog(`! 后台刷新失败：${data.error}\n`);
+        return;
+      }
+      render(data);
+      knownAlerts = null; // 以刷新后的结果为基准，不把启动前就有的更新当成新提醒
+      markRefreshed(data, false);
+      await verifyUpdates(data);
+    } catch (err) {
+      if (id === currentId) els.lastRefresh.textContent = '后台刷新失败，显示的是上次的云端状态';
+    }
+  }
+
+  // 「有更新 / 冲突」的表：云端修改时间变了不代表内容变了，导出云端与本地比较，内容一致的自动记为已同步
+  let verifyRun = null;
+  async function verifyUpdates(rows) {
+    const id = currentId;
+    const paths = (rows || []).filter(r => r.status === 'updated' || r.status === 'conflict').map(r => r.path);
+    if (!paths.length) return rows;
+    if (verifyRun) return verifyRun; // 同一时间只跑一轮
+    verifyRun = (async () => {
+      paths.forEach(p => verifyingPaths.add(p));
+      render();
+      try {
+        const resp = await fetch(api('/verify'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ paths }) });
+        const data = await resp.json().catch(() => ({}));
+        if (id !== currentId || !resp.ok) return rows;
+        const same = data.results.filter(r => r.identical);
+        const failed = data.results.filter(r => r.error);
+        if (same.length) {
+          const byPath = new Map((rows || []).map(r => [r.path, r]));
+          const names = same.map(r => (byPath.get(r.path) || {}).name || r.path).join('、');
+          appendLog(`✓ 内容核对：${same.length} 张表云端只是修改时间变了，内容与本地一致，已标为已同步：${names}\n`);
+        }
+        failed.forEach(r => appendLog(`! 内容核对失败 ${r.path}：${r.error}\n`));
+        return data.tables;
+      } catch (_) {
+        return rows;
+      } finally {
+        paths.forEach(p => verifyingPaths.delete(p));
+      }
+    })();
+    try {
+      const result = await verifyRun;
+      if (id === currentId) render(result && result !== rows ? result : undefined);
+      return result;
+    } finally {
+      verifyRun = null;
+    }
   }
 
   function applyAutoRefresh() {
