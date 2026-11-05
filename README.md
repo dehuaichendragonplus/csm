@@ -13,7 +13,6 @@
 | 系统 | 安装包 |
 |---|---|
 | macOS Apple 芯片（M 系列） | `CSM-<版本>-mac-arm64.dmg` |
-| macOS Intel 芯片 | `CSM-<版本>-mac-x64.dmg` |
 
 **首次打开（macOS）**：安装包没有 Apple 开发者签名，第一次双击会被系统拦截。把 App 拖进「应用程序」后，在 Finder 里**右键 → 打开 → 打开**即可，之后正常双击。如果提示「已损坏，无法打开」，在终端执行一次：
 
@@ -34,7 +33,7 @@ App 与命令行版的区别：
 ```bash
 npm install
 npm run app        # 开发模式直接运行（不打包）
-npm run dist:mac   # 输出 dist/ 下的 arm64 + x64 dmg
+npm run dist:mac   # 输出 dist/ 下的 arm64 dmg（仅 Apple 芯片，不再出 Intel 包）
 ```
 
 - 版本号取 `package.json` 的 `version`，发新版前先改这里。
@@ -48,9 +47,9 @@ App 启动后（之后每 6 小时）检查一次更新清单，有新版本时�
 1. 选一个更新源，填到 `package.json` 的 `csm.updateUrl`（构建时打进安装包；也可用环境变量 `CSM_UPDATE_URL` 覆盖）：
    - 任意 http(s) 地址，指向 `latest.json`；或
    - **Google Drive 文件链接 / `drive:<文件ID>`**：用使用者自己的 Google 授权读取，放在团队共享盘里即可，不用另搭服务器（需要使用者对该文件有读取权限）
-2. 每次发版：改 `version` → `npm run dist:mac` → 把两个 dmg 传到可下载的位置 → 生成清单并上传覆盖旧的 `latest.json`：
+2. 每次发版：改 `version` → `npm run dist:mac` → 把 arm64 dmg 传到可下载的位置 → 生成清单并上传覆盖旧的 `latest.json`：
    ```bash
-   npm run release:manifest -- --notes "本次更新内容" --arm64 <arm64 dmg 链接> --x64 <x64 dmg 链接>
+   npm run release:manifest -- --notes "本次更新内容" --arm64 <arm64 dmg 链接>
    ```
    输出 `dist/latest.json`。
 3. `csm.updateUrl` 留空时不检查更新。用户点提示条右侧 ✕ 后，同一版本不再提示。
