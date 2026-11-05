@@ -15,6 +15,8 @@
   // 由 /api/config 填充：标题、是否允许上传、同步后动作名、自定义动作按钮
   let appConfig = { allowUpload: true, actions: [] };
   const DEFAULT_COLLAPSED = new Set(['synced', 'local_changed']);
+  // 两边内容可能不一致、值得看差异的状态
+  const DIFF_STATUSES = new Set(['conflict', 'updated', 'never_synced', 'local_changed']);
   // Tracks each group's expanded/collapsed state across re-renders (render() rebuilds the DOM from scratch).
   // Populated lazily from DEFAULT_COLLAPSED the first time a group is seen, then mutated by user clicks.
   const groupExpandedState = new Map();
@@ -63,7 +65,11 @@
     prefNotify: document.getElementById('pref-notify'),
     prefAfterWrap: document.getElementById('pref-after-wrap'),
     prefAfterDownload: document.getElementById('pref-after-download'),
-    lastRefresh: document.getElementById('last-refresh')
+    lastRefresh: document.getElementById('last-refresh'),
+    btnSettings: document.getElementById('btn-settings'),
+    settingsModal: document.getElementById('settings-modal'),
+    settingsProject: document.getElementById('settings-project'),
+    settingsVersion: document.getElementById('settings-version')
   };
 
   // 搜索：render() 记住最近一次完整列表，输入关键词时只在前端过滤重绘，不再请求服务端
@@ -277,8 +283,8 @@
       });
       actionCell.appendChild(cfBtn);
     }
-    // 差异 / 备份入口（所有可比较的行都有）
-    if (row.spreadsheetId && row.status !== 'error') {
+    // 差异入口：只给两边可能不一致的行（已同步 / 本地缺失 / 出错的行不显示）
+    if (row.spreadsheetId && DIFF_STATUSES.has(row.status)) {
       const diffBtn = document.createElement('button');
       diffBtn.type = 'button';
       diffBtn.className = 'row-icon-btn';
@@ -832,6 +838,22 @@
   }
 
   els.btnHistory.addEventListener('click', () => window.CSMPanels && window.CSMPanels.openHistory());
+
+  // ---------- 设置弹窗：本机偏好 + 当前项目的管理操作（控件本身的逻辑在上面 / filelist-manager.js） ----------
+  function openSettings() {
+    const p = projects.find(x => x.id === currentId);
+    els.settingsProject.textContent = p ? p.name : '';
+    els.settingsVersion.textContent = document.getElementById('app-title').title || '';
+    els.settingsModal.classList.remove('hidden');
+  }
+  const closeSettings = () => els.settingsModal.classList.add('hidden');
+  els.btnSettings.addEventListener('click', openSettings);
+  document.getElementById('settings-close').addEventListener('click', closeSettings);
+  document.getElementById('settings-done').addEventListener('click', closeSettings);
+  els.settingsModal.addEventListener('click', e => { if (e.target === els.settingsModal) closeSettings(); });
+  // 这两个会打开别的弹窗 / 确认框：先关掉设置，避免叠在下面
+  for (const b of [document.getElementById('btn-filelist'), els.btnClearState]) b.addEventListener('click', closeSettings, true);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !els.settingsModal.classList.contains('hidden')) closeSettings(); });
 
   window.CSM = {
     revealLocal,

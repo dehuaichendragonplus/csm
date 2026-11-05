@@ -33,28 +33,15 @@
       <span id="custom-actions" class="custom-actions"></span>
       <span class="actions-spacer"></span>
       <button id="btn-history" type="button" title="本机在这个项目上做过的下载 / 上传 / 恢复 / 动作记录">🕘 操作历史</button>
-      <button id="btn-filelist" type="button" title="预览与编辑当前项目的 filelist.json">📋 配置表清单</button>
-      <button id="btn-clear-state" type="button" class="btn-danger" title="清除当前项目的本地同步状态">清除缓存</button>
-    </div>
-    <div class="project-prefs">
-      <label title="定时查询云端修改时间；窗口重新获得焦点时也会补刷一次">自动刷新
-        <select id="pref-auto-refresh">
-          <option value="0">关闭</option>
-          <option value="5">每 5 分钟</option>
-          <option value="15">每 15 分钟</option>
-          <option value="30">每 30 分钟</option>
-        </select>
-      </label>
-      <label title="自动刷新发现新的「有更新 / 冲突」时弹系统通知"><input id="pref-notify" type="checkbox"> 有更新时通知</label>
-      <label id="pref-after-wrap" class="hidden" title="下载成功后自动执行一个自定义动作（只对本机生效）">下载后自动执行
-        <select id="pref-after-download"><option value="">不执行</option></select>
-      </label>
-      <span id="last-refresh" class="dir-tip"></span>
+      <button id="btn-settings" type="button" title="自动刷新、通知、下载后动作、配置表清单、清除缓存">⚙ 设置</button>
     </div>
   </section>
 
   <section id="summary-bar" class="summary hidden">
-    <span id="summary" class="summary-text">加载中…</span>
+    <span class="summary-left">
+      <span id="summary" class="summary-text">加载中…</span>
+      <span id="last-refresh" class="dir-tip"></span>
+    </span>
     <div class="search-box">
       <input id="table-search" type="search" placeholder="搜索配置表：表名 / 路径 / 云端表名" autocomplete="off" spellcheck="false">
       <kbd class="search-kbd">⌘F</kbd>
@@ -210,6 +197,56 @@
           <button id="fl-root-cancel" type="button">取消</button>
           <button id="fl-root-save" type="button" class="primary">保存</button>
         </div>
+      </footer>
+    </div>
+  </div>
+
+  <!-- 设置：本机偏好 + 当前项目的管理操作 -->
+  <div id="settings-modal" class="modal hidden">
+    <div class="modal-box settings-box">
+      <header class="modal-head">
+        <div><strong>设置</strong> <span id="settings-project" class="fl-file"></span></div>
+        <button id="settings-close" type="button" title="关闭">✕</button>
+      </header>
+      <div class="settings-body">
+        <section class="set-group">
+          <h3>刷新与通知 <span class="dir-tip">（本机，所有项目通用）</span></h3>
+          <div class="set-row">
+            <div class="set-label">自动刷新<p>定时查询云端修改时间；窗口重新获得焦点时也会补刷一次</p></div>
+            <select id="pref-auto-refresh">
+              <option value="0">关闭</option>
+              <option value="5">每 5 分钟</option>
+              <option value="15">每 15 分钟</option>
+              <option value="30">每 30 分钟</option>
+            </select>
+          </div>
+          <div class="set-row">
+            <div class="set-label">有更新时通知<p>自动刷新发现新的「有更新 / 冲突」时弹系统通知</p></div>
+            <input id="pref-notify" type="checkbox" class="set-switch">
+          </div>
+        </section>
+        <section class="set-group">
+          <h3>当前项目</h3>
+          <div id="pref-after-wrap" class="set-row hidden">
+            <div class="set-label">下载后自动执行<p>下载成功后自动执行一个自定义动作（只对本机生效）</p></div>
+            <select id="pref-after-download"><option value="">不执行</option></select>
+          </div>
+          <div class="set-row">
+            <div class="set-label">配置表清单<p>预览与编辑 filelist.json：新增、关联、移除配置表，设置本地根目录</p></div>
+            <button id="btn-filelist" type="button">📋 打开清单</button>
+          </div>
+        </section>
+        <section class="set-group">
+          <h3>维护</h3>
+          <div class="set-row">
+            <div class="set-label">清除同步缓存<p>所有表变为「未同步」，本地 xlsx 文件不会被删除；状态显示异常时使用</p></div>
+            <button id="btn-clear-state" type="button" class="btn-danger">清除缓存</button>
+          </div>
+        </section>
+      </div>
+      <footer class="modal-foot">
+        <span id="settings-version" class="dir-tip"></span>
+        <button id="settings-done" type="button" class="primary">完成</button>
       </footer>
     </div>
   </div>
