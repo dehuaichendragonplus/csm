@@ -59,10 +59,6 @@
     refreshIcon: document.getElementById('refresh-icon'),
     historyIcon: document.getElementById('history-icon'),
     settingsIcon: document.getElementById('settings-icon'),
-    shortcutsIcon: document.getElementById('shortcuts-icon'),
-    btnShortcuts: document.getElementById('btn-shortcuts'),
-    shortcutsModal: document.getElementById('shortcuts-modal'),
-    shortcutsClose: document.getElementById('shortcuts-close'),
     searchIcon: document.getElementById('search-icon'),
     projectDirIcon: document.getElementById('project-dir-icon'),
     projectDirBadge: document.getElementById('project-dir-badge'),
@@ -105,7 +101,6 @@
     if (els.refreshIcon) els.refreshIcon.innerHTML = window.CSMIcons.refresh;
     if (els.historyIcon) els.historyIcon.innerHTML = window.CSMIcons.history;
     if (els.settingsIcon) els.settingsIcon.innerHTML = window.CSMIcons.settings;
-    if (els.shortcutsIcon) els.shortcutsIcon.innerHTML = window.CSMIcons.keyboard;
     if (els.searchIcon) els.searchIcon.innerHTML = window.CSMIcons.search;
     if (els.projectDirIcon) els.projectDirIcon.innerHTML = window.CSMIcons.folder;
     if (els.syncAllIcon) els.syncAllIcon.innerHTML = window.CSMIcons.downloadAll;
@@ -1212,19 +1207,6 @@
     });
   }
 
-  // 快捷键指南弹窗
-  function openShortcuts() {
-    if (els.shortcutsModal) els.shortcutsModal.classList.remove('hidden');
-  }
-  function closeShortcuts() {
-    if (els.shortcutsModal) els.shortcutsModal.classList.add('hidden');
-  }
-  if (els.btnShortcuts) els.btnShortcuts.addEventListener('click', openShortcuts);
-  if (els.shortcutsClose) els.shortcutsClose.addEventListener('click', closeShortcuts);
-  if (els.shortcutsModal) els.shortcutsModal.addEventListener('click', e => {
-    if (e.target === els.shortcutsModal) closeShortcuts();
-  });
-
   // 在访达中定位项目目录
   if (els.projectDirBadge) {
     els.projectDirBadge.addEventListener('click', () => {
@@ -1330,7 +1312,6 @@
 
     // 1. Esc: 优先关闭打开的弹窗或清空搜索框
     if (e.key === 'Escape') {
-      if (els.shortcutsModal && !els.shortcutsModal.classList.contains('hidden')) { closeShortcuts(); return; }
       if (els.settingsModal && !els.settingsModal.classList.contains('hidden')) { closeSettings(); return; }
       const modal = document.querySelector('.modal:not(.hidden)');
       if (modal) { modal.classList.add('hidden'); return; }
@@ -1365,10 +1346,14 @@
       return;
     }
 
-    // 5. ⌘/ 或 ?: 快捷键指南
+    // 5. ⌘/ 或 ?: 快捷键指南（打开设置弹窗并滚动至快捷键）
     if (((e.metaKey || e.ctrlKey) && e.key === '/') || (e.key === '?' && !typing && !anyModalOpen)) {
       e.preventDefault();
-      openShortcuts();
+      openSettings();
+      setTimeout(() => {
+        const scGroup = document.getElementById('settings-shortcuts-group');
+        if (scGroup) scGroup.scrollIntoView({ behavior: 'smooth' });
+      }, 60);
       return;
     }
 

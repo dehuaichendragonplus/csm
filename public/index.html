@@ -64,10 +64,6 @@
               <span class="btn-icon" id="settings-icon"></span>
               <span>设置</span>
             </button>
-            <button id="btn-shortcuts" type="button" class="btn-icon-action" title="快捷键帮助 (⌘/)">
-              <span class="btn-icon" id="shortcuts-icon"></span>
-              <span>快捷键</span>
-            </button>
           </div>
         </div>
       </div>
@@ -319,6 +315,35 @@
             <button id="btn-clear-state" type="button" class="btn-danger">清除缓存</button>
           </div>
         </section>
+        <section class="set-group" id="settings-shortcuts-group">
+          <h3>键盘快捷键</h3>
+          <div class="set-shortcuts-grid">
+            <div class="set-shortcut-item">
+              <span class="set-shortcut-desc">搜索配置表</span>
+              <div class="set-shortcut-keys"><kbd>⌘</kbd><kbd>F</kbd> 或 <kbd>/</kbd></div>
+            </div>
+            <div class="set-shortcut-item">
+              <span class="set-shortcut-desc">刷新所有云端状态</span>
+              <div class="set-shortcut-keys"><kbd>⌘</kbd><kbd>R</kbd></div>
+            </div>
+            <div class="set-shortcut-item">
+              <span class="set-shortcut-desc">展开 / 收起控制台日志</span>
+              <div class="set-shortcut-keys"><kbd>⌘</kbd><kbd>L</kbd></div>
+            </div>
+            <div class="set-shortcut-item">
+              <span class="set-shortcut-desc">打开项目与全局设置</span>
+              <div class="set-shortcut-keys"><kbd>⌘</kbd><kbd>,</kbd></div>
+            </div>
+            <div class="set-shortcut-item">
+              <span class="set-shortcut-desc">关闭弹窗 / 清空搜索框</span>
+              <div class="set-shortcut-keys"><kbd>Esc</kbd></div>
+            </div>
+            <div class="set-shortcut-item">
+              <span class="set-shortcut-desc">搜索仅命中 1 个表时直接下载</span>
+              <div class="set-shortcut-keys"><kbd>Enter</kbd></div>
+            </div>
+          </div>
+        </section>
       </div>
       <footer class="modal-foot">
         <span id="settings-version" class="dir-tip" style="color:var(--text-tertiary);font-size:12px;"></span>
@@ -386,46 +411,6 @@
       </header>
       <div class="fl-list-bar"><input id="hist-filter" type="search" placeholder="筛选：表名 / 路径 / 操作人" autocomplete="off" spellcheck="false"><span id="hist-count" class="dir-tip"></span></div>
       <div class="fl-table-wrap"><table class="fl-table"><thead><tr><th>时间</th><th>操作</th><th>表</th><th>操作人</th><th>结果 / 说明</th></tr></thead><tbody id="hist-tbody"></tbody></table></div>
-    </div>
-  </div>
-
-  <!-- 快捷键指南弹窗 -->
-  <div id="shortcuts-modal" class="modal hidden">
-    <div class="modal-box shortcuts-box">
-      <header class="modal-head">
-        <strong>键盘快捷键指南</strong>
-        <button id="shortcuts-close" type="button" class="modal-close-btn" title="关闭">✕</button>
-      </header>
-      <div class="shortcuts-list">
-        <div class="shortcut-item">
-          <span class="shortcut-desc">搜索配置表</span>
-          <div class="shortcut-keys"><kbd>⌘</kbd><kbd>F</kbd> 或 <kbd>/</kbd></div>
-        </div>
-        <div class="shortcut-item">
-          <span class="shortcut-desc">刷新所有云端修改状态</span>
-          <div class="shortcut-keys"><kbd>⌘</kbd><kbd>R</kbd></div>
-        </div>
-        <div class="shortcut-item">
-          <span class="shortcut-desc">展开 / 收起控制台日志</span>
-          <div class="shortcut-keys"><kbd>⌘</kbd><kbd>L</kbd></div>
-        </div>
-        <div class="shortcut-item">
-          <span class="shortcut-desc">打开项目与全局设置</span>
-          <div class="shortcut-keys"><kbd>⌘</kbd><kbd>,</kbd></div>
-        </div>
-        <div class="shortcut-item">
-          <span class="shortcut-desc">打开快捷键指南</span>
-          <div class="shortcut-keys"><kbd>⌘</kbd><kbd>/</kbd> 或 <kbd>?</kbd></div>
-        </div>
-        <div class="shortcut-item">
-          <span class="shortcut-desc">关闭弹窗 / 清空搜索框</span>
-          <div class="shortcut-keys"><kbd>Esc</kbd></div>
-        </div>
-        <div class="shortcut-item">
-          <span class="shortcut-desc">搜索仅命中 1 个表时直接下载</span>
-          <div class="shortcut-keys"><kbd>Enter</kbd></div>
-        </div>
-      </div>
     </div>
   </div>
 
