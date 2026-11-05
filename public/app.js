@@ -641,11 +641,12 @@
     }
   }
 
-  // 「有更新 / 冲突」的表：云端修改时间变了不代表内容变了，导出云端与本地比较，内容一致的自动记为已同步
+  // 「有更新 / 冲突 / 本地变更」的表：修改时间或文件字节变了不代表内容变了，导出云端与本地比较，内容一致的自动记为已同步
+  const VERIFY_STATUSES = new Set(['updated', 'conflict', 'local_changed']);
   let verifyRun = null;
   async function verifyUpdates(rows) {
     const id = currentId;
-    const paths = (rows || []).filter(r => r.status === 'updated' || r.status === 'conflict').map(r => r.path);
+    const paths = (rows || []).filter(r => VERIFY_STATUSES.has(r.status)).map(r => r.path);
     if (!paths.length) return rows;
     if (verifyRun) return verifyRun; // 同一时间只跑一轮
     verifyRun = (async () => {
@@ -659,8 +660,11 @@
         const failed = data.results.filter(r => r.error);
         if (same.length) {
           const byPath = new Map((rows || []).map(r => [r.path, r]));
-          const names = same.map(r => (byPath.get(r.path) || {}).name || r.path).join('、');
-          appendLog(`✓ 内容核对：${same.length} 张表云端只是修改时间变了，内容与本地一致，已标为已同步：${names}\n`);
+          const nameOf = r => (byPath.get(r.path) || {}).name || r.path;
+          const localOnly = same.filter(r => r.previousStatus === 'local_changed');
+          const cloud = same.filter(r => r.previousStatus !== 'local_changed');
+          if (cloud.length) appendLog(`✓ 内容核对：${cloud.length} 张表云端只是修改时间变了，内容与本地一致，已标为已同步：${cloud.map(nameOf).join('、')}\n`);
+          if (localOnly.length) appendLog(`✓ 内容核对：${localOnly.length} 张表本地文件被重新保存过但内容与云端一致，已标为已同步：${localOnly.map(nameOf).join('、')}\n`);
         }
         failed.forEach(r => appendLog(`! 内容核对失败 ${r.path}：${r.error}\n`));
         return data.tables;

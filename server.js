@@ -984,10 +984,11 @@ async function main(opts = {}) {
     }
   });
 
-  // ---------- 内容核对：云端修改时间变了，但内容可能没变（有人打开又关闭、改了格式 / 批注等） ----------
-  // 对「有更新 / 冲突」的表导出云端、与本地逐单元格比较；值完全一致就记为已同步（等同于下载了一份相同的内容），
-  // 不再出现在「有更新」里。不一致的结果按「路径 + 云端时间 + 本地指纹」缓存，同一版本不重复导出。
-  const VERIFY_STATUSES = new Set(['updated', 'conflict']);
+  // ---------- 内容核对：修改时间 / 文件字节变了，但内容可能没变 ----------
+  // 云端：有人打开又关闭、改了格式 / 批注等；本地：Excel 打开后重新保存、git 操作改写文件等（字节指纹变了，单元格没变）。
+  // 对「有更新 / 冲突 / 本地变更」的表导出云端、与本地逐单元格比较；值完全一致就记为已同步（等同于下载了一份相同的内容），
+  // 不再出现在对应分组里。不一致的结果按「路径 + 云端时间 + 本地指纹」缓存，同一版本不重复导出。
+  const VERIFY_STATUSES = new Set(['updated', 'conflict', 'local_changed']);
   const VERIFY_CONCURRENCY = 2;
   const verifyCaches = new Map(); // projectId -> { [path]: key }（已确认内容不同的版本）
 
@@ -1023,7 +1024,7 @@ async function main(opts = {}) {
       delete cache[entry.path];
       writeJson(verifyCachePathOf(ctx.id), cache);
       await logHistory(ctx, { op: 'verify', path: entry.path, name: entry.name, ok: true, cloudModifiedTime: row.cloudModifiedTime, cloudModifiedBy: row.cloudModifiedBy || null, previousStatus: row.status });
-      return { path: entry.path, identical: true };
+      return { path: entry.path, identical: true, previousStatus: row.status };
     } finally {
       fs.rmSync(tmp, { force: true });
     }

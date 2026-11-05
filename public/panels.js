@@ -695,7 +695,9 @@
       case 'upload': return `覆盖了云端 ${fmt(r.replacedCloudModifiedTime)}${r.replacedCloudModifiedBy ? `（${r.replacedCloudModifiedBy}）` : ''} 的版本${r.forced ? ' · 强制覆盖' : ''}`;
       case 'create': case 'link': return r.cloudDir || '';
       case 'restore': return `恢复到备份 ${r.backup}${r.backupBefore ? ` · 恢复前已备份 ${r.backupBefore}` : ''}`;
-      case 'verify': return `云端 ${fmt(r.cloudModifiedTime)}${r.cloudModifiedBy ? `（${r.cloudModifiedBy}）` : ''} 只改了时间，内容与本地一致，已标为已同步`;
+      case 'verify': return r.previousStatus === 'local_changed'
+        ? '本地文件被重新保存过，内容与云端一致，已标为已同步'
+        : `云端 ${fmt(r.cloudModifiedTime)}${r.cloudModifiedBy ? `（${r.cloudModifiedBy}）` : ''} 只改了时间，内容与本地一致，已标为已同步`;
       case 'action': return `退出码 ${r.exitCode}${r.durationMs != null ? ` · 耗时 ${(r.durationMs / 1000).toFixed(1)}s` : ''}`;
       default: return '';
     }
