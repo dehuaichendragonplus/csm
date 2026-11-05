@@ -231,7 +231,7 @@ html, body {
 /* ---------- 配置表清单弹窗 ---------- */
 .hidden { display: none !important; }
 .modal-top { z-index: 20; background: rgba(0,0,0,0.25); }
-.fl-box { width: 1080px; height: 82vh; max-height: 88vh; }
+.fl-box { width: min(1320px, 94vw); height: 82vh; max-height: 88vh; }
 .fl-edit-box { width: 720px; }
 .fl-root-box { width: 600px; }
 .fl-file { margin-left: 8px; font-size: 12px; color: #888; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
@@ -288,6 +288,11 @@ html, body {
 .fl-path-root { color: #9aa3ad; }
 .fl-path-warn { color: #b26a00; }
 .fl-col-ops { white-space: nowrap; text-align: right; }
+/* 操作列固定在右侧：表格比弹窗宽时（长路径 / 长备注）按钮也不会被挤出可视区 */
+.fl-table td.fl-col-ops, .fl-table th:last-child { position: sticky; right: 0; background: #fff; box-shadow: -8px 0 8px -8px rgba(0, 0, 0, 0.18); }
+.fl-table th:last-child { background: #f7f7f9; z-index: 2; }
+.fl-table tr:hover td.fl-col-ops { background: #f7fbff; }
+.fl-col-path, .fl-col-cloud { overflow-wrap: anywhere; }
 .fl-col-ops button { padding: 3px 10px; font-size: 12px; margin-left: 4px; }
 .fl-col-ops .fl-del { color: #d12c2c; border-color: #f0b4b4; }
 .fl-ok { color: #1a7f37; white-space: nowrap; }
