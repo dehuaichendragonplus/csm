@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 120" width="160" height="120" fill="none">
+  <ellipse cx="80" cy="100" rx="56" ry="12" fill="#f1f5f9"/>
+  <!-- Floating document sheet -->
+  <rect x="52" y="24" width="56" height="70" rx="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="2"/>
+  <rect x="62" y="38" width="36" height="4" rx="2" fill="#e2e8f0"/>
+  <rect x="62" y="48" width="28" height="4" rx="2" fill="#e2e8f0"/>
+  <rect x="62" y="58" width="32" height="4" rx="2" fill="#e2e8f0"/>
+  <rect x="62" y="68" width="20" height="4" rx="2" fill="#e2e8f0"/>
+  <!-- Green check badge -->
+  <circle cx="106" cy="30" r="14" fill="#10b981" stroke="#ffffff" stroke-width="3"/>
+  <path d="M101 30l3.5 3.5 7-7" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

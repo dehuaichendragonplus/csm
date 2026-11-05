@@ -5,11 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CSM</title>
   <link rel="stylesheet" href="style.css">
+  <link rel="icon" type="image/svg+xml" href="icons/logo.svg">
 </head>
 <body>
-  <!-- 顶部：项目切换 -->
+  <!-- 顶部：项目切换与品牌 -->
   <header class="topbar">
-    <h1 id="app-title">CSM</h1>
+    <div class="brand">
+      <div class="brand-logo" id="app-logo"></div>
+      <h1 id="app-title">CSM</h1>
+      <span class="brand-badge">Sync</span>
+    </div>
     <nav id="project-tabs" class="project-tabs"></nav>
     <button id="btn-add-project" type="button" class="add-project">＋ 添加项目</button>
   </header>
@@ -21,57 +26,123 @@
     <button id="update-dismiss" type="button" title="本版本不再提示">✕</button>
   </section>
 
-  <!-- 当前项目：项目信息与项目内的功能 -->
-  <section id="project-panel" class="project-panel hidden">
-    <div class="project-head">
-      <span id="project-name" class="project-name"></span>
-      <span id="project-dir" class="project-dir"></span>
+  <!-- 主滚动区域 -->
+  <div id="app-main-content">
+    <!-- 当前项目：项目信息与功能动作栏 -->
+    <section id="project-panel" class="project-panel hidden">
+      <div class="project-head-row">
+        <div class="project-identity">
+          <h2 id="project-name" class="project-name"></h2>
+          <button id="project-dir-badge" class="project-dir-badge" type="button" title="在访达中显示此项目目录">
+            <span class="badge-icon" id="project-dir-icon"></span>
+            <span id="project-dir" class="project-dir-text"></span>
+          </button>
+        </div>
+        <div class="actions">
+          <div class="action-group">
+            <button id="btn-sync-all" type="button" class="btn-primary-action" title="一键同步所有云端较新或本地缺失的表">
+              <span class="btn-icon" id="sync-all-icon"></span>
+              <span class="btn-label" id="sync-all-label">下载所有更新</span>
+              <span id="sync-all-badge" class="btn-badge hidden">0</span>
+            </button>
+            <button id="btn-refresh" type="button" class="btn-secondary-action" title="刷新所有云端状态">
+              <span class="btn-icon" id="refresh-icon"></span>
+              <span class="btn-label">刷新</span>
+            </button>
+          </div>
+          <div class="action-divider"></div>
+          <div class="action-group">
+            <span id="custom-actions" class="custom-actions"></span>
+          </div>
+          <div class="actions-spacer"></div>
+          <div class="action-group">
+            <button id="btn-history" type="button" class="btn-icon-action" title="本机操作历史记录">
+              <span class="btn-icon" id="history-icon"></span>
+              <span>操作历史</span>
+            </button>
+            <button id="btn-settings" type="button" class="btn-icon-action" title="项目与全局设置">
+              <span class="btn-icon" id="settings-icon"></span>
+              <span>设置</span>
+            </button>
+            <button id="btn-shortcuts" type="button" class="btn-icon-action" title="快捷键帮助 (⌘/)">
+              <span class="btn-icon" id="shortcuts-icon"></span>
+              <span>快捷键</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 智能状态筛选与搜索栏 -->
+    <section id="summary-bar" class="summary hidden">
+      <div id="status-filters" class="status-filters"></div>
+      <span id="summary" class="summary-text hidden">加载中…</span>
+      <span id="last-refresh" class="dir-tip hidden"></span>
+      <div class="search-box">
+        <div class="search-box-inner">
+          <span class="search-icon-left" id="search-icon"></span>
+          <input id="table-search" type="search" placeholder="搜索配置表 (⌘F)" autocomplete="off" spellcheck="false">
+          <kbd class="search-kbd">⌘F</kbd>
+          <button id="search-clear" type="button" class="search-clear" title="清空搜索">✕</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 全同步健康状态看板 -->
+    <div id="all-synced-banner" class="all-synced-banner hidden">
+      <div class="all-synced-content">
+        <span class="all-synced-icon">✓</span>
+        <div class="all-synced-text">
+          <strong>所有配置表已同步</strong>
+          <span>本地 xlsx 文件与 Google Sheets 云端保持最新一致</span>
+        </div>
+      </div>
+      <div id="all-synced-meta" class="all-synced-meta"></div>
     </div>
-    <div class="actions">
-      <button id="btn-refresh" type="button">刷新</button>
-      <button id="btn-sync-all" type="button">下载所有更新</button>
-      <span id="custom-actions" class="custom-actions"></span>
-      <span class="actions-spacer"></span>
-      <button id="btn-history" type="button" title="本机在这个项目上做过的下载 / 上传 / 恢复 / 动作记录">🕘 操作历史</button>
-      <button id="btn-settings" type="button" title="自动刷新、通知、下载后动作、配置表清单、清除缓存">⚙ 设置</button>
+
+    <!-- 主表格分组列表 -->
+    <main id="groups" class="groups"></main>
+
+    <!-- 授权提示 Banner -->
+    <section id="auth-banner" class="auth-banner hidden">
+      <div>
+        <strong>需要 Google 授权</strong>
+        <p style="margin:4px 0 0;font-size:12px;color:#92400e;">需要授权才能查询云端表格变更状态并同步数据。</p>
+      </div>
+      <a href="/auth/start" class="btn-primary" style="padding:6px 14px;border-radius:6px;text-decoration:none;font-weight:600;display:inline-block;background:#2563eb;color:#fff;">前往授权</a>
+    </section>
+  </div>
+
+  <!-- 底部可折叠抽屉式控制台 -->
+  <section id="console-drawer" class="console-drawer collapsed">
+    <div id="console-bar" class="console-bar">
+      <div class="console-bar-left">
+        <span id="console-indicator" class="console-indicator"></span>
+        <span class="console-title">控制台日志</span>
+        <span id="console-preview" class="console-preview">就绪</span>
+      </div>
+      <div class="console-bar-right">
+        <button id="btn-copy-log" type="button" class="console-btn" title="复制所有控制台日志">复制</button>
+        <button id="btn-clear-log" type="button" class="console-btn" title="清空日志">清空</button>
+        <button id="btn-toggle-log" type="button" class="console-btn console-toggle" title="展开/收起日志">
+          <span class="console-toggle-text" id="console-toggle-text">展开</span>
+          <span class="console-toggle-icon">▲</span>
+        </button>
+      </div>
     </div>
-  </section>
-
-  <section id="summary-bar" class="summary hidden">
-    <span class="summary-left">
-      <span id="summary" class="summary-text">加载中…</span>
-      <span id="last-refresh" class="dir-tip"></span>
-    </span>
-    <div class="search-box">
-      <input id="table-search" type="search" placeholder="搜索配置表：表名 / 路径 / 云端表名" autocomplete="off" spellcheck="false">
-      <kbd class="search-kbd">⌘F</kbd>
-    </div>
-  </section>
-
-  <main id="groups" class="groups"></main>
-
-  <section id="auth-banner" class="auth-banner hidden">
-    <p>需要 Google 授权才能查询云端表格变更状态。</p>
-    <a href="/auth/start" class="btn-primary">前往授权</a>
-  </section>
-
-  <section class="logs">
-    <header>
-      <h2>日志</h2>
-      <button id="btn-clear-log" type="button">清空</button>
-    </header>
     <pre id="log" class="log"></pre>
   </section>
 
+  <!-- 目录选择弹窗 -->
   <div id="dir-modal" class="modal hidden">
     <div class="modal-box">
       <header class="modal-head">
         <strong>选择项目的配置表目录</strong>
-        <button id="dir-close" type="button">✕</button>
+        <button id="dir-close" type="button" class="modal-close-btn" title="关闭">✕</button>
       </header>
       <div class="dir-toolbar">
         <button id="dir-native" type="button">在访达中选择…</button>
-        <span class="dir-tip">或在下方逐级浏览</span>
+        <span class="dir-tip" style="color:var(--text-tertiary);font-size:12px;">或在下方逐级浏览</span>
       </div>
       <div id="dir-path" class="dir-path"></div>
       <ul id="dir-list" class="dir-list"></ul>
@@ -80,17 +151,18 @@
       </label>
       <p id="dir-msg" class="dir-msg"></p>
       <footer class="modal-foot">
-        <span class="dir-tip">含 syncmanager.config.json 或 filelist.json 的目录会标 ★</span>
+        <span class="dir-tip" style="color:var(--text-tertiary);font-size:12px;">含 syncmanager.config.json 或 filelist.json 的目录会标 ★</span>
         <button id="dir-pick" type="button" class="primary">添加此目录</button>
       </footer>
     </div>
   </div>
 
+  <!-- 配置表清单弹窗 -->
   <div id="fl-modal" class="modal hidden">
     <div class="modal-box fl-box">
       <header class="modal-head">
         <div><strong>配置表清单</strong> <span id="fl-file" class="fl-file"></span></div>
-        <button id="fl-close" type="button" title="关闭">✕</button>
+        <button id="fl-close" type="button" class="modal-close-btn" title="关闭">✕</button>
       </header>
       <div class="fl-root-bar">
         <span class="fl-root-label">云端目录映射</span>
@@ -114,14 +186,16 @@
     </div>
   </div>
 
+  <!-- 新增 / 编辑配置表弹窗 -->
   <div id="fl-edit-modal" class="modal modal-top hidden">
     <div class="modal-box fl-edit-box">
       <header class="modal-head">
         <strong id="fl-form-title">新增配置表</strong>
-        <button id="fl-edit-close" type="button" title="关闭">✕</button>
+        <button id="fl-edit-close" type="button" class="modal-close-btn" title="关闭">✕</button>
       </header>
       <section class="fl-form">
-        <label class="fl-field">Google 表格链接
+        <label class="fl-field">
+          <span class="fl-field-label">Google 表格链接</span>
           <div class="fl-link-row">
             <input id="fl-link" type="text" placeholder="粘贴链接或 spreadsheetId，例如 https://docs.google.com/spreadsheets/d/…/edit" autocomplete="off" spellcheck="false">
             <button id="fl-resolve" type="button">解析</button>
@@ -129,10 +203,10 @@
         </label>
         <div id="fl-cloud" class="fl-cloud"></div>
         <div class="fl-grid">
-          <label class="fl-field">表名<input id="fl-name" type="text" placeholder="留空则取云端表名" autocomplete="off"></label>
-          <label class="fl-field"><span>本地路径（相对 <span id="fl-base"></span>）</span><input id="fl-path" type="text" list="fl-dirs" placeholder="留空则按云端目录自动生成" autocomplete="off" spellcheck="false"></label>
-          <label class="fl-field">备注<input id="fl-desc" type="text" placeholder="留空则为云端表名" autocomplete="off"></label>
-          <label class="fl-field">spreadsheetId<input id="fl-id" type="text" placeholder="粘贴链接后自动填入" autocomplete="off" spellcheck="false"></label>
+          <label class="fl-field"><span class="fl-field-label">表名</span><input id="fl-name" type="text" placeholder="留空则取云端表名" autocomplete="off"></label>
+          <label class="fl-field"><span class="fl-field-label">本地路径（相对 <span id="fl-base"></span>）</span><input id="fl-path" type="text" list="fl-dirs" placeholder="留空则按云端目录自动生成" autocomplete="off" spellcheck="false"></label>
+          <label class="fl-field"><span class="fl-field-label">备注</span><input id="fl-desc" type="text" placeholder="留空则为云端表名" autocomplete="off"></label>
+          <label class="fl-field"><span class="fl-field-label">spreadsheetId</span><input id="fl-id" type="text" placeholder="粘贴链接后自动填入" autocomplete="off" spellcheck="false"></label>
         </div>
         <datalist id="fl-dirs"></datalist>
       </section>
@@ -146,11 +220,12 @@
     </div>
   </div>
 
+  <!-- 上传本地表到云端弹窗 -->
   <div id="fl-up-modal" class="modal modal-top hidden">
     <div class="modal-box fl-edit-box">
       <header class="modal-head">
         <strong>上传本地表到云端</strong>
-        <button id="fl-up-close" type="button" title="关闭">✕</button>
+        <button id="fl-up-close" type="button" class="modal-close-btn" title="关闭">✕</button>
       </header>
       <section class="fl-form">
         <div class="fl-up-info">
@@ -158,10 +233,10 @@
           <div>云端目录　<code id="fl-up-dir"></code> <span id="fl-up-dir-tip" class="dir-tip"></span></div>
         </div>
         <div class="fl-grid">
-          <label class="fl-field">云端表名<input id="fl-up-cloudname" type="text" autocomplete="off" spellcheck="false"></label>
-          <label class="fl-field">表名（界面显示）<input id="fl-up-name" type="text" autocomplete="off"></label>
+          <label class="fl-field"><span class="fl-field-label">云端表名</span><input id="fl-up-cloudname" type="text" autocomplete="off" spellcheck="false"></label>
+          <label class="fl-field"><span class="fl-field-label">表名（界面显示）</span><input id="fl-up-name" type="text" autocomplete="off"></label>
         </div>
-        <label class="fl-field">备注<input id="fl-up-desc" type="text" placeholder="留空则为云端表名" autocomplete="off"></label>
+        <label class="fl-field"><span class="fl-field-label">备注</span><input id="fl-up-desc" type="text" placeholder="留空则为云端表名" autocomplete="off"></label>
         <p class="fl-help fl-up-help">上传后会在云端目录新建 Google 表格（内容即本地 xlsx），并把它加入清单、记为已同步。不会修改本地文件。</p>
       </section>
       <footer class="modal-foot">
@@ -174,18 +249,19 @@
     </div>
   </div>
 
+  <!-- 云端目录映射弹窗 -->
   <div id="fl-root-modal" class="modal modal-top hidden">
     <div class="modal-box fl-root-box">
       <header class="modal-head">
         <strong>云端目录映射</strong>
-        <button id="fl-root-close" type="button" title="关闭">✕</button>
+        <button id="fl-root-close" type="button" class="modal-close-btn" title="关闭">✕</button>
       </header>
       <section class="fl-form">
         <p class="fl-help">新增配置表时，按「云端表格相对云端根目录的子目录」放到本地目录下，例如云端 <code>Data / Activity / 表</code> → 本地 <code>Datas/Activity/表.xlsx</code>。<br>不设置时会根据清单里已有的条目自动推断；清单为空推断不出来时，按云端表格所在文件夹放到 <code>Datas/&lt;文件夹名&gt;</code>。</p>
-        <label class="fl-field">云端根目录（Google Drive 文件夹链接或 ID）
+        <label class="fl-field"><span class="fl-field-label">云端根目录（Google Drive 文件夹链接或 ID）</span>
           <input id="fl-root-folder" type="text" placeholder="https://drive.google.com/drive/folders/…" autocomplete="off" spellcheck="false">
         </label>
-        <label class="fl-field"><span>对应的本地目录（相对 <span id="fl-root-base"></span>）</span>
+        <label class="fl-field"><span class="fl-field-label">对应的本地目录（相对 <span id="fl-root-base"></span>）</span>
           <input id="fl-root-local" type="text" placeholder="Datas" autocomplete="off" spellcheck="false">
         </label>
         <p class="fl-help">保存后写入项目的 syncmanager.config.json（cloudRoot 字段），记得随项目提交。</p>
@@ -201,16 +277,16 @@
     </div>
   </div>
 
-  <!-- 设置：本机偏好 + 当前项目的管理操作 -->
+  <!-- 设置弹窗：本机偏好 + 当前项目的管理操作 -->
   <div id="settings-modal" class="modal hidden">
     <div class="modal-box settings-box">
       <header class="modal-head">
         <div><strong>设置</strong> <span id="settings-project" class="fl-file"></span></div>
-        <button id="settings-close" type="button" title="关闭">✕</button>
+        <button id="settings-close" type="button" class="modal-close-btn" title="关闭">✕</button>
       </header>
       <div class="settings-body">
         <section class="set-group">
-          <h3>刷新与通知 <span class="dir-tip">（本机，所有项目通用）</span></h3>
+          <h3>刷新与通知 <span class="dir-tip" style="font-weight:400;color:var(--text-tertiary);font-size:12px;">（本机，所有项目通用）</span></h3>
           <div class="set-row">
             <div class="set-label">自动刷新<p>定时查询云端修改时间；窗口重新获得焦点时也会补刷一次</p></div>
             <select id="pref-auto-refresh">
@@ -245,7 +321,7 @@
         </section>
       </div>
       <footer class="modal-foot">
-        <span id="settings-version" class="dir-tip"></span>
+        <span id="settings-version" class="dir-tip" style="color:var(--text-tertiary);font-size:12px;"></span>
         <button id="settings-done" type="button" class="primary">完成</button>
       </footer>
     </div>
@@ -256,7 +332,7 @@
     <div class="modal-box diff-box">
       <header class="modal-head">
         <div><strong id="diff-title">差异预览</strong> <span id="diff-path" class="fl-file"></span></div>
-        <button id="diff-close" type="button" title="关闭">✕</button>
+        <button id="diff-close" type="button" class="modal-close-btn" title="关闭">✕</button>
       </header>
       <div id="diff-meta" class="diff-meta"></div>
       <div class="diff-toolbar">
@@ -293,9 +369,9 @@
     <div class="modal-box bk-box">
       <header class="modal-head">
         <div><strong>本地备份</strong> <span id="bk-path" class="fl-file"></span></div>
-        <button id="bk-close" type="button" title="关闭">✕</button>
+        <button id="bk-close" type="button" class="modal-close-btn" title="关闭">✕</button>
       </header>
-      <p class="fl-help bk-help">每次「下载覆盖本地」和「恢复」之前会自动备份当前本地文件，每张表保留最近 10 份（内容相同不重复保存）。恢复会先把当前文件再备份一次。</p>
+      <p class="fl-help bk-help" style="padding:10px 20px 0;margin:0;">每次「下载覆盖本地」和「恢复」之前会自动备份当前本地文件，每张表保留最近 10 份（内容相同不重复保存）。恢复会先把当前文件再备份一次。</p>
       <div class="fl-table-wrap"><table class="fl-table"><thead><tr><th>备份时间</th><th>原因</th><th>大小</th><th></th></tr></thead><tbody id="bk-tbody"></tbody></table></div>
       <footer class="modal-foot"><p id="bk-msg" class="fl-msg"></p><span></span></footer>
     </div>
@@ -306,13 +382,57 @@
     <div class="modal-box hist-box">
       <header class="modal-head">
         <div><strong>操作历史</strong> <span class="fl-file">本机记录</span></div>
-        <button id="hist-close" type="button" title="关闭">✕</button>
+        <button id="hist-close" type="button" class="modal-close-btn" title="关闭">✕</button>
       </header>
       <div class="fl-list-bar"><input id="hist-filter" type="search" placeholder="筛选：表名 / 路径 / 操作人" autocomplete="off" spellcheck="false"><span id="hist-count" class="dir-tip"></span></div>
       <div class="fl-table-wrap"><table class="fl-table"><thead><tr><th>时间</th><th>操作</th><th>表</th><th>操作人</th><th>结果 / 说明</th></tr></thead><tbody id="hist-tbody"></tbody></table></div>
     </div>
   </div>
 
+  <!-- 快捷键指南弹窗 -->
+  <div id="shortcuts-modal" class="modal hidden">
+    <div class="modal-box shortcuts-box">
+      <header class="modal-head">
+        <strong>键盘快捷键指南</strong>
+        <button id="shortcuts-close" type="button" class="modal-close-btn" title="关闭">✕</button>
+      </header>
+      <div class="shortcuts-list">
+        <div class="shortcut-item">
+          <span class="shortcut-desc">搜索配置表</span>
+          <div class="shortcut-keys"><kbd>⌘</kbd><kbd>F</kbd> 或 <kbd>/</kbd></div>
+        </div>
+        <div class="shortcut-item">
+          <span class="shortcut-desc">刷新所有云端修改状态</span>
+          <div class="shortcut-keys"><kbd>⌘</kbd><kbd>R</kbd></div>
+        </div>
+        <div class="shortcut-item">
+          <span class="shortcut-desc">展开 / 收起控制台日志</span>
+          <div class="shortcut-keys"><kbd>⌘</kbd><kbd>L</kbd></div>
+        </div>
+        <div class="shortcut-item">
+          <span class="shortcut-desc">打开项目与全局设置</span>
+          <div class="shortcut-keys"><kbd>⌘</kbd><kbd>,</kbd></div>
+        </div>
+        <div class="shortcut-item">
+          <span class="shortcut-desc">打开快捷键指南</span>
+          <div class="shortcut-keys"><kbd>⌘</kbd><kbd>/</kbd> 或 <kbd>?</kbd></div>
+        </div>
+        <div class="shortcut-item">
+          <span class="shortcut-desc">关闭弹窗 / 清空搜索框</span>
+          <div class="shortcut-keys"><kbd>Esc</kbd></div>
+        </div>
+        <div class="shortcut-item">
+          <span class="shortcut-desc">搜索仅命中 1 个表时直接下载</span>
+          <div class="shortcut-keys"><kbd>Enter</kbd></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 轻量悬浮反馈 Toast 容器 -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <script src="icons.js"></script>
   <script src="table-search.js"></script>
   <script src="app.js"></script>
   <script src="panels.js"></script>

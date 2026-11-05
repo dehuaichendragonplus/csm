@@ -45,6 +45,7 @@
   }
 
   const els = {
+    appLogo: document.getElementById('app-logo'),
     projectTabs: document.getElementById('project-tabs'),
     btnAddProject: document.getElementById('btn-add-project'),
     summary: document.getElementById('summary'),
@@ -52,15 +53,31 @@
     log: document.getElementById('log'),
     btnRefresh: document.getElementById('btn-refresh'),
     btnSyncAll: document.getElementById('btn-sync-all'),
+    syncAllBadge: document.getElementById('sync-all-badge'),
+    syncAllLabel: document.getElementById('sync-all-label'),
+    syncAllIcon: document.getElementById('sync-all-icon'),
+    refreshIcon: document.getElementById('refresh-icon'),
+    historyIcon: document.getElementById('history-icon'),
+    settingsIcon: document.getElementById('settings-icon'),
+    shortcutsIcon: document.getElementById('shortcuts-icon'),
+    btnShortcuts: document.getElementById('btn-shortcuts'),
+    shortcutsModal: document.getElementById('shortcuts-modal'),
+    shortcutsClose: document.getElementById('shortcuts-close'),
+    searchIcon: document.getElementById('search-icon'),
+    projectDirIcon: document.getElementById('project-dir-icon'),
+    projectDirBadge: document.getElementById('project-dir-badge'),
     customActions: document.getElementById('custom-actions'),
     btnClearState: document.getElementById('btn-clear-state'),
     btnClearLog: document.getElementById('btn-clear-log'),
+    btnCopyLog: document.getElementById('btn-copy-log'),
     authBanner: document.getElementById('auth-banner'),
     projectPanel: document.getElementById('project-panel'),
     summaryBar: document.getElementById('summary-bar'),
+    statusFilters: document.getElementById('status-filters'),
     projectName: document.getElementById('project-name'),
     projectDir: document.getElementById('project-dir'),
     search: document.getElementById('table-search'),
+    searchClear: document.getElementById('search-clear'),
     btnHistory: document.getElementById('btn-history'),
     prefAutoRefresh: document.getElementById('pref-auto-refresh'),
     prefNotify: document.getElementById('pref-notify'),
@@ -70,21 +87,96 @@
     btnSettings: document.getElementById('btn-settings'),
     settingsModal: document.getElementById('settings-modal'),
     settingsProject: document.getElementById('settings-project'),
-    settingsVersion: document.getElementById('settings-version')
+    settingsVersion: document.getElementById('settings-version'),
+    consoleDrawer: document.getElementById('console-drawer'),
+    consoleBar: document.getElementById('console-bar'),
+    consoleIndicator: document.getElementById('console-indicator'),
+    consolePreview: document.getElementById('console-preview'),
+    btnToggleLog: document.getElementById('btn-toggle-log'),
+    consoleToggleText: document.getElementById('console-toggle-text'),
+    allSyncedBanner: document.getElementById('all-synced-banner'),
+    allSyncedMeta: document.getElementById('all-synced-meta'),
+    toastContainer: document.getElementById('toast-container')
   };
+
+  // Populate static icons
+  if (window.CSMIcons) {
+    if (els.appLogo) els.appLogo.innerHTML = window.CSMIcons.logo;
+    if (els.refreshIcon) els.refreshIcon.innerHTML = window.CSMIcons.refresh;
+    if (els.historyIcon) els.historyIcon.innerHTML = window.CSMIcons.history;
+    if (els.settingsIcon) els.settingsIcon.innerHTML = window.CSMIcons.settings;
+    if (els.shortcutsIcon) els.shortcutsIcon.innerHTML = window.CSMIcons.keyboard;
+    if (els.searchIcon) els.searchIcon.innerHTML = window.CSMIcons.search;
+    if (els.projectDirIcon) els.projectDirIcon.innerHTML = window.CSMIcons.folder;
+    if (els.syncAllIcon) els.syncAllIcon.innerHTML = window.CSMIcons.downloadAll;
+  }
+
+  // 快捷浮动轻提示（Toast）
+  function showToast(message, type = 'info', duration = 2400) {
+    if (!els.toastContainer) return;
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    const iconMap = {
+      success: window.CSMIcons ? window.CSMIcons.check : '✓',
+      error: window.CSMIcons ? window.CSMIcons.alert : '⚠',
+      info: window.CSMIcons ? window.CSMIcons.terminal : 'ℹ'
+    };
+    toast.innerHTML = `<span class="toast-icon">${iconMap[type] || ''}</span><span class="toast-text">${message}</span>`;
+    els.toastContainer.appendChild(toast);
+    requestAnimationFrame(() => toast.classList.add('visible'));
+    setTimeout(() => {
+      toast.classList.remove('visible');
+      setTimeout(() => toast.remove(), 260);
+    }, duration);
+  }
+  window.showToast = showToast;
 
   // 搜索：render() 记住最近一次完整列表，输入关键词时只在前端过滤重绘，不再请求服务端
   let lastRows = null;
   let searchTerms = [];
+  let activeFilter = 'all';
 
   function formatTime(iso) {
     if (!iso) return '—';
     try { return new Date(iso).toLocaleString('zh-CN', { hour12: false }); } catch (_) { return iso; }
   }
 
+  let rawLogHistory = '';
   function appendLog(text) {
-    els.log.textContent += text;
+    rawLogHistory += text;
+    // 语法着色：按行渲染语义化样式
+    const frag = document.createDocumentFragment();
+    const lines = text.split('\n');
+    lines.forEach((line, idx) => {
+      if (idx === lines.length - 1 && line === '') return;
+      const div = document.createElement('div');
+      div.className = 'log-line';
+      const trimmed = line.trim();
+      if (trimmed.startsWith('✓') || trimmed.includes('done: success')) {
+        div.classList.add('log-success');
+      } else if (trimmed.startsWith('->') || trimmed.includes('downloading') || trimmed.includes('uploading')) {
+        div.classList.add('log-info');
+      } else if (trimmed.startsWith('!') || /error|failed/i.test(trimmed)) {
+        div.classList.add('log-error');
+      } else if (trimmed.startsWith('↳') || trimmed.includes('已备份')) {
+        div.classList.add('log-backup');
+      } else if (trimmed.startsWith('===')) {
+        div.classList.add('log-summary');
+      }
+      div.textContent = line;
+      frag.appendChild(div);
+    });
+    els.log.appendChild(frag);
     els.log.scrollTop = els.log.scrollHeight;
+
+    // 更新底部控制台摘要
+    if (els.consolePreview) {
+      const lines = text.trim().split('\n').filter(Boolean);
+      if (lines.length) {
+        const last = lines[lines.length - 1].replace(/^[\s!✓→✗⚡●=]+\s*/, '');
+        if (last) els.consolePreview.textContent = last;
+      }
+    }
   }
 
   // 多个操作可并发（例如连续点了几行的下载），用计数保证全部结束后才恢复顶部按钮
@@ -93,6 +185,52 @@
     busyCount = Math.max(0, busyCount + (on ? 1 : -1));
     const busy = busyCount > 0;
     [els.btnRefresh, els.btnSyncAll, els.btnClearState, ...els.customActions.querySelectorAll('button')].forEach(b => { b.disabled = busy; });
+    if (els.btnRefresh) els.btnRefresh.classList.toggle('spinning', busy);
+    if (els.consoleIndicator) els.consoleIndicator.classList.toggle('busy', busy);
+  }
+
+  function renderFilterChips(rows, counts) {
+    if (!els.statusFilters) return;
+    els.statusFilters.innerHTML = '';
+
+    const needsActionCount = (counts.conflict || 0) + (counts.updated || 0) + (counts.missing_local || 0) + (counts.never_synced || 0);
+
+    const filterDefs = [
+      { id: 'all', label: '全部', count: rows.length },
+      { id: 'needs_action', label: '待处理', count: needsActionCount, alert: needsActionCount > 0 },
+      { id: 'updated', label: '有更新', count: counts.updated || 0, alert: (counts.updated || 0) > 0 },
+      { id: 'conflict', label: '冲突', count: counts.conflict || 0, conflict: (counts.conflict || 0) > 0 },
+      { id: 'local_changed', label: '本地变更', count: counts.local_changed || 0 },
+      { id: 'missing_local', label: '本地缺失', count: counts.missing_local || 0 },
+      { id: 'synced', label: '已同步', count: counts.synced || 0 },
+      { id: 'error', label: '错误', count: counts.error || 0, error: (counts.error || 0) > 0 }
+    ];
+
+    filterDefs.forEach(def => {
+      // 0 计数的次要状态不占据空间
+      if (def.count === 0 && !['all', 'needs_action', 'synced'].includes(def.id)) return;
+
+      const chip = document.createElement('div');
+      let cls = `filter-chip${activeFilter === def.id ? ' active' : ''}`;
+      if (def.alert && def.count > 0) cls += ' has-alert';
+      if (def.conflict && def.count > 0) cls += ' has-conflict';
+      if (def.error && def.count > 0) cls += ' has-error';
+      chip.className = cls;
+
+      const labelSpan = document.createElement('span');
+      labelSpan.textContent = def.label;
+
+      const countSpan = document.createElement('span');
+      countSpan.className = 'chip-count';
+      countSpan.textContent = def.count;
+
+      chip.append(labelSpan, countSpan);
+      chip.addEventListener('click', () => {
+        activeFilter = def.id;
+        render();
+      });
+      els.statusFilters.appendChild(chip);
+    });
   }
 
   function render(rows) {
@@ -102,33 +240,117 @@
     const buckets = {};
     GROUP_ORDER.forEach(k => { counts[k] = 0; buckets[k] = []; });
     rows.forEach(r => { counts[r.status] = (counts[r.status] || 0) + 1; });
+
     const searching = searchTerms.length > 0;
-    const shown = searching ? rows.filter(r => TableSearch.matchRow(r, searchTerms)) : rows;
+    let pool = rows;
+    if (activeFilter === 'needs_action') {
+      pool = rows.filter(r => r.direction === 'download' || r.direction === 'conflict' || r.status === 'never_synced');
+    } else if (activeFilter !== 'all') {
+      pool = rows.filter(r => r.status === activeFilter);
+    }
+
+    const shown = searching ? pool.filter(r => TableSearch.matchRow(r, searchTerms)) : pool;
     shown.forEach(r => { (buckets[r.status] || (buckets[r.status] = [])).push(r); });
+
+    // 渲染快捷状态过滤按钮
+    renderFilterChips(rows, counts);
+
+    // 更新一键下载按钮状态
+    const syncCount = (counts.updated || 0) + (counts.missing_local || 0);
+    if (els.syncAllLabel && els.syncAllBadge && els.syncAllIcon) {
+      if (syncCount === 0) {
+        els.btnSyncAll.classList.add('all-synced');
+        els.syncAllBadge.classList.add('hidden');
+        els.syncAllLabel.textContent = '已全部同步';
+        els.syncAllIcon.innerHTML = window.CSMIcons ? window.CSMIcons.check : '✓';
+      } else {
+        els.btnSyncAll.classList.remove('all-synced');
+        els.syncAllBadge.classList.remove('hidden');
+        els.syncAllBadge.textContent = String(syncCount);
+        els.syncAllLabel.textContent = '下载所有更新';
+        els.syncAllIcon.innerHTML = window.CSMIcons ? window.CSMIcons.downloadAll : '⬇';
+      }
+    }
+
+    // 全同步极简健康状态看板
+    const needsAttention = (counts.updated || 0) + (counts.missing_local || 0) + (counts.conflict || 0);
+    if (els.allSyncedBanner) {
+      if (rows.length > 0 && needsAttention === 0 && !searching && activeFilter === 'all') {
+        els.allSyncedBanner.classList.remove('hidden');
+        if (els.allSyncedMeta) {
+          els.allSyncedMeta.textContent = `共 ${rows.length} 张配置表 · 全部健康最新`;
+        }
+      } else {
+        els.allSyncedBanner.classList.add('hidden');
+      }
+    }
 
     els.summary.textContent =
       `${rows.length} 个表 | ${counts.conflict ? `⚠ 冲突 ${counts.conflict} | ` : ''}有更新 ${counts.updated} | 未同步 ${counts.never_synced} | 本地缺失 ${counts.missing_local} | 本地变更 ${counts.local_changed} | 已同步 ${counts.synced} | 错误 ${counts.error}`
       + (searching ? ` ｜ 搜索命中 ${shown.length} 个` : '');
 
     els.groups.innerHTML = '';
+    let renderedCount = 0;
     for (const key of GROUP_ORDER) {
       const list = buckets[key];
       if (list.length === 0) continue;
+      renderedCount += list.length;
       if (!groupExpandedState.has(key)) {
         groupExpandedState.set(key, !DEFAULT_COLLAPSED.has(key));
       }
-      // 搜索时命中的分组一律展开，且不改动用户平时的折叠偏好
-      const expanded = searching || groupExpandedState.get(key);
+      // 搜索或选中特定状态时一律展开
+      const expanded = searching || (activeFilter !== 'all') || groupExpandedState.get(key);
       const group = document.createElement('section');
       group.className = `group ${expanded ? 'expanded' : ''}`;
+
       const header = document.createElement('header');
       header.className = 'group-header';
-      header.textContent = `${STATUS_LABELS[key].label}（${list.length}）`;
+
+      const headerLeft = document.createElement('div');
+      headerLeft.className = 'group-header-left';
+
+      const iconSpan = document.createElement('span');
+      iconSpan.className = 'status-indicator';
+      iconSpan.innerHTML = window.CSMIcons ? window.CSMIcons.status[key] : STATUS_LABELS[key].icon;
+
+      const titleSpan = document.createElement('span');
+      titleSpan.textContent = STATUS_LABELS[key].label;
+
+      const badgeSpan = document.createElement('span');
+      badgeSpan.className = 'group-badge';
+      badgeSpan.textContent = list.length;
+
+      headerLeft.append(iconSpan, titleSpan, badgeSpan);
+
+      const headerRight = document.createElement('div');
+      headerRight.className = 'group-header-right';
+
+      // 针对有更新和本地缺失分组，提供表头级快捷批量下载
+      if ((key === 'updated' || key === 'missing_local') && list.length > 0) {
+        const batchBtn = document.createElement('button');
+        batchBtn.type = 'button';
+        batchBtn.className = 'group-batch-btn';
+        batchBtn.innerHTML = `${window.CSMIcons ? window.CSMIcons.download : '⬇'} <span>下载此组 (${list.length})</span>`;
+        batchBtn.title = `一键下载「${STATUS_LABELS[key].label}」分组下的全部 ${list.length} 个表`;
+        batchBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          downloadPaths(list.map(r => r.path));
+        });
+        headerRight.appendChild(batchBtn);
+      }
+
+      const chevron = document.createElement('span');
+      chevron.className = 'group-chevron';
+      chevron.innerHTML = window.CSMIcons ? window.CSMIcons.chevronRight : '▶';
+      headerRight.appendChild(chevron);
+
+      header.append(headerLeft, headerRight);
       header.addEventListener('click', () => {
         const nowExpanded = group.classList.toggle('expanded');
-        if (!searching) groupExpandedState.set(key, nowExpanded);
+        if (!searching && activeFilter === 'all') groupExpandedState.set(key, nowExpanded);
       });
       group.appendChild(header);
+
       const body = document.createElement('div');
       body.className = 'group-body';
       list.forEach(row => body.appendChild(renderRow(row)));
@@ -137,11 +359,11 @@
     }
 
     if (rows.length === 0) {
-      els.groups.innerHTML = '<p style="text-align:center;color:#888;padding:32px;">没有可用的表（请检查 filelist.json）</p>';
-    } else if (shown.length === 0) {
-      const p = document.createElement('p');
+      els.groups.innerHTML = '<div class="empty-tip"><img src="icons/empty-illustration.svg" class="empty-illustration" alt=""><span>没有可用的表（请检查 filelist.json）</span></div>';
+    } else if (renderedCount === 0) {
+      const p = document.createElement('div');
       p.className = 'empty-tip';
-      p.textContent = `没有匹配「${els.search.value.trim()}」的配置表`;
+      p.innerHTML = `<img src="icons/empty-illustration.svg" class="empty-illustration" alt=""><span>${searching ? `没有匹配「${els.search.value.trim()}」的配置表` : '当前筛选条件下没有表格'}</span>`;
       els.groups.appendChild(p);
     }
   }
@@ -171,19 +393,24 @@
 
     const iconCell = document.createElement('span');
     iconCell.className = 'icon';
-    iconCell.textContent = STATUS_LABELS[row.status].icon;
+    iconCell.innerHTML = window.CSMIcons ? window.CSMIcons.status[row.status] : STATUS_LABELS[row.status].icon;
 
-    const nameDiv = document.createElement('div');
+    const nameCol = document.createElement('div');
+    nameCol.className = 'name-col';
+
+    const nameRow = document.createElement('div');
+    nameRow.className = 'name-row';
+
+    const nameDiv = document.createElement('span');
     nameDiv.className = 'name';
     setHighlighted(nameDiv, row.name);
     nameDiv.title = row.path;
-    // 搜索命中的是路径（表名里没有）时，把路径也显示出来，免得看不出为什么命中
-    if (searchTerms.length && !TableSearch.matchRow({ name: row.name, cloudName: row.cloudName || row.description }, searchTerms)) {
-      const pathSpan = document.createElement('span');
-      pathSpan.className = 'row-path';
-      setHighlighted(pathSpan, row.path);
-      nameDiv.appendChild(pathSpan);
-    }
+
+    const pathSpan = document.createElement('span');
+    pathSpan.className = 'row-path';
+    setHighlighted(pathSpan, row.path);
+    nameRow.append(nameDiv, pathSpan);
+
     // 备注行显示云端表名，并直接作为跳转云端表的入口
     const metaDiv = document.createElement('div');
     metaDiv.className = 'meta';
@@ -194,119 +421,171 @@
       link.href = `https://docs.google.com/spreadsheets/d/${encodeURIComponent(row.spreadsheetId)}/edit`;
       link.target = '_blank';
       link.rel = 'noopener noreferrer';
-      setHighlighted(link, label);
+      const textSpan = document.createElement('span');
+      setHighlighted(textSpan, label);
+      link.appendChild(textSpan);
+      if (window.CSMIcons) {
+        const extSpan = document.createElement('span');
+        extSpan.innerHTML = window.CSMIcons.external;
+        link.appendChild(extSpan);
+      }
       link.title = '在新标签页打开云端配置表';
       link.addEventListener('click', e => e.stopPropagation());
       metaDiv.appendChild(link);
     } else {
       setHighlighted(metaDiv, label);
     }
-    const nameCell = document.createElement('div');
-    nameCell.append(nameDiv, metaDiv);
+    nameCol.append(nameRow, metaDiv);
 
-    // 「云端」点击打开云端表，「本地」点击在访达中定位本地文件
+    // 「云端」微胶囊：点击打开云端表
     const cloudCell = document.createElement('div');
-    cloudCell.className = 'meta';
+    cloudCell.className = 'meta cloud-col';
     if (row.spreadsheetId) {
-      const a = document.createElement('a');
-      a.className = 'entry-link';
-      a.href = `https://docs.google.com/spreadsheets/d/${encodeURIComponent(row.spreadsheetId)}/edit`;
-      a.target = '_blank';
-      a.rel = 'noopener noreferrer';
-      a.textContent = row.cloudModifiedTime ? `云端: ${formatTime(row.cloudModifiedTime)}` : '云端: —';
-      a.title = row.cloudModifiedBy ? `打开云端表\n最后修改：${row.cloudModifiedBy}` : '打开云端表';
+      const pill = document.createElement('a');
+      pill.className = 'meta-pill cloud-pill';
+      pill.href = `https://docs.google.com/spreadsheets/d/${encodeURIComponent(row.spreadsheetId)}/edit`;
+      pill.target = '_blank';
+      pill.rel = 'noopener noreferrer';
+      const icon = document.createElement('span');
+      icon.className = 'meta-pill-icon';
+      icon.innerHTML = window.CSMIcons ? window.CSMIcons.cloud : '☁';
+      const timeSpan = document.createElement('span');
+      timeSpan.className = 'meta-pill-time';
+      timeSpan.textContent = row.cloudModifiedTime ? formatTime(row.cloudModifiedTime) : '—';
+      pill.append(icon, timeSpan);
       if (row.cloudModifiedBy) {
-        const by = document.createElement('span');
-        by.className = 'cloud-by';
-        by.textContent = ` · ${row.cloudModifiedBy}`;
-        a.appendChild(by);
+        const userTag = document.createElement('span');
+        userTag.className = 'user-tag';
+        userTag.textContent = `@${row.cloudModifiedBy}`;
+        userTag.title = `最后修改人：${row.cloudModifiedBy}`;
+        pill.appendChild(userTag);
       }
-      a.addEventListener('click', e => e.stopPropagation());
-      cloudCell.appendChild(a);
+      pill.title = row.cloudModifiedBy ? `打开 Google 表格\n最后修改人：${row.cloudModifiedBy}\n时间：${formatTime(row.cloudModifiedTime)}` : '打开 Google 表格';
+      pill.addEventListener('click', e => e.stopPropagation());
+      cloudCell.appendChild(pill);
     } else {
-      cloudCell.textContent = '—';
+      cloudCell.innerHTML = '<span class="meta-pill meta-pill-empty">未关联云端表</span>';
     }
 
+    // 「本地」微胶囊：点击在访达中定位本地文件
     const localCell = document.createElement('div');
-    localCell.className = 'meta';
+    localCell.className = 'meta local-col';
     if (row.error) {
-      localCell.textContent = `错误: ${row.error}`;
+      localCell.innerHTML = `<span class="meta-pill local-pill-error" title="${row.error}">错误: ${row.error}</span>`;
     } else {
-      const a = document.createElement('a');
-      a.className = 'entry-link';
-      a.href = '#';
-      a.textContent = row.lastSyncedModifiedTime ? `本地: ${formatTime(row.lastSyncedModifiedTime)}` : '本地: —';
-      a.title = row.localExists ? '在访达中显示本地文件' : '本地还没有这个文件，打开所在目录';
-      a.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); revealLocal(row.path); });
-      localCell.appendChild(a);
+      const pill = document.createElement('a');
+      pill.className = `meta-pill local-pill ${row.localExists ? '' : 'local-missing'}`;
+      pill.href = '#';
+      const icon = document.createElement('span');
+      icon.className = 'meta-pill-icon';
+      icon.innerHTML = window.CSMIcons ? window.CSMIcons.laptop : '💻';
+      const timeSpan = document.createElement('span');
+      timeSpan.className = 'meta-pill-time';
+      timeSpan.textContent = row.lastSyncedModifiedTime ? formatTime(row.lastSyncedModifiedTime) : (row.localExists ? '未记录同步' : '本地缺失');
+      pill.append(icon, timeSpan);
+      pill.title = row.localExists ? `本地文件：${row.path}\n在访达中显示` : '本地还没有这个文件，点击打开所在目录';
+      pill.addEventListener('click', e => {
+        e.preventDefault();
+        e.stopPropagation();
+        revealLocal(row.path).then(res => {
+          if (res) showToast(`已在访达中定位: ${row.name || row.path}`, 'info');
+        });
+      });
+      localCell.appendChild(pill);
     }
 
     div.appendChild(iconCell);
-    div.appendChild(nameCell);
+    div.appendChild(nameCol);
     div.appendChild(cloudCell);
     div.appendChild(localCell);
 
     const actionCell = document.createElement('div');
     actionCell.className = 'action-cell';
+
     const stateEl = document.createElement('span');
     stateEl.className = 'row-state';
     if (verifyingPaths.has(row.path)) {
       div.classList.add('row-verifying');
-      stateEl.textContent = '核对内容中…';
+      stateEl.textContent = '核对中…';
       stateEl.title = '云端修改时间变了：正在导出云端内容与本地逐单元格比较，内容一致会自动标为已同步';
     }
+
+    // 核心行动：常驻展示
+    const primaryActions = document.createElement('div');
+    primaryActions.className = 'primary-actions';
+
     if (row.direction === 'download') {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'row-btn';
-      btn.textContent = '下载';
+      btn.innerHTML = `${window.CSMIcons ? window.CSMIcons.download : '⬇'} <span>下载</span>`;
       btn.title = `云端较新：用云端表覆盖本地 xlsx\n${timesTip}`;
       btn.addEventListener('click', e => {
         e.stopPropagation();
         syncOne(row.path);
       });
-      actionCell.appendChild(btn);
+      primaryActions.appendChild(btn);
     } else if (row.direction === 'upload' && appConfig.allowUpload) {
       const upBtn = document.createElement('button');
       upBtn.type = 'button';
       upBtn.className = 'row-btn upload-btn';
-      upBtn.textContent = '上传';
+      upBtn.innerHTML = `${window.CSMIcons ? window.CSMIcons.upload : '⬆'} <span>上传</span>`;
       upBtn.title = `本地较新：先预览差异，确认后用本地 xlsx 覆盖云端表\n${timesTip}`;
       upBtn.addEventListener('click', e => {
         e.stopPropagation();
         openDiff(row.path, 'upload');
       });
-      actionCell.appendChild(upBtn);
+      primaryActions.appendChild(upBtn);
     } else if (row.direction === 'conflict') {
       const cfBtn = document.createElement('button');
       cfBtn.type = 'button';
       cfBtn.className = 'row-btn conflict-btn';
-      cfBtn.textContent = '解决冲突';
+      cfBtn.innerHTML = `${window.CSMIcons ? window.CSMIcons.alert : '⚠'} <span>解决冲突</span>`;
       cfBtn.title = `上次同步后云端和本地都改过，不能自动决定方向。\n查看差异后选择保留哪一边。\n${timesTip}`;
       cfBtn.addEventListener('click', e => {
         e.stopPropagation();
         openDiff(row.path, 'conflict');
       });
-      actionCell.appendChild(cfBtn);
+      primaryActions.appendChild(cfBtn);
     }
+
+    // 辅助动作组：静默收敛，悬停当前行时平滑浮现（类似 GitHub/Linear）
+    const secondaryActions = document.createElement('div');
+    secondaryActions.className = 'secondary-actions';
+
     // 差异入口：只给两边可能不一致的行（已同步 / 本地缺失 / 出错的行不显示）
     if (row.spreadsheetId && DIFF_STATUSES.has(row.status)) {
       const diffBtn = document.createElement('button');
       diffBtn.type = 'button';
       diffBtn.className = 'row-icon-btn';
-      diffBtn.textContent = '⇄';
+      diffBtn.innerHTML = window.CSMIcons ? window.CSMIcons.diff : '⇄';
       diffBtn.title = '比较本地与云端的差异（逐单元格）';
       diffBtn.addEventListener('click', e => { e.stopPropagation(); openDiff(row.path, 'view'); });
-      actionCell.appendChild(diffBtn);
+      secondaryActions.appendChild(diffBtn);
     }
+
     const bkBtn = document.createElement('button');
     bkBtn.type = 'button';
     bkBtn.className = 'row-icon-btn';
-    bkBtn.textContent = '🕘';
+    bkBtn.innerHTML = window.CSMIcons ? window.CSMIcons.history : '🕘';
     bkBtn.title = '本地备份（下载覆盖前自动保存，可恢复）';
     bkBtn.addEventListener('click', e => { e.stopPropagation(); window.CSMPanels && window.CSMPanels.openBackups(row); });
-    actionCell.appendChild(bkBtn);
-    actionCell.appendChild(stateEl);
+    secondaryActions.appendChild(bkBtn);
+
+    const folderBtn = document.createElement('button');
+    folderBtn.type = 'button';
+    folderBtn.className = 'row-icon-btn';
+    folderBtn.innerHTML = window.CSMIcons ? window.CSMIcons.folder : '📁';
+    folderBtn.title = '在访达中显示本地文件';
+    folderBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      revealLocal(row.path).then(res => {
+        if (res) showToast(`已在访达中定位: ${row.name || row.path}`, 'info');
+      });
+    });
+    secondaryActions.appendChild(folderBtn);
+
+    actionCell.append(stateEl, secondaryActions, primaryActions);
     div.appendChild(actionCell);
     if (busyPaths.has(row.path)) applyRowBusy(div, true, busyPaths.get(row.path));
 
@@ -721,7 +1000,7 @@
     (appConfig.actions || []).forEach(action => {
       const b = document.createElement('button');
       b.type = 'button';
-      b.textContent = action.label;
+      b.innerHTML = `${window.CSMIcons ? window.CSMIcons.terminal : ''} <span>${action.label}</span>`;
       b.addEventListener('click', () => runAction(action));
       els.customActions.appendChild(b);
     });
@@ -747,14 +1026,21 @@
       const tab = document.createElement('span');
       tab.className = `project-tab${p.id === currentId ? ' active' : ''}`;
       tab.title = `${p.dir}\n双击重命名`;
+
+      const icon = document.createElement('span');
+      icon.className = 'tab-icon';
+      icon.innerHTML = window.CSMIcons ? window.CSMIcons.folder : '📁';
+
       const label = document.createElement('span');
       label.textContent = p.name;
+
       const close = document.createElement('span');
       close.className = 'tab-close';
-      close.textContent = '✕';
+      close.innerHTML = window.CSMIcons ? window.CSMIcons.close : '✕';
       close.title = '从平台移除（不会删除任何文件）';
       close.addEventListener('click', e => { e.stopPropagation(); removeProject(p); });
-      tab.append(label, close);
+
+      tab.append(icon, label, close);
       tab.addEventListener('click', () => selectProject(p.id));
       tab.addEventListener('dblclick', () => renameProject(p));
       els.projectTabs.appendChild(tab);
@@ -767,6 +1053,7 @@
     renderTabs();
     groupExpandedState.clear();
     lastRows = null; // 换项目后不能再拿旧项目的列表做搜索
+    activeFilter = 'all';
     knownAlerts = null;
     lastRefreshAt = 0;
     els.lastRefresh.textContent = '';
@@ -786,7 +1073,7 @@
       lastRows = null;
       renderTabs();
       els.customActions.innerHTML = '';
-      els.groups.innerHTML = '<p class="empty-tip">还没有项目，点右上方「＋ 添加项目」选择配置表目录</p>';
+      els.groups.innerHTML = '<div class="empty-tip"><img src="icons/empty-illustration.svg" class="empty-illustration" alt=""><span>还没有项目，点右上方「＋ 添加项目」选择配置表目录</span></div>';
       els.summary.textContent = '';
       return;
     }
@@ -894,10 +1181,71 @@
   dirEls.close.addEventListener('click', () => dirEls.modal.classList.add('hidden'));
   dirEls.pick.addEventListener('click', addCurrentDir);
 
-  els.btnRefresh.addEventListener('click', refresh);
+  els.btnRefresh.addEventListener('click', () => {
+    refresh();
+    showToast('正在刷新云端状态…', 'info');
+  });
   els.btnSyncAll.addEventListener('click', syncAllUpdated);
-  els.btnClearState.addEventListener('click', clearState);
-  els.btnClearLog.addEventListener('click', () => { els.log.textContent = ''; });
+  els.btnClearState.addEventListener('click', () => {
+    clearState();
+    showToast('已清除同步状态缓存', 'info');
+  });
+  els.btnClearLog.addEventListener('click', () => {
+    els.log.innerHTML = '';
+    rawLogHistory = '';
+    if (els.consolePreview) els.consolePreview.textContent = '就绪';
+    showToast('已清空控制台日志', 'info');
+  });
+
+  if (els.btnCopyLog) {
+    els.btnCopyLog.addEventListener('click', () => {
+      const text = rawLogHistory || (els.log ? els.log.textContent : '');
+      if (!text.trim()) {
+        showToast('日志为空', 'info');
+        return;
+      }
+      navigator.clipboard.writeText(text).then(() => {
+        showToast('控制台日志已复制到剪贴板', 'success');
+      }).catch(() => {
+        showToast('复制日志失败', 'error');
+      });
+    });
+  }
+
+  // 快捷键指南弹窗
+  function openShortcuts() {
+    if (els.shortcutsModal) els.shortcutsModal.classList.remove('hidden');
+  }
+  function closeShortcuts() {
+    if (els.shortcutsModal) els.shortcutsModal.classList.add('hidden');
+  }
+  if (els.btnShortcuts) els.btnShortcuts.addEventListener('click', openShortcuts);
+  if (els.shortcutsClose) els.shortcutsClose.addEventListener('click', closeShortcuts);
+  if (els.shortcutsModal) els.shortcutsModal.addEventListener('click', e => {
+    if (e.target === els.shortcutsModal) closeShortcuts();
+  });
+
+  // 在访达中定位项目目录
+  if (els.projectDirBadge) {
+    els.projectDirBadge.addEventListener('click', () => {
+      revealLocal('').then(res => {
+        if (res) showToast('已在访达中打开项目目录', 'info');
+      });
+    });
+  }
+
+  // 控制台抽屉折叠与展开
+  function toggleConsole() {
+    if (!els.consoleDrawer) return;
+    const isCollapsed = els.consoleDrawer.classList.toggle('collapsed');
+    if (els.consoleToggleText) els.consoleToggleText.textContent = isCollapsed ? '展开' : '收起';
+  }
+  if (els.btnToggleLog) els.btnToggleLog.addEventListener('click', (e) => { e.stopPropagation(); toggleConsole(); });
+  if (els.consoleBar) els.consoleBar.addEventListener('click', (e) => {
+    // 忽略点击清空与复制按钮
+    if (e.target.closest('#btn-clear-log') || e.target.closest('#btn-copy-log')) return;
+    toggleConsole();
+  });
 
   // 供 filelist-manager.js 使用
   // 在访达中定位本地文件（相对 filelist 所在目录）；文件不存在时打开最近的上级目录
@@ -930,7 +1278,6 @@
   els.settingsModal.addEventListener('click', e => { if (e.target === els.settingsModal) closeSettings(); });
   // 这两个会打开别的弹窗 / 确认框：先关掉设置，避免叠在下面
   for (const b of [document.getElementById('btn-filelist'), els.btnClearState]) b.addEventListener('click', closeSettings, true);
-  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !els.settingsModal.classList.contains('hidden')) closeSettings(); });
 
   window.CSM = {
     revealLocal,
@@ -952,6 +1299,14 @@
     searchTerms = TableSearch.parseQuery(els.search.value);
     render();
   });
+  if (els.searchClear) {
+    els.searchClear.addEventListener('click', () => {
+      els.search.value = '';
+      searchTerms = [];
+      render();
+      els.search.focus();
+    });
+  }
   els.search.addEventListener('keydown', e => {
     if (e.key === 'Escape') {
       els.search.value = '';
@@ -967,11 +1322,58 @@
       }
     }
   });
-  // ⌘F / Ctrl+F 或 / 聚焦搜索框（弹窗打开时不抢焦点）
+
+  // ---------- 全局快捷键体系（Keyboard-First） ----------
   document.addEventListener('keydown', e => {
-    if (document.querySelector('.modal:not(.hidden)')) return;
     const typing = /^(INPUT|TEXTAREA)$/.test(document.activeElement && document.activeElement.tagName);
-    if (((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f') || (e.key === '/' && !typing)) {
+    const anyModalOpen = !!document.querySelector('.modal:not(.hidden)');
+
+    // 1. Esc: 优先关闭打开的弹窗或清空搜索框
+    if (e.key === 'Escape') {
+      if (els.shortcutsModal && !els.shortcutsModal.classList.contains('hidden')) { closeShortcuts(); return; }
+      if (els.settingsModal && !els.settingsModal.classList.contains('hidden')) { closeSettings(); return; }
+      const modal = document.querySelector('.modal:not(.hidden)');
+      if (modal) { modal.classList.add('hidden'); return; }
+      if (els.search && (els.search.value || document.activeElement === els.search)) {
+        els.search.value = '';
+        searchTerms = [];
+        render();
+        els.search.blur();
+      }
+      return;
+    }
+
+    // 2. ⌘R / Ctrl+R: 刷新所有云端修改状态（拦截浏览器页面刷新）
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'r') {
+      e.preventDefault();
+      refresh();
+      showToast('正在刷新云端状态…', 'info');
+      return;
+    }
+
+    // 3. ⌘L / Ctrl+L: 展开 / 收起控制台抽屉
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'l') {
+      e.preventDefault();
+      toggleConsole();
+      return;
+    }
+
+    // 4. ⌘, / Ctrl+,: 打开设置
+    if ((e.metaKey || e.ctrlKey) && e.key === ',') {
+      e.preventDefault();
+      openSettings();
+      return;
+    }
+
+    // 5. ⌘/ 或 ?: 快捷键指南
+    if (((e.metaKey || e.ctrlKey) && e.key === '/') || (e.key === '?' && !typing && !anyModalOpen)) {
+      e.preventDefault();
+      openShortcuts();
+      return;
+    }
+
+    // 6. ⌘F / Ctrl+F 或 / 聚焦搜索框（弹窗打开时不抢焦点）
+    if (!anyModalOpen && (((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f') || (e.key === '/' && !typing))) {
       e.preventDefault();
       els.search.focus();
       els.search.select();
