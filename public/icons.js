@@ -7,20 +7,7 @@
   }
 
   const ICONS = {
-    logo: `<svg class="csm-logo-icon" width="28" height="28" viewBox="0 0 40 40" fill="none" aria-hidden="true">
-      <defs>
-        <linearGradient id="csm-l-bg" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stop-color="#3b82f6"/>
-          <stop offset="100%" stop-color="#1d4ed8"/>
-        </linearGradient>
-      </defs>
-      <rect width="40" height="40" rx="9" fill="url(#csm-l-bg)"/>
-      <rect x="9" y="10" width="22" height="20" rx="3" fill="#ffffff" fill-opacity="0.95"/>
-      <path d="M9 16h22M17 16v14M9 22h22M9 26h22" stroke="#cbd5e1" stroke-width="1.2"/>
-      <circle cx="28" cy="27" r="7" fill="#10b981" stroke="#ffffff" stroke-width="2"/>
-      <path d="M26.5 24.5a3 3 0 1 1-1.8 2.7" stroke="#ffffff" stroke-width="1.4" stroke-linecap="round"/>
-      <path d="M25 24.2h1.8v1.8" stroke="#ffffff" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
-    </svg>`,
+    logo: `<img src="icons/logo.png" width="28" height="28" class="csm-logo-img" alt="CSM">`,
 
     refresh: svg('<path d="M3.5 10a6.5 6.5 0 0 1 11.5-4.2L17 8M17 3.5V8h-4.5M16.5 10a6.5 6.5 0 0 1-11.5 4.2L3 12M3 16.5V12h4.5"/>'),
     download: svg('<path d="M10 3.5v9M6 8.5l4 4 4-4M3.5 16.5h13"/>'),
