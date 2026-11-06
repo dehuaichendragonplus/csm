@@ -3152,3 +3152,223 @@ kbd {
 .hist-time { white-space: nowrap; color: var(--text-tertiary); font-size: 12px; }
 .hist-who { color: var(--text-secondary); font-size: 12px; }
 .hist-detail { color: var(--text-secondary); font-size: 12px; }
+
+/* ==========================================================================
+   Star Favorites System
+   ========================================================================== */
+.row-star-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  margin-right: 4px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-tertiary);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.4;
+  transition: all var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.row:hover .row-star-btn {
+  opacity: 0.85;
+}
+
+.row-star-btn:hover {
+  color: #eab308;
+  opacity: 1;
+  transform: scale(1.18);
+}
+
+.row-star-btn.starred {
+  color: #eab308;
+  opacity: 1;
+  text-shadow: 0 1px 2px rgba(234, 179, 8, 0.25);
+}
+
+.filter-chip.is-starred {
+  border-color: #fef08a;
+  background: #fefce8;
+  color: #854d0e;
+}
+
+.filter-chip.is-starred.active {
+  background: #fef08a;
+  color: #713f12;
+  border-color: #facc15;
+}
+
+.filter-chip.is-starred .chip-count {
+  background: #fef08a;
+  color: #713f12;
+}
+
+.filter-chip.is-starred.active .chip-count {
+  background: #facc15;
+  color: #713f12;
+}
+
+.chip-star-icon {
+  font-size: 12px;
+  display: inline-block;
+  vertical-align: middle;
+}
+
+/* ==========================================================================
+   Cloud Last Modified By Tags
+   ========================================================================== */
+.modifier-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border-radius: 4px;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: all var(--transition-fast);
+  line-height: 1.4;
+}
+
+.modifier-tag .mod-icon {
+  font-size: 10px;
+  opacity: 0.7;
+}
+
+.modifier-tag .mod-name {
+  font-family: var(--font-sans);
+}
+
+.modifier-tag-active {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  color: var(--primary);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(37, 99, 235, 0.08);
+}
+
+.fl-modifier-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  font-size: 11px;
+  border-radius: 4px;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  color: #475569;
+  font-weight: 500;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* ==========================================================================
+   Smart Action Error Diagnostic Card
+   ========================================================================== */
+.diagnostic-card {
+  margin: 0;
+  padding: 12px 18px;
+  background: linear-gradient(180deg, #fff5f5 0%, #fff 100%);
+  border-bottom: 1px solid #fecaca;
+  box-shadow: 0 4px 12px rgba(220, 38, 38, 0.06);
+  animation: slideDown 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.diagnostic-card.hidden {
+  display: none !important;
+}
+
+.diagnostic-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.diagnostic-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #991b1b;
+  font-size: 13px;
+}
+
+.diagnostic-pulse {
+  font-size: 11px;
+  display: inline-block;
+  animation: pulse 1.6s infinite ease-in-out;
+}
+
+.diagnostic-close-btn {
+  background: transparent;
+  border: none;
+  color: #991b1b;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 2px 7px;
+  border-radius: var(--radius-sm);
+  opacity: 0.65;
+  transition: all var(--transition-fast);
+}
+
+.diagnostic-close-btn:hover {
+  opacity: 1;
+  background: #fee2e2;
+}
+
+.diagnostic-body {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.diagnostic-details {
+  flex: 1;
+  min-width: 280px;
+  font-size: 12px;
+  color: #b91c1c;
+  font-family: var(--font-mono);
+  line-height: 1.45;
+  word-break: break-all;
+  background: #fff;
+  padding: 6px 10px;
+  border-radius: 4px;
+  border: 1px solid #fecaca;
+}
+
+.diagnostic-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.diagnostic-actions .btn {
+  font-size: 12px;
+  padding: 5px 12px;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.diagnostic-actions a.btn {
+  text-decoration: none;
+  color: var(--text-primary);
+}
+
+.diagnostic-actions .btn.hidden {
+  display: none !important;
+}

@@ -126,6 +126,30 @@
         </button>
       </div>
     </div>
+    <!-- 智能异常诊断卡片 -->
+    <div id="diagnostic-card" class="diagnostic-card hidden">
+      <div class="diagnostic-head">
+        <div class="diagnostic-title">
+          <span class="diagnostic-pulse">🔴</span>
+          <strong id="diagnostic-summary">导出异常诊断</strong>
+        </div>
+        <button id="diagnostic-close" type="button" class="diagnostic-close-btn" title="关闭诊断卡片">✕</button>
+      </div>
+      <div class="diagnostic-body">
+        <div id="diagnostic-details" class="diagnostic-details"></div>
+        <div class="diagnostic-actions" id="diagnostic-actions">
+          <button id="diagnostic-btn-reveal" type="button" class="btn btn-secondary btn-sm">
+            <span>📂 在访达中定位</span>
+          </button>
+          <a id="diagnostic-btn-sheet" href="#" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">
+            <span>↗ 打开 Google Sheets</span>
+          </a>
+          <button id="diagnostic-btn-diff" type="button" class="btn btn-secondary btn-sm">
+            <span>⇄ 查看差异</span>
+          </button>
+        </div>
+      </div>
+    </div>
     <pre id="log" class="log"></pre>
   </section>
 
@@ -575,6 +599,7 @@
 
   <script src="icons.js"></script>
   <script src="table-search.js"></script>
+  <script src="action-error-parser.js"></script>
   <script src="app.js"></script>
   <script src="panels.js"></script>
   <script src="filelist-manager.js"></script>

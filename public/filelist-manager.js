@@ -602,6 +602,15 @@
       a.title = `${e.spreadsheetId}\n点击打开云端表`;
       linkWrap.appendChild(a);
     }
+
+    if (e.sync && e.sync.cloudModifiedBy) {
+      const modPill = document.createElement('span');
+      modPill.className = 'fl-modifier-pill';
+      modPill.textContent = `👤 ${e.sync.cloudModifiedBy}`;
+      modPill.title = `最后修改人：${e.sync.cloudModifiedBy}\n云端时间：${e.sync.cloudModifiedTime ? new Date(e.sync.cloudModifiedTime).toLocaleString('zh-CN') : '—'}`;
+      linkWrap.appendChild(modPill);
+    }
+
     c.appendChild(linkWrap);
     return c;
   }

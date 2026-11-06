@@ -92,7 +92,15 @@
     consoleToggleText: document.getElementById('console-toggle-text'),
     allSyncedBanner: document.getElementById('all-synced-banner'),
     allSyncedMeta: document.getElementById('all-synced-meta'),
-    toastContainer: document.getElementById('toast-container')
+    toastContainer: document.getElementById('toast-container'),
+    diagnosticCard: document.getElementById('diagnostic-card'),
+    diagnosticSummary: document.getElementById('diagnostic-summary'),
+    diagnosticDetails: document.getElementById('diagnostic-details'),
+    diagnosticActions: document.getElementById('diagnostic-actions'),
+    diagnosticBtnReveal: document.getElementById('diagnostic-btn-reveal'),
+    diagnosticBtnSheet: document.getElementById('diagnostic-btn-sheet'),
+    diagnosticBtnDiff: document.getElementById('diagnostic-btn-diff'),
+    diagnosticClose: document.getElementById('diagnostic-close')
   };
 
   // Populate static icons
@@ -125,6 +133,78 @@
     }, duration);
   }
   window.showToast = showToast;
+
+  // 常用配置表星标收藏系统（按当前项目持久化至 localStorage）
+  const favKey = () => `csm.favorites.${currentId || 'default'}`;
+  function getFavorites() {
+    try {
+      const raw = localStorage.getItem(favKey());
+      return raw ? JSON.parse(raw) : [];
+    } catch (_) { return []; }
+  }
+  function isFavorite(path) {
+    return getFavorites().includes(path);
+  }
+  function toggleFavorite(path) {
+    const list = getFavorites();
+    const idx = list.indexOf(path);
+    let starred = false;
+    if (idx >= 0) {
+      list.splice(idx, 1);
+    } else {
+      list.push(path);
+      starred = true;
+    }
+    try {
+      localStorage.setItem(favKey(), JSON.stringify(list));
+    } catch (_) {}
+    showToast(starred ? '已加入收藏' : '已取消收藏', 'info');
+    render();
+  }
+
+  // 异常日志智能诊断
+  function clearDiagnostic() {
+    if (els.diagnosticCard) {
+      els.diagnosticCard.classList.add('hidden');
+      if (els.diagnosticSummary) els.diagnosticSummary.textContent = '';
+      if (els.diagnosticDetails) els.diagnosticDetails.textContent = '';
+    }
+  }
+
+  function showDiagnostic(action, diag) {
+    if (!els.diagnosticCard || !diag) return;
+    if (els.diagnosticSummary) els.diagnosticSummary.textContent = diag.summary || `「${action.label}」执行遇到异常`;
+    if (els.diagnosticDetails) els.diagnosticDetails.textContent = diag.details || diag.rawLine || '请查看控制台日志了解详细错误';
+
+    if (diag.filePath && els.diagnosticBtnReveal) {
+      els.diagnosticBtnReveal.classList.remove('hidden');
+      els.diagnosticBtnReveal.onclick = () => {
+        revealLocal(diag.filePath).then(() => showToast(`已在访达中定位：${diag.filePath}`, 'info'));
+      };
+    } else if (els.diagnosticBtnReveal) {
+      els.diagnosticBtnReveal.classList.add('hidden');
+    }
+
+    if (diag.matchedRow && diag.matchedRow.spreadsheetId && els.diagnosticBtnSheet) {
+      els.diagnosticBtnSheet.classList.remove('hidden');
+      els.diagnosticBtnSheet.href = `https://docs.google.com/spreadsheets/d/${encodeURIComponent(diag.matchedRow.spreadsheetId)}/edit`;
+    } else if (els.diagnosticBtnSheet) {
+      els.diagnosticBtnSheet.classList.add('hidden');
+    }
+
+    if (diag.matchedRow && diag.matchedRow.path && els.diagnosticBtnDiff) {
+      els.diagnosticBtnDiff.classList.remove('hidden');
+      els.diagnosticBtnDiff.onclick = () => openDiff(diag.matchedRow.path, 'view');
+    } else if (els.diagnosticBtnDiff) {
+      els.diagnosticBtnDiff.classList.add('hidden');
+    }
+
+    els.diagnosticCard.classList.remove('hidden');
+    if (setConsoleCollapsed) setConsoleCollapsed(false);
+    showToast(`「${action.label}」未通过：${diag.summary}`, 'error', 5000);
+  }
+
+  if (els.diagnosticClose) els.diagnosticClose.addEventListener('click', clearDiagnostic);
 
   // 搜索：render() 记住最近一次完整列表，输入关键词时只在前端过滤重绘，不再请求服务端
   let lastRows = null;
@@ -189,9 +269,11 @@
     els.statusFilters.innerHTML = '';
 
     const needsActionCount = (counts.conflict || 0) + (counts.updated || 0) + (counts.missing_local || 0) + (counts.never_synced || 0);
+    const starredCount = rows.filter(r => isFavorite(r.path)).length;
 
     const filterDefs = [
       { id: 'all', label: '全部', count: rows.length },
+      { id: 'starred', label: '已收藏', count: starredCount, starred: true },
       { id: 'needs_action', label: '待处理', count: needsActionCount, alert: needsActionCount > 0 },
       { id: 'updated', label: '有更新', count: counts.updated || 0, alert: (counts.updated || 0) > 0 },
       { id: 'conflict', label: '冲突', count: counts.conflict || 0, conflict: (counts.conflict || 0) > 0 },
@@ -203,17 +285,22 @@
 
     filterDefs.forEach(def => {
       // 0 计数的次要状态不占据空间
-      if (def.count === 0 && !['all', 'needs_action', 'synced'].includes(def.id)) return;
+      if (def.count === 0 && !['all', 'starred', 'needs_action', 'synced'].includes(def.id)) return;
 
       const chip = document.createElement('div');
       let cls = `filter-chip${activeFilter === def.id ? ' active' : ''}`;
+      if (def.starred) cls += ' is-starred';
       if (def.alert && def.count > 0) cls += ' has-alert';
       if (def.conflict && def.count > 0) cls += ' has-conflict';
       if (def.error && def.count > 0) cls += ' has-error';
       chip.className = cls;
 
       const labelSpan = document.createElement('span');
-      labelSpan.textContent = def.label;
+      if (def.starred) {
+        labelSpan.innerHTML = '<span class="chip-star-icon">⭐</span> 已收藏';
+      } else {
+        labelSpan.textContent = def.label;
+      }
 
       const countSpan = document.createElement('span');
       countSpan.className = 'chip-count';
@@ -238,7 +325,9 @@
 
     const searching = searchTerms.length > 0;
     let pool = rows;
-    if (activeFilter === 'needs_action') {
+    if (activeFilter === 'starred') {
+      pool = rows.filter(r => isFavorite(r.path));
+    } else if (activeFilter === 'needs_action') {
       pool = rows.filter(r => r.direction === 'download' || r.direction === 'conflict' || r.status === 'never_synced');
     } else if (activeFilter !== 'all') {
       pool = rows.filter(r => r.status === activeFilter);
@@ -358,7 +447,13 @@
     } else if (renderedCount === 0) {
       const p = document.createElement('div');
       p.className = 'empty-tip';
-      p.innerHTML = `<img src="icons/empty-illustration.svg" class="empty-illustration" alt=""><span>${searching ? `没有匹配「${els.search.value.trim()}」的配置表` : '当前筛选条件下没有表格'}</span>`;
+      let msg = '当前筛选条件下没有表格';
+      if (searching) {
+        msg = `没有匹配「${els.search.value.trim()}」的配置表`;
+      } else if (activeFilter === 'starred') {
+        msg = '还没有收藏任何配置表。点击表名左侧的 ☆ 即可添加高频关注的表格';
+      }
+      p.innerHTML = `<img src="icons/empty-illustration.svg" class="empty-illustration" alt=""><span>${msg}</span>`;
       els.groups.appendChild(p);
     }
   }
@@ -396,6 +491,18 @@
     const nameRow = document.createElement('div');
     nameRow.className = 'name-row';
 
+    // 星标收藏按钮
+    const isFav = isFavorite(row.path);
+    const starBtn = document.createElement('button');
+    starBtn.type = 'button';
+    starBtn.className = `row-star-btn${isFav ? ' starred' : ''}`;
+    starBtn.innerHTML = isFav ? '★' : '☆';
+    starBtn.title = isFav ? '取消收藏' : '添加收藏（关注高频表）';
+    starBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      toggleFavorite(row.path);
+    });
+
     const nameDiv = document.createElement('span');
     nameDiv.className = 'name';
     setHighlighted(nameDiv, row.name);
@@ -404,7 +511,25 @@
     const pathSpan = document.createElement('span');
     pathSpan.className = 'row-path';
     setHighlighted(pathSpan, row.path);
-    nameRow.append(nameDiv, pathSpan);
+    nameRow.append(starBtn, nameDiv, pathSpan);
+
+    // 云端最后修改人微胶囊（直显协作溯源）
+    if (row.cloudModifiedBy) {
+      const modTag = document.createElement('span');
+      modTag.className = 'modifier-tag';
+      if (row.status === 'updated' || row.status === 'conflict') {
+        modTag.classList.add('modifier-tag-active');
+      }
+      const modIcon = document.createElement('span');
+      modIcon.className = 'mod-icon';
+      modIcon.textContent = '👤';
+      const modName = document.createElement('span');
+      modName.className = 'mod-name';
+      modName.textContent = row.cloudModifiedBy;
+      modTag.append(modIcon, modName);
+      modTag.title = `云端最后修改人：${row.cloudModifiedBy}\n最后修改时间：${formatTime(row.cloudModifiedTime)}`;
+      nameRow.appendChild(modTag);
+    }
 
     // 备注行显示云端表名，并直接作为跳转云端表的入口
     const metaDiv = document.createElement('div');
@@ -662,7 +787,7 @@
     });
   }
 
-  async function consumeSSE(response, onComplete, summary) {
+  async function consumeSSE(response, onComplete, summary, onLogLine) {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
@@ -678,6 +803,7 @@
         if (!evMatch || !dataMatch) continue;
         const event = evMatch[1].trim();
         const data = dataMatch[1].trim();
+        if (event === 'log' && typeof onLogLine === 'function') onLogLine(data);
         handleSseEvent(event, data, summary);
       }
     }
@@ -809,14 +935,25 @@
 
   async function runAction(action) {
     setBusy(true);
+    clearDiagnostic();
     appendLog(`→ ${action.label}…\n`);
+    const actionLogs = [];
     try {
       const response = await fetch(api(`/action/${encodeURIComponent(action.id)}`), { method: 'POST' });
       if (!response.ok) {
         appendLog(`! action ${action.id} HTTP ${response.status}\n`);
         return;
       }
-      await new Promise(resolve => consumeSSE(response, resolve));
+      const summary = { exitCode: null, successCount: null, failedCount: null };
+      await new Promise(resolve => consumeSSE(response, resolve, summary, l => actionLogs.push(l)));
+
+      // 诊断：若退出码不为 0 则智能分析日志
+      if (summary.exitCode !== 0 && summary.exitCode != null) {
+        if (window.ActionErrorParser) {
+          const diag = window.ActionErrorParser.parseActionError(actionLogs.join('\n'), lastRows || []);
+          if (diag) showDiagnostic(action, diag);
+        }
+      }
     } finally {
       setBusy(false);
     }
@@ -1217,10 +1354,14 @@
   }
 
   // 控制台抽屉折叠与展开
+  function setConsoleCollapsed(collapsed) {
+    if (!els.consoleDrawer) return;
+    els.consoleDrawer.classList.toggle('collapsed', !!collapsed);
+    if (els.consoleToggleText) els.consoleToggleText.textContent = collapsed ? '展开' : '收起';
+  }
   function toggleConsole() {
     if (!els.consoleDrawer) return;
-    const isCollapsed = els.consoleDrawer.classList.toggle('collapsed');
-    if (els.consoleToggleText) els.consoleToggleText.textContent = isCollapsed ? '展开' : '收起';
+    setConsoleCollapsed(!els.consoleDrawer.classList.contains('collapsed'));
   }
   if (els.btnToggleLog) els.btnToggleLog.addEventListener('click', (e) => { e.stopPropagation(); toggleConsole(); });
   if (els.consoleBar) els.consoleBar.addEventListener('click', (e) => {
