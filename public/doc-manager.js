@@ -36,9 +36,12 @@
     editTitle: $('doc-edit-title'),
     inputTitle: $('doc-input-title'),
     inputUrl: $('doc-input-url'),
+    cardProject: $('card-scope-project'),
+    cardGlobal: $('card-scope-global'),
     scopeProject: $('doc-scope-project'),
     scopeGlobal: $('doc-scope-global'),
     scopeProjName: $('doc-scope-proj-name'),
+    urlDetectChip: $('doc-url-detect-chip'),
     inputDesc: $('doc-input-desc'),
     msg: $('doc-edit-msg'),
     btnCancel: $('doc-edit-cancel'),
@@ -388,6 +391,44 @@
     el.modal.classList.add('hidden');
   }
 
+  function updateScopeCards() {
+    const isGlobal = el.scopeGlobal && el.scopeGlobal.checked;
+    if (el.cardProject) el.cardProject.classList.toggle('active', !isGlobal);
+    if (el.cardGlobal) el.cardGlobal.classList.toggle('active', isGlobal);
+  }
+
+  function updateUrlDetection() {
+    if (!el.urlDetectChip || !el.inputUrl) return;
+    const val = el.inputUrl.value.trim();
+    if (!val) {
+      el.urlDetectChip.classList.add('hidden');
+      el.urlDetectChip.textContent = '';
+      return;
+    }
+    if (!/^https?:\/\//i.test(val)) {
+      el.urlDetectChip.className = 'doc-url-detect-chip chip-invalid';
+      el.urlDetectChip.textContent = '⚠️ 链接格式需以 http:// 或 https:// 开头';
+      el.urlDetectChip.classList.remove('hidden');
+      return;
+    }
+    const plat = detectPlatform(val);
+    let chipClass = 'chip-web';
+    let tipText = '🌐 在线网页链接 · 格式有效';
+    if (plat.name === '钉钉文档') {
+      chipClass = 'chip-ding';
+      tipText = '📑 钉钉在线文档 / 多维表格 · 已智能识别';
+    } else if (plat.name === 'Google Sheets') {
+      chipClass = 'chip-google';
+      tipText = '📊 Google Sheets 表格 · 已智能识别';
+    } else if (plat.name === '飞书文档') {
+      chipClass = 'chip-feishu';
+      tipText = '🪶 飞书文档 · 已智能识别';
+    }
+    el.urlDetectChip.className = `doc-url-detect-chip ${chipClass}`;
+    el.urlDetectChip.textContent = tipText;
+    el.urlDetectChip.classList.remove('hidden');
+  }
+
   function openEditModal(id = null) {
     if (!el.editModal) return;
     editingId = id;
@@ -421,9 +462,16 @@
       if (el.scopeProject) el.scopeProject.checked = true;
     }
 
+    updateScopeCards();
+    updateUrlDetection();
+
     el.editModal.classList.remove('hidden');
     setTimeout(() => {
-      if (el.inputTitle) el.inputTitle.focus();
+      if (el.inputUrl && !el.inputUrl.value) {
+        el.inputUrl.focus();
+      } else if (el.inputTitle) {
+        el.inputTitle.focus();
+      }
     }, 50);
   }
 
@@ -612,6 +660,45 @@
         el.filterClear.classList.add('hidden');
         renderTable();
         if (el.filter) el.filter.focus();
+      });
+    }
+
+    // 实时链接识别
+    if (el.inputUrl) {
+      el.inputUrl.addEventListener('input', updateUrlDetection);
+    }
+
+    // 适用范围卡片切换
+    if (el.scopeProject) {
+      el.scopeProject.addEventListener('change', updateScopeCards);
+    }
+    if (el.scopeGlobal) {
+      el.scopeGlobal.addEventListener('change', updateScopeCards);
+    }
+    if (el.cardProject) {
+      el.cardProject.addEventListener('click', () => {
+        if (el.scopeProject) {
+          el.scopeProject.checked = true;
+          updateScopeCards();
+        }
+      });
+    }
+    if (el.cardGlobal) {
+      el.cardGlobal.addEventListener('click', () => {
+        if (el.scopeGlobal) {
+          el.scopeGlobal.checked = true;
+          updateScopeCards();
+        }
+      });
+    }
+
+    // 快捷键保存 (⌘Enter / Ctrl+Enter)
+    if (el.editModal) {
+      el.editModal.addEventListener('keydown', e => {
+        if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+          e.preventDefault();
+          handleSave();
+        }
       });
     }
 
