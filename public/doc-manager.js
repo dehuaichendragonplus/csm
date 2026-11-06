@@ -14,7 +14,6 @@
     quickAdd: $('btn-bm-quick-add'),
     dropdownList: $('bm-dropdown-list'),
     openManager: $('btn-bm-open-manager'),
-    btnManageDocs: $('btn-manage-docs'),
 
     // 文档管理列表弹窗
     modal: $('doc-modal'),
@@ -714,12 +713,6 @@
     if (el.openManager) {
       el.openManager.addEventListener('click', e => {
         e.stopPropagation();
-        openDocManagerModal();
-      });
-    }
-
-    if (el.btnManageDocs) {
-      el.btnManageDocs.addEventListener('click', () => {
         openDocManagerModal();
       });
     }
