@@ -65,6 +65,10 @@
           <span class="btn-icon">📋</span>
           <span>管理配置表</span>
         </button>
+        <button id="btn-manage-docs" type="button" class="btn-icon-action" title="文档收藏管理：查看、编辑与跳转项目和全局在线文档">
+          <span class="btn-icon">📑</span>
+          <span>文档管理</span>
+        </button>
         <div class="action-divider"></div>
         <span id="custom-actions" class="custom-actions"></span>
         <div class="action-divider"></div>
@@ -83,6 +87,26 @@
     <section id="summary-bar" class="chrome-bookmarks-bar hidden">
       <div class="bookmarks-left">
         <div id="status-filters" class="status-filters"></div>
+        <div class="bookmarks-widget" id="bookmarks-widget">
+          <button id="btn-bookmarks-dropdown" type="button" class="filter-chip chip-bookmarks" title="查看并跳转收藏的在线文档">
+            <span class="chip-icon">📑</span>
+            <span class="chip-label">收藏文档</span>
+            <span id="bookmarks-badge" class="chip-count">0</span>
+            <span class="chip-arrow">▾</span>
+          </button>
+          <div id="bookmarks-dropdown-menu" class="bookmarks-dropdown hidden" role="menu">
+            <div class="bm-dropdown-header">
+              <span class="bm-dropdown-title">📑 在线文档收藏</span>
+              <button id="btn-bm-quick-add" type="button" class="btn-bm-text-action">➕ 新增</button>
+            </div>
+            <div id="bm-dropdown-list" class="bm-dropdown-list">
+              <!-- 动态渲染项目与全局文档 -->
+            </div>
+            <div class="bm-dropdown-footer">
+              <button id="btn-bm-open-manager" type="button" class="bm-dropdown-manage-btn">⚙️ 管理所有文档…</button>
+            </div>
+          </div>
+        </div>
         <span id="summary" class="summary-text hidden">加载中…</span>
       </div>
       <div class="bookmarks-right">
@@ -530,6 +554,128 @@
           <button id="fl-root-cancel" type="button" class="btn btn-secondary">取消</button>
           <button id="fl-root-save" type="button" class="btn btn-primary">保存映射</button>
         </div>
+      </footer>
+    </div>
+  </div>
+
+  <!-- 文档管理列表弹窗 -->
+  <div id="doc-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="doc-modal-title">
+    <div class="modal-box fl-box doc-box">
+      <header class="modal-head fl-modal-head">
+        <div class="fl-modal-title-group">
+          <div class="fl-modal-icon-badge">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 3a1.5 1.5 0 0 1 1.5-1.5h6l4.5 4.5v11a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 4 17V3z"/><path d="M11.5 1.5v4.5h4.5M7 9.5h6M7 13h6"/></svg>
+          </div>
+          <div>
+            <div class="fl-modal-title-row">
+              <strong class="fl-modal-title" id="doc-modal-title">在线文档与收藏管理</strong>
+              <span class="doc-badge-local" title="此功能保存在本机运行目录，不提交团队协作代码库">纯本地存储</span>
+            </div>
+            <div class="fl-modal-subtitle">收藏当前项目与全局在线文档、表格及知识库，点击可直接在浏览器中打开</div>
+          </div>
+        </div>
+        <div class="modal-head-actions">
+          <span class="modal-esc-hint"><kbd>Esc</kbd></span>
+          <button id="doc-close" type="button" class="modal-close-btn" title="关闭 (Esc)">✕</button>
+        </div>
+      </header>
+
+      <!-- 工具栏：Tab 筛选、搜索与新增 -->
+      <div class="fl-toolbar">
+        <div class="fl-toolbar-left">
+          <div class="fl-tabs">
+            <button type="button" class="fl-tab active" data-tab="all" id="doc-tab-all">
+              <span>全部</span> <span id="doc-count-all" class="fl-tab-count">0</span>
+            </button>
+            <button type="button" class="fl-tab" data-tab="project" id="doc-tab-project">
+              <span>当前项目</span> <span id="doc-count-project" class="fl-tab-count">0</span>
+            </button>
+            <button type="button" class="fl-tab" data-tab="global" id="doc-tab-global">
+              <span>全局通用</span> <span id="doc-count-global" class="fl-tab-count">0</span>
+            </button>
+          </div>
+        </div>
+        <div class="fl-toolbar-right">
+          <div class="fl-search-box">
+            <svg class="fl-search-icon" width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="9" r="5.5"/><path d="M13 13l4 4"/></svg>
+            <input id="doc-filter" type="search" placeholder="搜索文档标题、网址或备注..." autocomplete="off" spellcheck="false">
+            <button id="doc-filter-clear" type="button" class="fl-search-clear hidden" title="清空">✕</button>
+          </div>
+          <button id="doc-btn-add" type="button" class="btn btn-primary fl-add-btn">
+            <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 4.5v11M4.5 10h11"/></svg>
+            <span>新增文档收藏</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- 表格展示区 -->
+      <div class="fl-table-wrap">
+        <table class="fl-table doc-table">
+          <thead>
+            <tr>
+              <th style="width: 60px; text-align: center;">类型</th>
+              <th style="width: 220px; min-width: 180px;">文档名称</th>
+              <th style="min-width: 260px;">文档链接 (URL)</th>
+              <th style="width: 140px;">归属</th>
+              <th style="width: 180px;">备注说明</th>
+              <th style="width: 160px; text-align: right;">操作</th>
+            </tr>
+          </thead>
+          <tbody id="doc-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- 新增 / 编辑文档弹窗 -->
+  <div id="doc-edit-modal" class="modal modal-top hidden" role="dialog" aria-modal="true" aria-labelledby="doc-edit-title">
+    <div class="modal-box fl-edit-box">
+      <header class="modal-head">
+        <div class="modal-head-title-group">
+          <div class="modal-icon-badge modal-icon-sheets">
+            <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 3a1.5 1.5 0 0 1 1.5-1.5h6l4.5 4.5v11a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 4 17V3z"/><path d="M11.5 1.5v4.5h4.5M7 9.5h6M7 13h6"/></svg>
+          </div>
+          <div>
+            <strong id="doc-edit-title">新增文档收藏</strong>
+            <div class="modal-subtitle">仅保存在本机，不影响其他团队成员</div>
+          </div>
+        </div>
+        <div class="modal-head-actions">
+          <span class="modal-esc-hint"><kbd>Esc</kbd></span>
+          <button id="doc-edit-close" type="button" class="modal-close-btn" title="关闭 (Esc)">✕</button>
+        </div>
+      </header>
+      <div class="modal-body fl-form-body">
+        <label class="fl-field">
+          <span class="fl-field-label">文档名称 <em class="req">*</em></span>
+          <input id="doc-input-title" type="text" placeholder="例如：数值策划在线总表、团队协作规范" autocomplete="off" spellcheck="false">
+        </label>
+        <label class="fl-field">
+          <span class="fl-field-label">文档链接 (URL) <em class="req">*</em></span>
+          <input id="doc-input-url" type="url" placeholder="https://alidocs.dingtalk.com/... 或 https://docs.google.com/..." autocomplete="off" spellcheck="false">
+        </label>
+        <div class="fl-field">
+          <span class="fl-field-label">适用范围</span>
+          <div class="doc-scope-radios">
+            <label class="doc-radio-label">
+              <input type="radio" name="doc-scope" value="project" id="doc-scope-project" checked>
+              <span>当前项目专属 (<span id="doc-scope-proj-name">当前项目</span>)</span>
+            </label>
+            <label class="doc-radio-label">
+              <input type="radio" name="doc-scope" value="global" id="doc-scope-global">
+              <span>全局通用 (所有项目均可访问)</span>
+            </label>
+          </div>
+        </div>
+        <label class="fl-field">
+          <span class="fl-field-label">备注说明（选填）</span>
+          <input id="doc-input-desc" type="text" placeholder="表格说明、负责人、用途备注等" autocomplete="off">
+        </label>
+        <p id="doc-edit-msg" class="fl-msg" role="status"></p>
+      </div>
+      <footer class="modal-foot">
+        <button id="doc-edit-cancel" type="button" class="btn btn-secondary">取消</button>
+        <button id="doc-edit-save" type="button" class="btn btn-primary">保存收藏</button>
       </footer>
     </div>
   </div>
