@@ -670,7 +670,6 @@
     const nameDiv = document.createElement('span');
     nameDiv.className = 'table-name';
     setHighlighted(nameDiv, row.name);
-    nameDiv.title = `${row.name}\n${row.path}`;
 
     tableMain.append(starBtn, nameDiv);
 
@@ -680,13 +679,6 @@
     const pathSpan = document.createElement('span');
     pathSpan.className = 'table-path';
     setHighlighted(pathSpan, row.path);
-    pathSpan.title = `本地相对路径: ${row.path}\n点击可在访达中定位`;
-    pathSpan.addEventListener('click', e => {
-      e.stopPropagation();
-      revealLocal(row.path).then(res => {
-        if (res) showToast(`已在访达中定位: ${row.name || row.path}`, 'info');
-      });
-    });
 
     tableSub.appendChild(pathSpan);
     tableCol.append(tableMain, tableSub);
@@ -719,7 +711,7 @@
       ext.innerHTML = window.CSMIcons ? window.CSMIcons.external : '↗';
 
       link.append(icon, textSpan, ext);
-      link.title = `在新标签页打开 Google 表格：\n${cloudLabel}`;
+      link.title = '在新标签页打开 Google 表格';
       link.addEventListener('click', e => e.stopPropagation());
       cloudMain.appendChild(link);
     } else if (cloudLabel) {
@@ -734,7 +726,6 @@
       const userTag = document.createElement('span');
       userTag.className = 'user-tag';
       userTag.textContent = `@${row.cloudModifiedBy}`;
-      userTag.title = `最后修改人：${row.cloudModifiedBy}`;
       cloudSub.appendChild(userTag);
 
       const timeSpan = document.createElement('span');
@@ -774,21 +765,7 @@
     if (row.error) {
       statusSub.innerHTML = `<span class="status-error-text" title="${row.error}">错误: ${row.error}</span>`;
     } else if (row.status === 'synced') {
-      const txt = document.createElement('span');
-      txt.textContent = '本地与云端一致 · ';
-      const locBtn = document.createElement('a');
-      locBtn.className = 'reveal-link';
-      locBtn.href = '#';
-      locBtn.innerHTML = '在访达定位 📁';
-      locBtn.title = `本地文件：${row.path}\n在访达中显示`;
-      locBtn.addEventListener('click', e => {
-        e.preventDefault();
-        e.stopPropagation();
-        revealLocal(row.path).then(res => {
-          if (res) showToast(`已在访达中定位: ${row.name || row.path}`, 'info');
-        });
-      });
-      statusSub.append(txt, locBtn);
+      statusSub.textContent = '本地与云端一致';
     } else if (row.status === 'updated') {
       statusSub.textContent = '云端时间较新 · 可覆盖下载';
     } else if (row.status === 'conflict') {

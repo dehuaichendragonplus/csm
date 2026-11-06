@@ -1062,7 +1062,8 @@ button:disabled {
   border-left: 3px solid transparent; /* 状态高亮边条 */
   font-size: 13px;
   box-sizing: border-box;
-  transition: background var(--transition-fast), border-left-color var(--transition-fast);
+  cursor: default;
+  transition: background 0.12s ease;
 }
 
 .row:first-of-type {
@@ -1078,7 +1079,7 @@ button:disabled {
 }
 
 .row:nth-child(even):hover {
-  background: #f1f5f9;
+  background: #f8fafc;
 }
 
 .row.status-updated {
@@ -1154,17 +1155,12 @@ button:disabled {
 .table-path {
   font-family: var(--font-mono);
   font-size: 11px;
-  color: var(--text-secondary);
+  color: var(--text-tertiary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  cursor: pointer;
-  transition: color var(--transition-fast);
-}
-
-.table-path:hover {
-  color: var(--primary);
-  text-decoration: underline;
+  cursor: default;
+  user-select: text;
 }
 
 .row mark {
@@ -1178,27 +1174,28 @@ button:disabled {
 .cloud-sheet-link {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  color: #15803d;
+  gap: 6px;
+  color: var(--text-primary);
   font-weight: 500;
-  font-size: 12.5px;
+  font-size: 13px;
   text-decoration: none;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 100%;
+  cursor: pointer;
   transition: color var(--transition-fast);
 }
 
 .cloud-sheet-link:hover {
-  color: #166534;
-  text-decoration: underline;
+  color: var(--primary);
+  text-decoration: none;
 }
 
 .sheet-icon {
   display: inline-flex;
   align-items: center;
-  color: #15803d;
+  color: #16a34a;
   flex-shrink: 0;
 }
 
@@ -1215,9 +1212,16 @@ button:disabled {
 
 .sheet-ext-icon {
   font-size: 11px;
-  opacity: 0.6;
+  color: var(--text-tertiary);
+  opacity: 0.35;
   flex-shrink: 0;
   line-height: 1;
+  transition: opacity var(--transition-fast), color var(--transition-fast);
+}
+
+.cloud-sheet-link:hover .sheet-ext-icon {
+  opacity: 1;
+  color: var(--primary);
 }
 
 .cloud-sub-info .user-tag {
@@ -1455,15 +1459,13 @@ button:disabled {
   gap: 2px;
   opacity: 0;
   pointer-events: none;
-  transform: translateX(4px);
-  transition: all 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: opacity 0.12s ease;
 }
 
 .row:hover .secondary-actions,
 .row:focus-within .secondary-actions {
   opacity: 1;
   pointer-events: auto;
-  transform: translateX(0);
 }
 
 .row-btn {
@@ -3722,19 +3724,20 @@ kbd {
   font-size: 15px;
   line-height: 1;
   cursor: pointer;
-  opacity: 0.4;
-  transition: all var(--transition-fast);
+  opacity: 0.35;
+  transition: opacity 0.12s ease;
   flex-shrink: 0;
 }
 
 .row:hover .row-star-btn {
-  opacity: 0.85;
+  opacity: 0.8;
 }
 
 .row-star-btn:hover {
   color: #eab308;
   opacity: 1;
-  transform: scale(1.18);
+  transform: scale(1.15);
+  transition: transform 0.12s ease, color 0.12s ease;
 }
 
 .row-star-btn.starred {
