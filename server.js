@@ -135,7 +135,7 @@ async function main(opts = {}) {
   const diffSnapshots = new Map(); // 最近两次差异预览的工作簿，按 ID 搜索复用
   const cloudPathPreviews = new Map(); // projectId -> 最近一次待应用的云端路径预览
   const downloadsInProgress = new Set();
-  const verifyStatuses = new Set(['updated', 'conflict', 'local_changed']);
+  const verifyStatuses = new Set(['updated', 'conflict', 'local_changed', 'never_synced']);
 
   function readJson(file, fallback) {
     try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (_) { return fallback; }

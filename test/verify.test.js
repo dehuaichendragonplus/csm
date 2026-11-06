@@ -74,3 +74,79 @@ test('verify-cache: clear-state 与 refresh 均清空 verify-cache，防止负�
     fs.rmSync(projDir, { recursive: true, force: true });
   }
 });
+
+test('verify: never_synced 表在内容一致时自动标记为 synced', async () => {
+  const { makeXlsx } = require('./helpers/make-xlsx');
+  const { saveExportToCache } = require('../lib/cloud-export-cache');
+  const dataDir = tmpDir('csm-data-verify-ns-');
+  const projDir = tmpDir('csm-proj-verify-ns-');
+
+  const content = makeXlsx({ Main: [['id', 'name'], ['1', 'HeroA']] });
+  fs.mkdirSync(path.join(projDir, 'Datas'), { recursive: true });
+  fs.writeFileSync(path.join(projDir, 'Datas/Hero.xlsx'), content);
+  fs.writeFileSync(path.join(projDir, 'filelist.json'), JSON.stringify([
+    { path: 'Datas/Hero.xlsx', name: 'Hero', spreadsheetId: 'sheet-hero-same' }
+  ]));
+  fs.writeFileSync(
+    path.join(projDir, 'syncmanager.config.json'),
+    JSON.stringify({ title: 'VerifyNeverSynced', filelist: 'filelist.json' })
+  );
+
+  fs.writeFileSync(path.join(dataDir, 'projects.json'), JSON.stringify([
+    { id: 'proj-verify-ns', name: 'VerifyNeverSynced', dir: projDir }
+  ]));
+
+  const modTime = '2026-11-06T15:00:00.000Z';
+  const driveCachePath = path.join(dataDir, 'projects', 'proj-verify-ns', 'drive-cache.json');
+  fs.mkdirSync(path.dirname(driveCachePath), { recursive: true });
+  fs.writeFileSync(driveCachePath, JSON.stringify({
+    fetchedAt: new Date().toISOString(),
+    items: {
+      'sheet-hero-same': { modifiedTime: modTime, name: 'Hero', error: null }
+    }
+  }));
+
+  const exportCacheDir = path.join(dataDir, 'cache', 'cloud-exports');
+  const tmpCloud = path.join(tmpDir(), 'cloud.xlsx');
+  fs.writeFileSync(tmpCloud, content);
+  saveExportToCache(exportCacheDir, 'sheet-hero-same', modTime, {}, tmpCloud);
+
+  fs.mkdirSync(path.join(dataDir, '.tokens'), { recursive: true });
+  fs.writeFileSync(path.join(dataDir, '.tokens/token.json'), JSON.stringify({ access_token: 'fake' }));
+
+  const { port, server } = await main({
+    dataDir,
+    port: 0,
+    openBrowser: false
+  });
+
+  try {
+    // 首次获取 tables：状态应为 never_synced
+    const res1 = await fetch(`http://127.0.0.1:${port}/api/p/proj-verify-ns/tables`);
+    const tables1 = await res1.json();
+    assert.strictEqual(tables1[0].status, 'never_synced');
+
+    // 调用 verify 接口进行内容核对
+    const resVerify = await fetch(`http://127.0.0.1:${port}/api/p/proj-verify-ns/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paths: ['Datas/Hero.xlsx'] })
+    });
+    const verifyData = await resVerify.json();
+    assert.strictEqual(verifyData.results[0].identical, true);
+    assert.strictEqual(verifyData.results[0].previousStatus, 'never_synced');
+
+    // 核对通过后，表格自动变为 synced
+    assert.strictEqual(verifyData.tables[0].status, 'synced');
+    assert.strictEqual(verifyData.tables[0].lastSyncedModifiedTime, modTime);
+
+    // 再次调用 tables 接口，状态应保持为 synced
+    const res2 = await fetch(`http://127.0.0.1:${port}/api/p/proj-verify-ns/tables`);
+    const tables2 = await res2.json();
+    assert.strictEqual(tables2[0].status, 'synced');
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+    fs.rmSync(dataDir, { recursive: true, force: true });
+    fs.rmSync(projDir, { recursive: true, force: true });
+  }
+});

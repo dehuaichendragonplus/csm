@@ -25,7 +25,7 @@
 
   let currentId = null;
   let projects = [];
-  const api = p => `/api/p/${encodeURIComponent(currentId)}${p}`;
+  const api = (p, projId = currentId) => `/api/p/${encodeURIComponent(projId)}${p}`;
   const PROJECT_KEY = 'syncmanager.currentProject';
 
   // ---------- 项目状态汇总与 Dock / Tab 角标 ----------
@@ -595,17 +595,28 @@
       const headerRight = document.createElement('div');
       headerRight.className = 'group-header-right';
 
-      // 针对有更新和本地缺失分组，提供表头级快捷批量下载
-      if ((key === 'updated' || key === 'missing_local') && list.length > 0) {
+      // 针对有更新、本地缺失、需核对分组，提供表头级快捷批量下载
+      if ((key === 'updated' || key === 'missing_local' || key === 'never_synced') && list.length > 0) {
         const batchBtn = document.createElement('button');
         batchBtn.type = 'button';
         batchBtn.className = 'group-batch-btn';
-        batchBtn.innerHTML = `${window.CSMIcons ? window.CSMIcons.download : '⬇'} <span>下载本组当前结果 ${list.length} 张</span>`;
-        batchBtn.title = `查看「${STATUS_LABELS[key].label}」分组当前筛选内的下载范围`;
-        batchBtn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          previewBatch(list.filter(r => r.direction === 'download'), `当前结果 · ${STATUS_LABELS[key].label}`);
-        });
+        if (key === 'never_synced') {
+          batchBtn.innerHTML = `${window.CSMIcons ? window.CSMIcons.download : '⬇'} <span>全部下载到本地（${list.length} 张）</span>`;
+          batchBtn.title = `把「${STATUS_LABELS[key].label}」分组全部 ${list.length} 张云端表格覆盖下载到本地（下载前会自动备份本地旧文件）`;
+          batchBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const valid = list.filter(r => r.spreadsheetId && r.cloudModifiedTime);
+            if (!valid.length) return;
+            previewBatch(valid.map(r => ({ ...r, reviewed: true })), `全部需核对表（${STATUS_LABELS[key].label}）`);
+          });
+        } else {
+          batchBtn.innerHTML = `${window.CSMIcons ? window.CSMIcons.download : '⬇'} <span>下载本组当前结果 ${list.length} 张</span>`;
+          batchBtn.title = `查看「${STATUS_LABELS[key].label}」分组当前筛选内的下载范围`;
+          batchBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            previewBatch(list.filter(r => r.direction === 'download'), `当前结果 · ${STATUS_LABELS[key].label}`);
+          });
+        }
         headerRight.appendChild(batchBtn);
       }
 
@@ -996,7 +1007,14 @@
             markRefreshed(rows, false, resp.headers.get('X-CSM-Checked-At'));
             render(rows);
           });
-        } else render(data);
+        } else {
+          render(data);
+          refreshRuns.get(id)?.then(rows => {
+            if (id === currentId && (cloudStatus === 'loading' || cloudStatus === 'checking')) {
+              markRefreshed(rows || lastRows || data, false, resp.headers.get('X-CSM-Checked-At'));
+            }
+          }).catch(() => {});
+        }
       }
       return data;
     } catch (err) {
@@ -1007,29 +1025,42 @@
   function refresh({ force = true, notify = false } = {}) {
     const id = currentId;
     if (!id || els.batchConfirm.open) return;
-    if (refreshRuns.has(id)) return refreshRuns.get(id);
+    if (refreshRuns.has(id)) {
+      if (force) showToast('正在查询云端，请稍候…', 'info', 1500);
+      return refreshRuns.get(id);
+    }
     if (force && busyCount) return;
     if (force) setBusy(true);
     setCloudStatus('loading', lastRows ? '正在查询云端 · 显示上次结果' : '正在查询云端…');
+    const controller = new AbortController();
+    const timeoutTimer = setTimeout(() => controller.abort(), 45000);
     const run = (async () => {
       try {
-        const resp = await fetch(api(force ? '/refresh' : '/refresh?reuse=1'), { method: 'POST' });
+        const resp = await fetch(api(force ? '/refresh' : '/refresh?reuse=1', id), {
+          method: 'POST',
+          signal: controller.signal
+        });
         const data = await resp.json();
-        if (id !== currentId) return;
-        if (resp.status === 401) { showAuthorizationRequired(); return; }
-        if (!resp.ok) { showRefreshFailure(data.error || resp.status); return; }
+        if (id !== currentId) return data;
+        if (resp.status === 401) { showAuthorizationRequired(); return data; }
+        if (!resp.ok) { showRefreshFailure(data.error || resp.status); return data; }
         els.authBanner.classList.add('hidden');
         setCloudStatus('checking', '正在核对配置表内容…');
         render(data);
         const verified = await verifyUpdates(data, { force });
-        if (id !== currentId) return;
+        if (id !== currentId) return verified || data;
         const rows = verified || data;
         markRefreshed(rows, notify, resp.headers.get('X-CSM-Checked-At'));
         render(rows);
         refreshProjectBadges();
+        return rows;
       } catch (err) {
-        if (id === currentId) showRefreshFailure(err.message);
+        if (id === currentId) {
+          const isTimeout = err.name === 'AbortError';
+          showRefreshFailure(isTimeout ? '查询云端超时，请检查网络或重试' : err.message);
+        }
       } finally {
+        clearTimeout(timeoutTimer);
         refreshRuns.delete(id);
         if (force) setBusy(false);
       }
@@ -1310,10 +1341,11 @@
     }
   }
 
-  const downloadVersion = row => ({
+  const downloadVersion = (row, options = {}) => ({
     spreadsheetId: row.spreadsheetId,
     cloudModifiedTime: row.cloudModifiedTime,
-    localVersion: row.localVersion
+    localVersion: row.localVersion,
+    reviewed: options.reviewed ?? (row.reviewed || (row.direction === 'review' ? true : undefined))
   });
 
   let batchPreview = null;
@@ -1327,7 +1359,7 @@
     const batch = SyncBatch.create(project.name, rows.map(row => ({
       path: row.path,
       name: row.name,
-      version: downloadVersion(row)
+      version: downloadVersion(row, { reviewed: row.reviewed || (row.direction === 'review') })
     })));
     batch.exportAction = action;
     batch.action = action ? { label: action.label, status: 'waiting' } : { label: '导出', status: 'disabled' };
@@ -1561,8 +1593,8 @@
     return refresh({ force: false, notify: true });
   }
 
-  // 「有更新 / 冲突 / 本地变更」的表：修改时间或文件字节变了不代表内容变了，导出云端与本地比较，内容一致的自动记为已同步
-  const VERIFY_STATUSES = new Set(['updated', 'conflict', 'local_changed']);
+  // 「有更新 / 冲突 / 本地变更 / 需核对」的表：修改时间或文件字节变了不代表内容变了，导出云端与本地比较，内容一致的自动记为已同步
+  const VERIFY_STATUSES = new Set(['updated', 'conflict', 'local_changed', 'never_synced']);
   async function verifyUpdates(rows, { force = false } = {}) {
     const id = currentId;
     const paths = (rows || []).filter(r => VERIFY_STATUSES.has(r.status) && (force || !r.changeSummary)).map(r => r.path);
@@ -1579,12 +1611,15 @@
     const byPath = new Map((rows || []).map(row => [row.path, row]));
     paths.forEach(path => verifyFailures.delete(path));
     render();
+    const controller = new AbortController();
+    const timeoutTimer = setTimeout(() => controller.abort(), 60000);
     run.promise = (async () => {
       try {
-        const resp = await fetch(api('/verify'), {
+        const resp = await fetch(api('/verify', id), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ paths, force })
+          body: JSON.stringify({ paths, force }),
+          signal: controller.signal
         });
         const data = await resp.json().catch(() => ({}));
         if (id !== currentId) return rows;
@@ -1594,7 +1629,9 @@
         if (same.length) {
           const nameOf = r => (byPath.get(r.path) || {}).name || r.path;
           const localOnly = same.filter(r => r.previousStatus === 'local_changed');
-          const cloud = same.filter(r => r.previousStatus !== 'local_changed');
+          const neverSynced = same.filter(r => r.previousStatus === 'never_synced');
+          const cloud = same.filter(r => r.previousStatus !== 'local_changed' && r.previousStatus !== 'never_synced');
+          if (neverSynced.length) appendLog(`✓ 内容核对：${neverSynced.length} 张表此前无同步记录但内容与云端一致，已自动标为已同步：${neverSynced.map(nameOf).join('、')}\n`);
           if (cloud.length) appendLog(`✓ 内容核对：${cloud.length} 张表云端只是修改时间变了，内容与本地一致，已标为已同步：${cloud.map(nameOf).join('、')}\n`);
           if (localOnly.length) appendLog(`✓ 内容核对：${localOnly.length} 张表本地文件被重新保存过但内容与云端一致，已标为已同步：${localOnly.map(nameOf).join('、')}\n`);
           refreshProjectBadges();
@@ -1615,6 +1652,7 @@
         }
         return rows;
       } finally {
+        clearTimeout(timeoutTimer);
         verifyRuns.delete(id);
       }
     })();

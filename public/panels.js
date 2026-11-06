@@ -194,7 +194,7 @@
     const summary = el('div', 'dm-summary');
     if (diff.identical) {
       summary.appendChild(el('span', 'diff-same', '✓ 两边内容完全一致（只是修改时间不同）。'));
-      if (!needsDirectionChoice(mode) && data.local.exists) summary.append(' 可用底部的下载操作把状态记为已同步。');
+      if ((!needsDirectionChoice(mode) || diff.identical) && data.local.exists) summary.append(' 可用底部的下载操作把状态记为已同步。');
     } else {
       const t = { add: 0, del: 0, mod: 0 };
       let changed = 0;
@@ -698,7 +698,9 @@
     const reviewedDownload = data?.downloadVersion?.reviewed === true;
     const choiceReason = mode === 'review' ? '没有同步基准' : '两边都改过';
     const choicePrompt = allowUpload ? '请选择保留哪一侧' : '请核对内容后确认下载';
-    d.direction.textContent = choice ? `${choiceReason}，${choicePrompt}。` : '选择同步方向';
+    d.direction.textContent = data?.diff?.identical
+      ? '两边内容完全一致，请点击「云端 → 覆盖本地」记录同步状态。'
+      : (choice ? `${choiceReason}，${choicePrompt}。` : '选择同步方向');
     d.dl.textContent = createLocal ? '云端 → 创建本地文件' : '云端 → 覆盖本地';
     d.dlHint.textContent = createLocal ? '当前没有本地文件' : '覆盖前自动备份，可在列表的「本地备份」恢复';
     d.dl.disabled = !!busy || !!stale || !reviewedDownload;
@@ -707,7 +709,7 @@
     d.ulAction.classList.toggle('hidden', !allowUpload);
     d.refresh.classList.toggle('hidden', !stale && !(data && !reviewedDownload));
     const incoming = data ? incomingSide() : null;
-    d.dl.classList.toggle('diff-primary', !!data && !choice && (incoming === 'cloud' || data.diff.identical));
+    d.dl.classList.toggle('diff-primary', !!data && (!choice || data.diff.identical) && (incoming === 'cloud' || data.diff.identical));
     d.ul.classList.toggle('diff-primary', !!data && !choice && incoming === 'local' && !data.diff.identical);
     d.close.disabled = d.cancel.disabled = !!busy;
     for (const b of [d.swap, d.prev, d.next, d.onlyCols, d.allRows]) if (!data) b.disabled = true; else if (b !== d.prev && b !== d.next) b.disabled = false;
@@ -715,7 +717,7 @@
   }
 
   function confirmOverwrite(st, button, hint) {
-    if (!needsDirectionChoice(st.mode) || (st.mode === 'conflict' && st.data.diff.identical)) return true;
+    if (!needsDirectionChoice(st.mode) || ((st.mode === 'conflict' || st.mode === 'review') && st.data.diff.identical)) return true;
     return confirm(`${button.textContent}？\n\n${st.path}\n\n${hint.textContent}。`);
   }
 
