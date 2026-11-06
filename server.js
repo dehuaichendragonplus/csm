@@ -14,6 +14,16 @@ const backups = require('./lib/backups');
 const { appendHistory, readHistory } = require('./lib/history');
 const { readWorkbook } = require('./lib/xlsx-reader');
 const { diffWorkbooks, summarizeDiff, findRecords } = require('./lib/xlsx-diff');
+const {
+  getMemoryWorkbook,
+  setMemoryWorkbook,
+  localMemoryKey,
+  cloudMemoryKey,
+  getCachedExportPath,
+  saveExportToCache,
+  singleFlightExport,
+  pruneOldExports
+} = require('./lib/cloud-export-cache');
 const updateCheck = require('./lib/update-check');
 const PKG = require('./package.json');
 const localTables = require('./lib/local-tables');
@@ -28,6 +38,7 @@ const { loadProjects, addProject, removeProject, renameProject, findProject } = 
 const { listDirs } = require('./lib/fs-browser');
 const { pickFolder } = require('./lib/native-picker');
 const { sseSetup, sseEmit } = require('./lib/sse');
+const bookmarksLib = require('./lib/bookmarks');
 const { runSteps } = require('./lib/gen-client-runner');
 const { loadSidecar, updateSidecar } = require('./lib/version-sidecar');
 
@@ -82,6 +93,7 @@ async function main(opts = {}) {
   const DATA_DIR = opts.dataDir ? path.resolve(opts.dataDir) : defaultDataDir();
   const REGISTRY_PATH = path.join(DATA_DIR, 'projects.json');
   const TOKEN_PATH = path.join(DATA_DIR, '.tokens/token.json');
+  const BOOKMARKS_PATH = path.join(DATA_DIR, 'bookmarks.json');
   const CREDENTIALS_PATH = opts.credentialsPath || path.join(ROOT, 'credentials.json');
   const openBrowser = opts.openBrowser !== undefined ? opts.openBrowser : !(process.env.CSM_NO_OPEN || process.env.SYNC_MANAGER_NO_OPEN);
   const pickFolderImpl = opts.pickFolder || pickFolder;
@@ -112,6 +124,8 @@ async function main(opts = {}) {
   const historyPathOf = id => path.join(DATA_DIR, 'projects', id, 'history.jsonl');
   const driveCachePathOf = id => path.join(DATA_DIR, 'projects', id, 'drive-cache.json');
   const verifyCachePathOf = id => path.join(DATA_DIR, 'projects', id, 'verify-cache.json');
+  const exportCacheDir = path.join(DATA_DIR, 'cache', 'cloud-exports');
+  pruneOldExports(exportCacheDir);
   // 内存里的云端时间是不是本次运行实际查询过的（false = 从磁盘读的上次结果，界面会在后台补刷）
   const driveCacheFresh = new Map(); // projectId -> boolean
   const driveCacheFetchedAt = new Map(); // projectId -> ISO 时间
@@ -387,6 +401,52 @@ async function main(opts = {}) {
     res.json({ ok: true });
   });
 
+  // ---------- 本地在线文档收藏管理 ----------
+  app.get('/api/bookmarks', (req, res) => {
+    try {
+      const projectId = req.query.projectId || null;
+      const result = bookmarksLib.getBookmarks(BOOKMARKS_PATH, projectId);
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/bookmarks', (req, res) => {
+    try {
+      const valid = bookmarksLib.validateBookmarkInput(req.body);
+      if (!valid.valid) {
+        return res.status(400).json({ error: valid.error });
+      }
+      const bookmark = bookmarksLib.addBookmark(BOOKMARKS_PATH, req.body);
+      res.status(201).json({ bookmark });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.put('/api/bookmarks/:id', (req, res) => {
+    try {
+      if (!req.body || typeof req.body !== 'object') {
+        return res.status(400).json({ error: '请求数据无效' });
+      }
+      const updated = bookmarksLib.updateBookmark(BOOKMARKS_PATH, req.params.id, req.body);
+      if (!updated) return res.status(404).json({ error: '未找到指定文档收藏' });
+      res.json({ bookmark: updated });
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.delete('/api/bookmarks/:id', (req, res) => {
+    try {
+      const ok = bookmarksLib.deleteBookmark(BOOKMARKS_PATH, req.params.id);
+      res.json({ ok });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ---------- 所有项目状态汇总（用于 Tab 角标与 Dock Badge） ----------
   function computeProjectSummary(id) {
     const ctx = getCtx(id);
@@ -581,10 +641,31 @@ async function main(opts = {}) {
         if (row.localExists && !localHash) throw new Error('无法读取本地表格');
         // 暂存文件与目标在同一目录，替换时可原子重命名。
         tmp = `${entry.savePath}.csm-${randomUUID()}.tmp`;
-        await exportCloud(cfg, entry, tmp, options);
-        const cloud = readWorkbook(tmp);
+        const exportOptions = { exportUrl: cfg.exportUrl, mergeCells: !!entry.mergeCells };
+        const cachedExport = getCachedExportPath(exportCacheDir, entry.spreadsheetId, info.modifiedTime, exportOptions);
+        if (cachedExport && fs.existsSync(cachedExport)) {
+          fs.copyFileSync(cachedExport, tmp);
+        } else {
+          await exportCloud(cfg, entry, tmp, options);
+          saveExportToCache(exportCacheDir, entry.spreadsheetId, info.modifiedTime, exportOptions, tmp);
+        }
+        const cKey = cloudMemoryKey(entry.spreadsheetId, info.modifiedTime, exportOptions);
+        let cloud = getMemoryWorkbook(cKey);
+        if (!cloud) {
+          cloud = readWorkbook(tmp);
+          setMemoryWorkbook(cKey, cloud);
+        }
         try {
-          const local = row.localExists ? readWorkbook(entry.savePath) : [];
+          let local = [];
+          if (row.localExists) {
+            const localStat = fs.statSync(entry.savePath);
+            const lKey = localMemoryKey(entry.savePath, localStat);
+            local = getMemoryWorkbook(lKey);
+            if (!local) {
+              local = readWorkbook(entry.savePath);
+              setMemoryWorkbook(lKey, local);
+            }
+          }
           summary = summarizeDiff(diffWorkbooks(local, cloud, { keys: entry.diffKeys, view: false, maxChanges: 0 }));
         } catch (err) {
           log(`  ↳ 无法生成差异摘要：${err.message}\n`);
@@ -1207,22 +1288,98 @@ async function main(opts = {}) {
       }
       return res.json({ sheets: findRecords(snapshot.local, snapshot.cloud, req.query.record, snapshot.keys) });
     }
-    fs.mkdirSync(TMP_DIR, { recursive: true });
+
+    const force = req.query.force === '1';
     const epoch = authEpoch;
-    const tmp = path.join(TMP_DIR, `diff-${req.ctx.id}-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.xlsx`);
-    try {
-      const info = await getCloudInfo(entry.spreadsheetId, oauth2Client);
-      await exportCloud(cfg, entry, tmp);
-      let localStat = null;
-      let localWb = [];
+    const exportOptions = { exportUrl: cfg.exportUrl, mergeCells: !!entry.mergeCells };
+
+    let localStat = null;
+    let localWb = [];
+    let localErr = null;
+    const readLocal = () => {
       try {
         localStat = fs.statSync(entry.savePath);
-        localWb = readWorkbook(entry.savePath);
+        const lKey = localMemoryKey(entry.savePath, localStat);
+        localWb = getMemoryWorkbook(lKey);
+        if (!localWb) {
+          localWb = readWorkbook(entry.savePath);
+          setMemoryWorkbook(lKey, localWb);
+        }
       } catch (err) {
-        if (localStat) return res.status(422).json({ error: `本地文件无法解析：${err.message}` });
+        if (localStat) localErr = err;
       }
-      if (epoch !== authEpoch) return res.status(409).json({ error: 'Google 账号已变更，请重新打开差异预览' });
-      const cloudWb = readWorkbook(tmp);
+    };
+
+    // 快速路径：若 driveCaches 中有该表信息，且对应版本的云端导出已在缓存中，直接免调网络接口
+    loadDiskDriveCache(req.ctx);
+    const cachedDriveInfo = !force && driveCaches.get(req.ctx.id)?.get(entry.spreadsheetId);
+    let info = null;
+    let cloudWb = null;
+
+    if (cachedDriveInfo?.modifiedTime) {
+      const memKey = cloudMemoryKey(entry.spreadsheetId, cachedDriveInfo.modifiedTime, exportOptions);
+      cloudWb = getMemoryWorkbook(memKey);
+      if (!cloudWb) {
+        const cachedPath = getCachedExportPath(exportCacheDir, entry.spreadsheetId, cachedDriveInfo.modifiedTime, exportOptions);
+        if (cachedPath) {
+          cloudWb = readWorkbook(cachedPath);
+          setMemoryWorkbook(memKey, cloudWb);
+        }
+      }
+      if (cloudWb) {
+        info = cachedDriveInfo;
+      }
+    }
+
+    try {
+      if (!cloudWb) {
+        // 并行拉取云端元数据与本地文件解析
+        const [infoResult] = await Promise.all([
+          getCloudInfo(entry.spreadsheetId, oauth2Client),
+          Promise.resolve().then(readLocal).catch(() => {})
+        ]);
+        info = infoResult;
+        if (epoch !== authEpoch) return res.status(409).json({ error: 'Google 账号已变更，请重新打开差异预览' });
+        if (!info || !info.modifiedTime) {
+          return res.status(502).json({ error: '无法取得云端表格信息，请检查网络或授权' });
+        }
+        driveCaches.get(req.ctx.id).set(entry.spreadsheetId, info);
+
+        const memKey = cloudMemoryKey(entry.spreadsheetId, info.modifiedTime, exportOptions);
+        if (!force) {
+          cloudWb = getMemoryWorkbook(memKey);
+          if (!cloudWb) {
+            const cachedPath = getCachedExportPath(exportCacheDir, entry.spreadsheetId, info.modifiedTime, exportOptions);
+            if (cachedPath) {
+              cloudWb = readWorkbook(cachedPath);
+              setMemoryWorkbook(memKey, cloudWb);
+            }
+          }
+        }
+
+        if (!cloudWb) {
+          const cachedPath = await singleFlightExport(memKey, async () => {
+            fs.mkdirSync(TMP_DIR, { recursive: true });
+            const tmp = path.join(TMP_DIR, `diff-${req.ctx.id}-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.xlsx`);
+            try {
+              await exportCloud(cfg, entry, tmp);
+              return saveExportToCache(exportCacheDir, entry.spreadsheetId, info.modifiedTime, exportOptions, tmp);
+            } finally {
+              fs.rmSync(tmp, { force: true });
+            }
+          });
+          if (cachedPath) {
+            cloudWb = readWorkbook(cachedPath);
+            setMemoryWorkbook(memKey, cloudWb);
+          }
+        }
+      } else {
+        readLocal();
+      }
+
+      if (localErr) return res.status(422).json({ error: `本地文件无法解析：${localErr.message}` });
+      if (!cloudWb) return res.status(500).json({ error: '云端表格导出失败' });
+
       const snapshot = randomUUID();
       diffSnapshots.set(snapshot, { id: req.ctx.id, path: entry.path, local: localWb, cloud: cloudWb, keys: entry.diffKeys });
       if (diffSnapshots.size > 2) diffSnapshots.delete(diffSnapshots.keys().next().value);
@@ -1242,8 +1399,6 @@ async function main(opts = {}) {
       });
     } catch (err) {
       res.status(500).json({ error: err.message });
-    } finally {
-      fs.rmSync(tmp, { force: true });
     }
   });
 
@@ -1262,8 +1417,28 @@ async function main(opts = {}) {
     fs.mkdirSync(TMP_DIR, { recursive: true });
     const tmp = path.join(TMP_DIR, `verify-${ctx.id}-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.xlsx`);
     try {
-      await exportCloud(ctx.cfg, entry, tmp);
-      const diff = diffWorkbooks(readWorkbook(entry.savePath), readWorkbook(tmp), { keys: entry.diffKeys, maxChanges: 0, view: false });
+      const exportOptions = { exportUrl: ctx.cfg.exportUrl, mergeCells: !!entry.mergeCells };
+      const cachedExport = !force && getCachedExportPath(exportCacheDir, entry.spreadsheetId, row.cloudModifiedTime, exportOptions);
+      if (cachedExport && fs.existsSync(cachedExport)) {
+        fs.copyFileSync(cachedExport, tmp);
+      } else {
+        await exportCloud(ctx.cfg, entry, tmp);
+        saveExportToCache(exportCacheDir, entry.spreadsheetId, row.cloudModifiedTime, exportOptions, tmp);
+      }
+      const cKey = cloudMemoryKey(entry.spreadsheetId, row.cloudModifiedTime, exportOptions);
+      let cloud = getMemoryWorkbook(cKey);
+      if (!cloud) {
+        cloud = readWorkbook(tmp);
+        setMemoryWorkbook(cKey, cloud);
+      }
+      const localStat = fs.statSync(entry.savePath);
+      const lKey = localMemoryKey(entry.savePath, localStat);
+      let local = getMemoryWorkbook(lKey);
+      if (!local) {
+        local = readWorkbook(entry.savePath);
+        setMemoryWorkbook(lKey, local);
+      }
+      const diff = diffWorkbooks(local, cloud, { keys: entry.diffKeys, maxChanges: 0, view: false });
       // 核对期间本地被改过时，等下次刷新重新比较。
       if (epoch !== authEpoch || verifyCacheOf(ctx.id) !== cache || hashFile(entry.savePath) !== localHash) {
         return { path: entry.path, identical: false, changed: true };

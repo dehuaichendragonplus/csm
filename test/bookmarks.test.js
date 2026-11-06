@@ -87,3 +87,62 @@ test('bookmarks: 损毁 JSON 安全降级', () => {
   const res = getBookmarks(file);
   assert.deepStrictEqual(res.bookmarks, []);
 });
+
+test('bookmarks API: GET, POST, PUT, DELETE 完整生命周期', async () => {
+  const { main } = require('../server');
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'csm-api-bm-'));
+  const { port, server } = await main({
+    dataDir,
+    openBrowser: false
+  });
+  const baseUrl = `http://localhost:${port}`;
+
+  try {
+    // 1. GET 初始为空
+    let res = await fetch(`${baseUrl}/api/bookmarks?projectId=test-p`);
+    let data = await res.json();
+    assert.strictEqual(data.bookmarks.length, 0);
+
+    // 2. POST 添加项目文档
+    res = await fetch(`${baseUrl}/api/bookmarks`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: '钉钉文档',
+        url: 'https://alidocs.dingtalk.com/spreadsheetv2/Qvmjm92wFWkJQ3DD/edit',
+        scope: 'project',
+        projectId: 'test-p',
+        description: '钉钉测试表'
+      })
+    });
+    assert.strictEqual(res.status, 201);
+    const created = await res.json();
+    assert.ok(created.bookmark && created.bookmark.id);
+
+    // 3. GET 带 projectId 查出
+    res = await fetch(`${baseUrl}/api/bookmarks?projectId=test-p`);
+    data = await res.json();
+    assert.strictEqual(data.bookmarks.length, 1);
+    assert.strictEqual(data.projectCount, 1);
+
+    // 4. PUT 更新
+    res = await fetch(`${baseUrl}/api/bookmarks/${created.bookmark.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: '钉钉文档已更新' })
+    });
+    assert.strictEqual(res.status, 200);
+    const updated = await res.json();
+    assert.strictEqual(updated.bookmark.title, '钉钉文档已更新');
+
+    // 5. DELETE 删除
+    res = await fetch(`${baseUrl}/api/bookmarks/${created.bookmark.id}`, { method: 'DELETE' });
+    assert.strictEqual(res.status, 200);
+    res = await fetch(`${baseUrl}/api/bookmarks?projectId=test-p`);
+    data = await res.json();
+    assert.strictEqual(data.bookmarks.length, 0);
+  } finally {
+    await new Promise(r => server.close(r));
+  }
+});
+
