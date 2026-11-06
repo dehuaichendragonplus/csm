@@ -1032,7 +1032,7 @@
   const lsSet = (k, v) => { try { if (v == null || v === '') localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (_) {} };
 
   function renderAfterDownloadPref() {
-    const actions = appConfig.actions || [];
+    const actions = (appConfig.actions || []).filter(a => !a.hidden && a.id !== 'gen-localization');
     els.prefAfterWrap.classList.toggle('hidden', actions.length === 0);
     els.prefAfterDownload.innerHTML = '<option value="">不执行</option>';
     actions.forEach(a => {
@@ -1194,7 +1194,7 @@
       else appendLog(`! 项目配置错误: ${data.error}\n`);
     } catch (_) { /* 用默认值 */ }
     els.customActions.innerHTML = '';
-    (appConfig.actions || []).forEach(action => {
+    (appConfig.actions || []).filter(a => !a.hidden && a.id !== 'gen-localization').forEach(action => {
       const b = document.createElement('button');
       b.type = 'button';
       b.innerHTML = `${window.CSMIcons ? window.CSMIcons.terminal : ''} <span>${action.label}</span>`;
