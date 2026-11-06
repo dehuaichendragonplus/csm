@@ -39,6 +39,7 @@ const { listDirs } = require('./lib/fs-browser');
 const { pickFolder } = require('./lib/native-picker');
 const { sseSetup, sseEmit } = require('./lib/sse');
 const bookmarksLib = require('./lib/bookmarks');
+const faviconsLib = require('./lib/favicons');
 const { runSteps } = require('./lib/gen-client-runner');
 const { loadSidecar, updateSidecar } = require('./lib/version-sidecar');
 
@@ -126,6 +127,7 @@ async function main(opts = {}) {
   const verifyCachePathOf = id => path.join(DATA_DIR, 'projects', id, 'verify-cache.json');
   const exportCacheDir = path.join(DATA_DIR, 'cache', 'cloud-exports');
   pruneOldExports(exportCacheDir);
+  const faviconCacheDir = path.join(DATA_DIR, 'cache', 'favicons');
   // 内存里的云端时间是不是本次运行实际查询过的（false = 从磁盘读的上次结果，界面会在后台补刷）
   const driveCacheFresh = new Map(); // projectId -> boolean
   const driveCacheFetchedAt = new Map(); // projectId -> ISO 时间
@@ -444,6 +446,25 @@ async function main(opts = {}) {
       res.json({ ok });
     } catch (err) {
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ---------- 网站 Favicon 图标获取与缓存代理 ----------
+  app.get('/api/favicon', async (req, res) => {
+    const rawUrl = req.query.url;
+    const title = req.query.title || '';
+    if (!rawUrl || typeof rawUrl !== 'string') {
+      res.setHeader('Content-Type', 'image/svg+xml');
+      return res.send(faviconsLib.getFallbackSvg('', title));
+    }
+    try {
+      const result = await faviconsLib.getFavicon(rawUrl, faviconCacheDir, title);
+      res.setHeader('Content-Type', result.contentType || 'image/x-icon');
+      res.setHeader('Cache-Control', 'public, max-age=604800'); // 7 天客户端强缓存
+      res.send(result.buffer);
+    } catch (_) {
+      res.setHeader('Content-Type', 'image/svg+xml');
+      res.send(faviconsLib.getFallbackSvg(rawUrl, title));
     }
   });
 

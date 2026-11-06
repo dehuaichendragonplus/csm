@@ -84,19 +84,32 @@
       .replace(/'/g, '&#039;');
   }
 
-  function detectPlatform(url) {
-    if (!url) return { icon: '🌐', name: 'Web 链接', tagClass: 'tag-web' };
+  function detectPlatform(url, title = '') {
+    if (!url) return { icon: '🌐', name: 'Web 链接', tagClass: 'tag-web', chipClass: 'chip-web', tipText: '在线网页链接 · 格式有效' };
     const u = url.toLowerCase();
-    if (u.includes('alidocs.dingtalk.com') || u.includes('dingtalk.com')) {
-      return { icon: '📑', name: '钉钉文档', tagClass: 'tag-ding' };
+    const t = (title || '').toLowerCase();
+    if (u.includes('jira') || t.includes('jira')) {
+      return { icon: '🔷', name: 'Jira', tagClass: 'tag-jira', chipClass: 'chip-jira', tipText: '🔷 Jira 项目协同 · 已智能识别' };
     }
-    if (u.includes('docs.google.com') || u.includes('sheets.google.com') || u.includes('drive.google.com')) {
-      return { icon: '📊', name: 'Google Sheets', tagClass: 'tag-google' };
+    if (u.includes('jenkins') || u.includes('jinkens') || t.includes('jenkins') || t.includes('jinkens')) {
+      return { icon: '🤵', name: 'Jenkins', tagClass: 'tag-jenkins', chipClass: 'chip-jenkins', tipText: '🔴 Jenkins 流水线 · 已智能识别' };
     }
-    if (u.includes('feishu.cn') || u.includes('larksuite.com')) {
-      return { icon: '🪶', name: '飞书文档', tagClass: 'tag-feishu' };
+    if (u.includes('alidocs.dingtalk.com') || u.includes('dingtalk.com') || t.includes('钉钉')) {
+      return { icon: '📑', name: '钉钉文档', tagClass: 'tag-ding', chipClass: 'chip-ding', tipText: '📑 钉钉在线文档 / 多维表格 · 已智能识别' };
     }
-    return { icon: '🌐', name: '在线链接', tagClass: 'tag-web' };
+    if (u.includes('docs.google.com') || u.includes('sheets.google.com') || u.includes('drive.google.com') || t.includes('google')) {
+      return { icon: '📊', name: 'Google Sheets', tagClass: 'tag-google', chipClass: 'chip-google', tipText: '📊 Google Sheets 表格 · 已智能识别' };
+    }
+    if (u.includes('feishu.cn') || u.includes('larksuite.com') || t.includes('飞书')) {
+      return { icon: '🪶', name: '飞书文档', tagClass: 'tag-feishu', chipClass: 'chip-feishu', tipText: '🪶 飞书文档 · 已智能识别' };
+    }
+    if (u.includes('github.com')) {
+      return { icon: '🐙', name: 'GitHub', tagClass: 'tag-github', chipClass: 'chip-github', tipText: '🐙 GitHub 仓库 · 已智能识别' };
+    }
+    if (u.includes('gitlab')) {
+      return { icon: '🦊', name: 'GitLab', tagClass: 'tag-gitlab', chipClass: 'chip-gitlab', tipText: '🦊 GitLab 项目 · 已智能识别' };
+    }
+    return { icon: '🌐', name: '在线链接', tagClass: 'tag-web', chipClass: 'chip-web', tipText: '🌐 在线网页链接 · 格式有效' };
   }
 
   function openSafeUrl(url) {
@@ -297,10 +310,13 @@
   }
 
   function renderDropdownItemHtml(b, plat) {
+    const favUrl = `/api/favicon?url=${encodeURIComponent(b.url)}&title=${encodeURIComponent(b.title || '')}`;
     return `
       <div class="bm-item" data-url="${escapeHtml(b.url)}" title="${escapeHtml(b.title + (b.description ? ' - ' + b.description : ''))}">
         <div class="bm-item-left">
-          <span class="bm-item-icon">${plat.icon}</span>
+          <span class="bm-item-icon">
+            <img class="bm-favicon" src="${escapeHtml(favUrl)}" alt="" loading="lazy" />
+          </span>
           <div class="bm-item-info">
             <div class="bm-item-title">${escapeHtml(b.title)}</div>
             ${b.description ? `<div class="bm-item-desc">${escapeHtml(b.description)}</div>` : ''}
@@ -388,7 +404,9 @@
       rowsHtml += `
         <tr data-id="${escapeHtml(b.id)}">
           <td style="text-align: center;">
-            <span class="doc-platform-badge" title="${escapeHtml(plat.name)}">${plat.icon}</span>
+            <span class="doc-platform-badge" title="${escapeHtml(plat.name)}">
+              <img class="bm-table-favicon" src="/api/favicon?url=${encodeURIComponent(b.url)}&title=${encodeURIComponent(b.title || '')}" alt="" loading="lazy" />
+            </span>
           </td>
           <td>
             <div class="doc-name-cell">
@@ -500,21 +518,11 @@
       el.urlDetectChip.classList.remove('hidden');
       return;
     }
-    const plat = detectPlatform(val);
-    let chipClass = 'chip-web';
-    let tipText = '🌐 在线网页链接 · 格式有效';
-    if (plat.name === '钉钉文档') {
-      chipClass = 'chip-ding';
-      tipText = '📑 钉钉在线文档 / 多维表格 · 已智能识别';
-    } else if (plat.name === 'Google Sheets') {
-      chipClass = 'chip-google';
-      tipText = '📊 Google Sheets 表格 · 已智能识别';
-    } else if (plat.name === '飞书文档') {
-      chipClass = 'chip-feishu';
-      tipText = '🪶 飞书文档 · 已智能识别';
-    }
-    el.urlDetectChip.className = `doc-url-detect-chip ${chipClass}`;
-    el.urlDetectChip.textContent = tipText;
+    const titleVal = el.inputTitle ? el.inputTitle.value : '';
+    const plat = detectPlatform(val, titleVal);
+    const favUrl = `/api/favicon?url=${encodeURIComponent(val)}&title=${encodeURIComponent(titleVal)}`;
+    el.urlDetectChip.className = `doc-url-detect-chip ${plat.chipClass}`;
+    el.urlDetectChip.innerHTML = `<img src="${escapeHtml(favUrl)}" class="chip-favicon" alt="" /> <span>${escapeHtml(plat.tipText)}</span>`;
     el.urlDetectChip.classList.remove('hidden');
   }
 
@@ -739,6 +747,9 @@
     // 实时链接识别
     if (el.inputUrl) {
       el.inputUrl.addEventListener('input', updateUrlDetection);
+    }
+    if (el.inputTitle) {
+      el.inputTitle.addEventListener('input', updateUrlDetection);
     }
 
     // 适用范围卡片切换
