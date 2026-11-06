@@ -75,15 +75,24 @@
     });
   }
 
-  function showPlaceholder(text) {
+  let diffLoadingTimer = null;
+  function showPlaceholder(text, { withSpinner = false } = {}) {
+    if (diffLoadingTimer) { clearInterval(diffLoadingTimer); diffLoadingTimer = null; }
     d.tree.innerHTML = '';
     d.ruler.innerHTML = '';
     d.pos.textContent = '';
     d.view.innerHTML = '';
-    d.view.appendChild(el('div', 'diff-loading', text));
+    const box = el('div', 'diff-loading');
+    if (withSpinner) {
+      box.appendChild(el('div', 'diff-spinner'));
+    }
+    const txt = el('div', 'diff-loading-text', text);
+    box.appendChild(txt);
+    d.view.appendChild(box);
+    return txt;
   }
 
-  async function loadDiff() {
+  async function loadDiff({ force = false } = {}) {
     const st = diffState;
     const token = Symbol('diff');
     st.token = token;
@@ -95,12 +104,26 @@
     d.findStatus.textContent = '';
     d.findClear.classList.add('hidden');
     d.meta.textContent = '';
-    showPlaceholder('正在从云端导出并逐单元格比较…（大表需要几秒）');
+    const txtNode = showPlaceholder('正在比较表格差异…', { withSpinner: true });
+    const startTime = Date.now();
+    diffLoadingTimer = setInterval(() => {
+      if (diffState !== st || st.token !== token) {
+        clearInterval(diffLoadingTimer);
+        diffLoadingTimer = null;
+        return;
+      }
+      const sec = Math.floor((Date.now() - startTime) / 1000);
+      if (sec >= 1) {
+        txtNode.textContent = `正在从云端导出并逐单元格比较…（已用时 ${sec} 秒，首次比较大表需拉取）`;
+      }
+    }, 1000);
     setMsg(d.msg, '');
     updateButtons();
     try {
-      const resp = await fetch(CSM().api(`/diff?path=${encodeURIComponent(st.path)}`));
+      const url = CSM().api(`/diff?path=${encodeURIComponent(st.path)}${force ? '&force=1' : ''}`);
+      const resp = await fetch(url);
       const data = await resp.json().catch(() => ({}));
+      if (diffLoadingTimer) { clearInterval(diffLoadingTimer); diffLoadingTimer = null; }
       if (diffState !== st || st.token !== token) return;
       if (!resp.ok) { showPlaceholder(resp.status === 401 ? '需要先完成 Google 授权' : `比较失败：${data.error || resp.status}`); return; }
       st.mode = resolveDiffMode(st.path, st.mode);
@@ -117,6 +140,7 @@
         setMsg(d.msg, '未取得可校验的下载版本，请重新比较。', 'error');
       }
     } catch (err) {
+      if (diffLoadingTimer) { clearInterval(diffLoadingTimer); diffLoadingTimer = null; }
       if (diffState === st) {
         st.data = null;
         showPlaceholder(`比较失败：${err.message}`);
@@ -739,7 +763,7 @@
       const who = r.data.cloudModifiedBy ? `「${r.data.cloudModifiedBy}」` : '其他人';
       setMsg(d.msg, `云端在 ${fmt(r.data.cloudModifiedTime)} 被${who}修改过（晚于这次差异预览），已取消上传`, 'error');
       if (confirm(`你查看差异之后，云端又被${who}修改了（${fmt(r.data.cloudModifiedTime)}）。\n\n直接上传会覆盖这次修改，已取消上传。\n现在重新比较差异吗？`)) {
-        await loadDiff();
+        await loadDiff({ force: true });
         return;
       }
     } else {
@@ -755,7 +779,7 @@
   d.ul.addEventListener('click', doUpload);
   d.refresh.addEventListener('click', () => {
     d.close.focus();
-    loadDiff();
+    loadDiff({ force: true });
   });
 
   // ======================= 本地备份 =======================
