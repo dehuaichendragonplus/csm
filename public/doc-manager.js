@@ -230,6 +230,9 @@
   }
 
   // ---------- 渲染顶部 Row 1 快捷下拉菜单 ----------
+  let lastActiveProjectId = null;
+  const expandedGroupKeys = new Set();
+
   function renderDropdown() {
     if (!el.dropdownList) return;
 
@@ -244,58 +247,148 @@
     }
 
     const currentProjId = getCurrentProjectId();
-    const globalDocs = bookmarks.filter(b => b.scope === 'global');
-    const projectDocs = bookmarks.filter(b => b.scope === 'project');
 
-    let html = '';
-
-    // 1. 全局通用文档分组
-    if (globalDocs.length > 0) {
-      html += `<div class="bm-section-title">🌐 全局通用文档 (${globalDocs.length})</div>`;
-      for (const b of globalDocs) {
-        const plat = detectPlatform(b.url);
-        html += renderDropdownItemHtml(b, plat);
+    // 当项目切换时，重置展开状态：全局组与当前项目组默认展开，其余各组默认收起
+    if (currentProjId !== lastActiveProjectId) {
+      expandedGroupKeys.clear();
+      expandedGroupKeys.add('global');
+      if (currentProjId) {
+        expandedGroupKeys.add(`proj_${currentProjId}`);
+      }
+      lastActiveProjectId = currentProjId;
+    } else {
+      // 首次加载兜底：确保默认组至少有初始状态
+      if (!expandedGroupKeys.has('global') && expandedGroupKeys.size === 0) {
+        expandedGroupKeys.add('global');
+        if (currentProjId) {
+          expandedGroupKeys.add(`proj_${currentProjId}`);
+        }
       }
     }
 
-    // 2. 当前打开项目的专属文档（优先置顶展示）
+    const globalDocs = bookmarks.filter(b => b.scope === 'global');
+    const projectDocs = bookmarks.filter(b => b.scope === 'project');
+
+    // 组织分组：
+    // 规则：默认展开的组排在最前面（全局组第一，当前项目组第二），随后是其余各项目组（默认收起）
+    const groups = [];
+
+    // 1. 全局通用文档分组（默认展开，排在前面）
+    if (globalDocs.length > 0) {
+      groups.push({
+        key: 'global',
+        title: '全局通用文档',
+        icon: '🌐',
+        badge: globalDocs.length,
+        docs: globalDocs,
+        isDefaultOpen: true
+      });
+    }
+
+    // 2. 当前打开项目的专属文档（默认展开，排在前面）
     if (currentProjId) {
       const curProjDocs = projectDocs.filter(b => b.projectId === currentProjId);
       if (curProjDocs.length > 0) {
         const projName = getProjectNameById(currentProjId);
-        html += `<div class="bm-section-title">📌 当前项目: ${escapeHtml(projName)} (${curProjDocs.length})</div>`;
-        for (const b of curProjDocs) {
-          const plat = detectPlatform(b.url);
-          html += renderDropdownItemHtml(b, plat);
-        }
+        groups.push({
+          key: `proj_${currentProjId}`,
+          title: `当前项目: ${projName}`,
+          icon: '📌',
+          badge: curProjDocs.length,
+          docs: curProjDocs,
+          isDefaultOpen: true
+        });
       }
     }
 
-    // 3. 其余项目的专属文档（按项目分组）
+    // 3. 其余项目的专属文档（默认收起，排在后面）
     const otherProjects = allProjects.filter(p => !currentProjId || p.id !== currentProjId);
     for (const proj of otherProjects) {
       const pDocs = projectDocs.filter(b => b.projectId === proj.id);
       if (pDocs.length > 0) {
-        html += `<div class="bm-section-title">📁 ${escapeHtml(proj.name)} (${pDocs.length})</div>`;
-        for (const b of pDocs) {
-          const plat = detectPlatform(b.url);
-          html += renderDropdownItemHtml(b, plat);
-        }
+        groups.push({
+          key: `proj_${proj.id}`,
+          title: proj.name,
+          icon: '📁',
+          badge: pDocs.length,
+          docs: pDocs,
+          isDefaultOpen: false
+        });
       }
     }
 
-    // 4. 未匹配到已知项目的项目文档（兜底）
+    // 4. 未匹配到已知项目的项目文档（兜底，默认收起，排在后面）
     const knownIds = new Set(allProjects.map(p => p.id));
     const orphanDocs = projectDocs.filter(b => b.projectId && !knownIds.has(b.projectId));
     if (orphanDocs.length > 0) {
-      html += `<div class="bm-section-title">📁 其他项目 (${orphanDocs.length})</div>`;
-      for (const b of orphanDocs) {
+      groups.push({
+        key: 'proj_orphan',
+        title: '其他项目',
+        icon: '📁',
+        badge: orphanDocs.length,
+        docs: orphanDocs,
+        isDefaultOpen: false
+      });
+    }
+
+    let html = '';
+    for (const g of groups) {
+      const isExpanded = expandedGroupKeys.has(g.key);
+      const collapsedClass = isExpanded ? '' : ' collapsed';
+      let itemsHtml = '';
+      for (const b of g.docs) {
         const plat = detectPlatform(b.url);
-        html += renderDropdownItemHtml(b, plat);
+        itemsHtml += renderDropdownItemHtml(b, plat);
       }
+
+      html += `
+        <div class="bm-group${collapsedClass}" data-group-key="${escapeHtml(g.key)}">
+          <div class="bm-group-header" data-group-key="${escapeHtml(g.key)}" role="button" tabindex="0" title="点击${isExpanded ? '收起' : '展开'}分组">
+            <div class="bm-group-header-left">
+              <span class="bm-group-arrow">
+                <svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="6 4 10 8 6 12"></polyline>
+                </svg>
+              </span>
+              <span class="bm-group-icon">${g.icon}</span>
+              <span class="bm-group-title">${escapeHtml(g.title)}</span>
+            </div>
+            <span class="bm-group-badge">${g.badge}</span>
+          </div>
+          <div class="bm-group-items">
+            ${itemsHtml}
+          </div>
+        </div>
+      `;
     }
 
     el.dropdownList.innerHTML = html;
+
+    // 绑定分组展开/收起点击事件
+    el.dropdownList.querySelectorAll('.bm-group-header').forEach(header => {
+      const toggle = e => {
+        e.preventDefault();
+        e.stopPropagation();
+        const groupEl = header.closest('.bm-group');
+        if (!groupEl) return;
+        const key = header.getAttribute('data-group-key');
+        const isCollapsed = groupEl.classList.toggle('collapsed');
+        if (isCollapsed) {
+          expandedGroupKeys.delete(key);
+          header.title = '点击展开分组';
+        } else {
+          expandedGroupKeys.add(key);
+          header.title = '点击收起分组';
+        }
+      };
+
+      header.addEventListener('click', toggle);
+      header.addEventListener('keydown', e => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          toggle(e);
+        }
+      });
+    });
 
     // 绑定条目跳转点击事件
     el.dropdownList.querySelectorAll('.bm-item').forEach(item => {
