@@ -88,6 +88,8 @@
     globalAuthBadge: document.getElementById('global-auth-badge'),
     globalAuthDesc: document.getElementById('global-auth-desc'),
     globalAuthScope: document.getElementById('global-auth-scope'),
+    globalBtnReauth: document.getElementById('global-btn-reauth'),
+    globalBtnLogout: document.getElementById('global-btn-logout'),
     globalSettingsVersion: document.getElementById('global-settings-version'),
     projectSettingsModal: document.getElementById('project-settings-modal'),
     projectSettingsClose: document.getElementById('project-settings-close'),
@@ -1481,13 +1483,18 @@
           els.globalAuthScope.className = 'auth-scope-badge badge-unauth';
           els.globalAuthScope.textContent = '无权限';
         }
+        if (els.globalBtnLogout) els.globalBtnLogout.classList.add('hidden');
+        if (els.globalBtnReauth) {
+          els.globalBtnReauth.textContent = '立即登录 / 授权';
+          els.globalBtnReauth.title = '授权 Google 账号以使用表格双向同步功能';
+        }
       } else {
         if (els.authBanner) els.authBanner.classList.add('hidden');
         const userText = s.account ? ` (${s.account})` : '';
         if (profile) profile.title = `Google 账号已授权${userText} · 点击打开全局偏好设置 (⌘,)`;
         if (els.globalAuthBadge) {
           els.globalAuthBadge.className = 'auth-status-badge badge-auth';
-          els.globalAuthBadge.textContent = s.account ? `● 已连接 (${s.account})` : '● 已连接 Google Drive';
+          els.globalAuthBadge.textContent = '● 已连接';
         }
         if (els.globalAuthDesc) els.globalAuthDesc.textContent = s.account ? `已授权账号：${s.account}` : '已连接 Google Drive 服务，用于双向同步表格数据';
         if (els.globalAuthScope) {
@@ -1498,6 +1505,11 @@
             els.globalAuthScope.className = 'auth-scope-badge badge-read';
             els.globalAuthScope.textContent = '只读授权（仅支持下载）';
           }
+        }
+        if (els.globalBtnLogout) els.globalBtnLogout.classList.remove('hidden');
+        if (els.globalBtnReauth) {
+          els.globalBtnReauth.textContent = '重新授权';
+          els.globalBtnReauth.title = '重新授权或切换 Google 账号';
         }
       }
     } catch (_) {}
@@ -1520,6 +1532,26 @@
   if (els.globalSettingsModal) {
     els.globalSettingsModal.addEventListener('click', e => {
       if (e.target === els.globalSettingsModal) closeGlobalSettings();
+    });
+  }
+
+  if (els.globalBtnLogout) {
+    els.globalBtnLogout.addEventListener('click', async () => {
+      const ok = window.confirm('确认退出当前 Google 账号？\n退出后将无法同步云端表格与查询更新。');
+      if (!ok) return;
+      try {
+        const resp = await fetch('/api/auth-logout', { method: 'POST' });
+        if (resp.ok) {
+          showToast('已退出 Google 账号登录', 'info');
+          await updateAuthStatusUI();
+          if (typeof loadTables === 'function') loadTables();
+        } else {
+          const err = await resp.json().catch(() => ({}));
+          showToast(`退出失败: ${err.error || resp.status}`, 'error');
+        }
+      } catch (err) {
+        showToast(`退出失败: ${err.message}`, 'error');
+      }
     });
   }
 

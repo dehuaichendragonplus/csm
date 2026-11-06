@@ -488,9 +488,10 @@
               <span>账号连接状态</span>
               <p id="global-auth-desc">用于与 Google Sheets 双向同步配置表数据</p>
             </div>
-            <div style="display:flex;align-items:center;gap:10px;">
+            <div style="display:flex;align-items:center;gap:8px;">
               <span id="global-auth-badge" class="auth-status-badge">检测中...</span>
-              <a href="/auth/start" target="_blank" id="global-btn-reauth" class="btn-text-action" title="重新授权 Google 账号">重新授权</a>
+              <a href="/auth/start" target="_blank" id="global-btn-reauth" class="btn-text-action" title="重新授权或切换 Google 账号">重新授权</a>
+              <button id="global-btn-logout" type="button" class="btn-text-action btn-logout-action hidden" title="退出当前 Google 账号登录">退出登录</button>
             </div>
           </div>
           <div class="set-row">

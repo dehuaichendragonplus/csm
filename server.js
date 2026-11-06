@@ -271,6 +271,21 @@ async function main(opts = {}) {
     });
   });
 
+  app.post('/api/auth-logout', (_req, res) => {
+    try {
+      oauth.clearToken(TOKEN_PATH);
+      const rebuilt = buildOAuthClient(port, CREDENTIALS_PATH, TOKEN_PATH);
+      oauth2Client = rebuilt.client;
+      hasToken = false;
+      currentUser = null;
+      driveCaches.clear();
+      driveCacheFresh.clear();
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get('/api/health', (_req, res) => {
     res.json({ ok: true, time: new Date().toISOString() });
   });
