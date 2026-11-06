@@ -80,10 +80,21 @@
     prefAfterWrap: document.getElementById('pref-after-wrap'),
     prefAfterDownload: document.getElementById('pref-after-download'),
     lastRefresh: document.getElementById('last-refresh'),
+    tabStripProfile: document.getElementById('tab-strip-profile'),
     btnSettings: document.getElementById('btn-settings'),
-    settingsModal: document.getElementById('settings-modal'),
-    settingsProject: document.getElementById('settings-project'),
-    settingsVersion: document.getElementById('settings-version'),
+    globalSettingsModal: document.getElementById('global-settings-modal'),
+    globalSettingsClose: document.getElementById('global-settings-close'),
+    globalSettingsDone: document.getElementById('global-settings-done'),
+    globalAuthBadge: document.getElementById('global-auth-badge'),
+    globalAuthDesc: document.getElementById('global-auth-desc'),
+    globalAuthScope: document.getElementById('global-auth-scope'),
+    globalSettingsVersion: document.getElementById('global-settings-version'),
+    projectSettingsModal: document.getElementById('project-settings-modal'),
+    projectSettingsClose: document.getElementById('project-settings-close'),
+    projectSettingsDone: document.getElementById('project-settings-done'),
+    projectSettingsName: document.getElementById('project-settings-name'),
+    projectSettingsDir: document.getElementById('project-settings-dir'),
+    projectBtnReveal: document.getElementById('project-btn-reveal'),
     consoleDrawer: document.getElementById('console-drawer'),
     consoleBar: document.getElementById('console-bar'),
     consoleIndicator: document.getElementById('console-indicator'),
@@ -1451,21 +1462,97 @@
 
   els.btnHistory.addEventListener('click', () => window.CSMPanels && window.CSMPanels.openHistory());
 
-  // ---------- 设置弹窗：本机偏好 + 当前项目的管理操作（控件本身的逻辑在上面 / filelist-manager.js） ----------
-  function openSettings() {
-    const p = projects.find(x => x.id === currentId);
-    els.settingsProject.textContent = p ? p.name : '';
-    const titleEl = document.getElementById('app-title');
-    els.settingsVersion.textContent = (titleEl && titleEl.title) ? titleEl.title : 'CSM';
-    els.settingsModal.classList.remove('hidden');
+  // ---------- 全局设置与项目设置弹窗体系 ----------
+
+  // 1. 全局授权状态展示更新
+  async function updateAuthStatusUI() {
+    try {
+      const s = await (await fetch('/api/auth-status')).json();
+      const profile = els.tabStripProfile;
+      if (!s.authorized) {
+        if (els.authBanner) els.authBanner.classList.remove('hidden');
+        if (profile) profile.title = '未授权 Google 账号 · 点击打开全局偏好设置 (⌘,)';
+        if (els.globalAuthBadge) {
+          els.globalAuthBadge.className = 'auth-status-badge badge-unauth';
+          els.globalAuthBadge.textContent = '● 未授权';
+        }
+        if (els.globalAuthDesc) els.globalAuthDesc.textContent = '尚未绑定 Google 账号，无法同步云端表格';
+        if (els.globalAuthScope) {
+          els.globalAuthScope.className = 'auth-scope-badge badge-unauth';
+          els.globalAuthScope.textContent = '无权限';
+        }
+      } else {
+        if (els.authBanner) els.authBanner.classList.add('hidden');
+        const userText = s.account ? ` (${s.account})` : '';
+        if (profile) profile.title = `Google 账号已授权${userText} · 点击打开全局偏好设置 (⌘,)`;
+        if (els.globalAuthBadge) {
+          els.globalAuthBadge.className = 'auth-status-badge badge-auth';
+          els.globalAuthBadge.textContent = s.account ? `● 已连接 (${s.account})` : '● 已连接 Google Drive';
+        }
+        if (els.globalAuthDesc) els.globalAuthDesc.textContent = s.account ? `已授权账号：${s.account}` : '已连接 Google Drive 服务，用于双向同步表格数据';
+        if (els.globalAuthScope) {
+          if (s.canUpload) {
+            els.globalAuthScope.className = 'auth-scope-badge badge-write';
+            els.globalAuthScope.textContent = '读写全量授权（支持下载与回写）';
+          } else {
+            els.globalAuthScope.className = 'auth-scope-badge badge-read';
+            els.globalAuthScope.textContent = '只读授权（仅支持下载）';
+          }
+        }
+      }
+    } catch (_) {}
   }
-  const closeSettings = () => els.settingsModal.classList.add('hidden');
-  els.btnSettings.addEventListener('click', openSettings);
-  document.getElementById('settings-close').addEventListener('click', closeSettings);
-  document.getElementById('settings-done').addEventListener('click', closeSettings);
-  els.settingsModal.addEventListener('click', e => { if (e.target === els.settingsModal) closeSettings(); });
-  // 这两个会打开别的弹窗 / 确认框：先关掉设置，避免叠在下面
-  for (const b of [document.getElementById('btn-filelist'), els.btnClearState]) b.addEventListener('click', closeSettings, true);
+
+  // 2. 全局偏好设置 (Global Settings)
+  function openGlobalSettings() {
+    updateAuthStatusUI();
+    const titleEl = document.getElementById('app-title');
+    if (els.globalSettingsVersion) {
+      els.globalSettingsVersion.textContent = (titleEl && titleEl.title) ? titleEl.title : 'CSM v1.1.3';
+    }
+    if (els.globalSettingsModal) els.globalSettingsModal.classList.remove('hidden');
+  }
+  const closeGlobalSettings = () => els.globalSettingsModal && els.globalSettingsModal.classList.add('hidden');
+
+  if (els.tabStripProfile) els.tabStripProfile.addEventListener('click', openGlobalSettings);
+  if (els.globalSettingsClose) els.globalSettingsClose.addEventListener('click', closeGlobalSettings);
+  if (els.globalSettingsDone) els.globalSettingsDone.addEventListener('click', closeGlobalSettings);
+  if (els.globalSettingsModal) {
+    els.globalSettingsModal.addEventListener('click', e => {
+      if (e.target === els.globalSettingsModal) closeGlobalSettings();
+    });
+  }
+
+  // 3. 项目设置 (Project Settings)
+  function openProjectSettings() {
+    const p = projects.find(x => x.id === currentId);
+    if (els.projectSettingsName) els.projectSettingsName.textContent = p ? p.name : '';
+    if (els.projectSettingsDir) els.projectSettingsDir.textContent = p ? p.dir : '未配置';
+    if (els.projectSettingsModal) els.projectSettingsModal.classList.remove('hidden');
+  }
+  const closeProjectSettings = () => els.projectSettingsModal && els.projectSettingsModal.classList.add('hidden');
+
+  if (els.btnSettings) els.btnSettings.addEventListener('click', openProjectSettings);
+  if (els.projectSettingsClose) els.projectSettingsClose.addEventListener('click', closeProjectSettings);
+  if (els.projectSettingsDone) els.projectSettingsDone.addEventListener('click', closeProjectSettings);
+  if (els.projectSettingsModal) {
+    els.projectSettingsModal.addEventListener('click', e => {
+      if (e.target === els.projectSettingsModal) closeProjectSettings();
+    });
+  }
+
+  if (els.projectBtnReveal) {
+    els.projectBtnReveal.addEventListener('click', () => {
+      revealLocal('').then(res => {
+        if (res) showToast('已在访达中定位项目根目录', 'info');
+      });
+    });
+  }
+
+  // 这两个会打开别的弹窗 / 确认框：先关掉项目设置，避免叠在下面
+  for (const b of [document.getElementById('btn-filelist'), els.btnClearState]) {
+    if (b) b.addEventListener('click', closeProjectSettings, true);
+  }
 
   window.CSM = {
     revealLocal,
@@ -1518,7 +1605,8 @@
 
     // 1. Esc: 优先关闭打开的弹窗或清空搜索框
     if (e.key === 'Escape') {
-      if (els.settingsModal && !els.settingsModal.classList.contains('hidden')) { closeSettings(); return; }
+      if (els.globalSettingsModal && !els.globalSettingsModal.classList.contains('hidden')) { closeGlobalSettings(); return; }
+      if (els.projectSettingsModal && !els.projectSettingsModal.classList.contains('hidden')) { closeProjectSettings(); return; }
       const modal = document.querySelector('.modal:not(.hidden)');
       if (modal) { modal.classList.add('hidden'); return; }
       if (els.search && (els.search.value || document.activeElement === els.search)) {
@@ -1545,17 +1633,24 @@
       return;
     }
 
-    // 4. ⌘, / Ctrl+,: 打开设置
+    // 4. ⌘, / Ctrl+,: 打开全局偏好设置
     if ((e.metaKey || e.ctrlKey) && e.key === ',') {
       e.preventDefault();
-      openSettings();
+      openGlobalSettings();
       return;
     }
 
-    // 5. ⌘/ 或 ?: 快捷键指南（打开设置弹窗并滚动至快捷键）
+    // 4b. ⌘; / Ctrl+;: 打开当前项目设置
+    if ((e.metaKey || e.ctrlKey) && (e.key === ';' || e.key === '；')) {
+      e.preventDefault();
+      openProjectSettings();
+      return;
+    }
+
+    // 5. ⌘/ 或 ?: 快捷键指南（打开全局设置并滚动至快捷键）
     if (((e.metaKey || e.ctrlKey) && e.key === '/') || (e.key === '?' && !typing && !anyModalOpen)) {
       e.preventDefault();
-      openSettings();
+      openGlobalSettings();
       setTimeout(() => {
         const scGroup = document.getElementById('settings-shortcuts-group');
         if (scGroup) scGroup.scrollIntoView({ behavior: 'smooth' });
@@ -1571,15 +1666,8 @@
     }
   });
 
-  // 还没有项目时也提示授权（桌面 App 不会像命令行那样启动即打开授权页）
-  fetch('/api/auth-status').then(r => r.json()).then(s => {
-    if (!s.authorized) {
-      els.authBanner.classList.remove('hidden');
-    } else {
-      const profile = document.getElementById('tab-strip-profile');
-      if (profile) profile.title = s.canUpload ? 'Google 账号已授权（支持下载与回写）' : 'Google 账号已授权（只读）';
-    }
-  }).catch(() => {});
+  // 初始化账号授权状态与全局胶囊
+  updateAuthStatusUI();
 
   loadProjects();
 })();

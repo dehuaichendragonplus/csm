@@ -258,8 +258,17 @@ async function main(opts = {}) {
     }
   });
 
-  app.get('/api/auth-status', (_req, res) => {
-    res.json({ authorized: hasToken, canUpload: hasToken && oauth.hasUploadScope(oauth.loadToken(TOKEN_PATH)) });
+  app.get('/api/auth-status', async (_req, res) => {
+    let act = null;
+    if (hasToken) {
+      try { act = await actor(); } catch (_) {}
+    }
+    res.json({
+      authorized: hasToken,
+      canUpload: hasToken && oauth.hasUploadScope(oauth.loadToken(TOKEN_PATH)),
+      account: act ? act.account : null,
+      osUser: act ? act.osUser : null
+    });
   });
 
   app.get('/api/health', (_req, res) => {
