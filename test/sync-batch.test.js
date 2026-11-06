@@ -28,3 +28,22 @@ test('连接提前结束时保留明确结果并标记待重试项，摘要列�
   assert.match(Batch.format(batch), /B.*连接中断/);
   assert.match(Batch.format(batch), /导出.*等待/);
 });
+
+test('下载范围列出筛选外选中项及自动导出动作', () => {
+  const rows = [{ path: 'A' }, { path: 'B' }, { path: 'C' }];
+  assert.deepEqual(Batch.describeScope(rows, new Set(['A', 'C']), 'Luban导出'), {
+    count: 3, outside: 1, exportText: '全部同步后自动执行「Luban导出」'
+  });
+  assert.equal(Batch.describeScope(rows, new Set(['A']), '').exportText, '本批仅下载');
+});
+
+test('版本变化的跳过项只能重新核对，不能作为普通失败重试', () => {
+  const batch = Batch.create('Game', [{ path: 'A' }, { path: 'B' }]);
+  Batch.apply(batch, ['A', 'B'], [
+    { path: 'A', skipped: true, error: '版本变化' },
+    { path: 'B', error: '网络超时' }
+  ]);
+  assert.deepEqual(Batch.skippedPaths(batch), ['A']);
+  assert.deepEqual(Batch.failedPaths(batch), ['B']);
+  assert.equal(Batch.complete(batch), false);
+});

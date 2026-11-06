@@ -50,7 +50,7 @@ test('missing_local takes precedence over local_changed', () => {
   assert.strictEqual(determineStatus({ spreadsheetId: 'abc', cloudModifiedTime: null, lastSyncedModifiedTime: '2026-05-20T08:15:22.000Z', localExists: false, apiError: null, localChanged: true }), 'missing_local');
 });
 
-test('suggestDirection：已同步不操作；缺失下载；云端更新且本地未改下载；仅本地改上传；两边改冲突；未同步比时间', () => {
+test('suggestDirection：已同步不操作；缺失下载；云端更新且本地未改下载；仅本地改上传；两边改冲突；未同步需核对', () => {
   const { suggestDirection } = require('../lib/status');
   const cloud = '2026-11-04T10:00:00.000Z';
   const later = '2026-11-04T11:00:00.000Z';
@@ -64,8 +64,8 @@ test('suggestDirection：已同步不操作；缺失下载；云端更新且本�
   assert.strictEqual(suggestDirection({ status: 'conflict', cloudModifiedTime: cloud, localMtime: later, localChanged: true }), 'conflict');
   assert.strictEqual(suggestDirection({ status: 'conflict', cloudModifiedTime: cloud, localMtime: earlier, localChanged: true }), 'conflict');
   assert.strictEqual(suggestDirection({ status: 'local_changed', cloudModifiedTime: cloud, localMtime: earlier, localChanged: true }), 'upload');
-  assert.strictEqual(suggestDirection({ status: 'never_synced', cloudModifiedTime: cloud, localMtime: earlier }), 'download');
-  assert.strictEqual(suggestDirection({ status: 'never_synced', cloudModifiedTime: cloud, localMtime: later }), 'upload');
+  assert.strictEqual(suggestDirection({ status: 'never_synced', cloudModifiedTime: cloud, localMtime: earlier }), 'review');
+  assert.strictEqual(suggestDirection({ status: 'never_synced', cloudModifiedTime: cloud, localMtime: later }), 'review');
   assert.strictEqual(suggestDirection({ status: 'never_synced', cloudModifiedTime: null, localMtime: earlier }), null);
 });
 

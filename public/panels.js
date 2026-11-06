@@ -25,11 +25,22 @@
     prev: $('diff-prev'), next: $('diff-next'),
     find: $('diff-find'), record: $('diff-record'), findSubmit: $('diff-find-submit'),
     findClear: $('diff-find-clear'), findStatus: $('diff-find-status'),
-    msg: $('diff-msg'), close: $('diff-close'), cancel: $('diff-cancel'), dl: $('diff-download'), ul: $('diff-upload')
+    msg: $('diff-msg'), close: $('diff-close'), cancel: $('diff-cancel'), refresh: $('diff-refresh'),
+    direction: $('diff-direction-status'), dl: $('diff-download'), dlHint: $('diff-download-hint'),
+    ul: $('diff-upload'), ulHint: $('diff-upload-hint'), ulAction: $('diff-upload-action')
   };
-  // diffState：{ path, mode, data, resolve, token, oldSide, newSide, sheet, expanded, showSame, groups, cur }
   let diffState = null;
-  const MODE_TITLE = { view: '差异预览', upload: '上传前确认差异', conflict: '解决冲突：云端和本地都改过' };
+  const MODE_TITLE = {
+    view: '差异预览',
+    upload: '上传前确认差异',
+    conflict: '解决冲突：云端和本地都改过',
+    review: '确认同步方向：没有同步基准'
+  };
+  const needsDirectionChoice = mode => mode === 'conflict' || mode === 'review';
+  function resolveDiffMode(path, mode) {
+    const direction = CSM().tableRow(path)?.direction;
+    return !needsDirectionChoice(mode) && needsDirectionChoice(direction) ? direction : mode;
+  }
   const SIDE_NAME = { local: '本地', cloud: '云端' };
   const CONTEXT = 3;          // 改动前后保留的相同行数，其余折叠
   const MIN_FOLD = 4;         // 少于这么多行的相同段不折叠
@@ -44,21 +55,23 @@
 
   function finishDiff(result) {
     if (!diffState) return;
-    const { resolve } = diffState;
+    const { resolve, opener } = diffState;
     diffState = null;
     d.modal.classList.add('hidden');
+    if (opener?.isConnected) opener.focus();
     resolve(result);
   }
 
-  // mode：view（查看）/ upload（上传前确认）/ conflict（冲突，两个方向都可选、都不预设）
   function openDiff(path, { mode = 'view' } = {}) {
     if (diffState) finishDiff(null);
+    mode = resolveDiffMode(path, mode);
     return new Promise(resolve => {
-      diffState = { path, mode, data: null, resolve, token: Symbol('diff') };
+      diffState = { path, mode, data: null, resolve, opener: document.activeElement };
       d.title.textContent = MODE_TITLE[mode] || MODE_TITLE.view;
       d.path.textContent = path;
       d.modal.classList.remove('hidden');
       loadDiff();
+      d.close.focus();
     });
   }
 
@@ -75,6 +88,7 @@
     const token = Symbol('diff');
     st.token = token;
     st.data = null;
+    st.stale = false;
     st.recordSheets = null;
     st.recordToken = null;
     d.record.value = '';
@@ -89,26 +103,34 @@
       const data = await resp.json().catch(() => ({}));
       if (diffState !== st || st.token !== token) return;
       if (!resp.ok) { showPlaceholder(resp.status === 401 ? '需要先完成 Google 授权' : `比较失败：${data.error || resp.status}`); return; }
-      st.data = data;
+      st.mode = resolveDiffMode(st.path, st.mode);
+      d.title.textContent = MODE_TITLE[st.mode] || MODE_TITLE.view;
       st.newSide = incomingSide() || 'cloud';
       st.oldSide = st.newSide === 'cloud' ? 'local' : 'cloud';
       st.expanded = new Map();
       st.showSame = data.diff.identical;
       const first = data.diff.sheets.findIndex(s => s.status !== 'same');
       st.sheet = first >= 0 ? first : 0;
+      st.data = data;
       renderAll();
+      if (data.downloadVersion?.reviewed !== true) {
+        setMsg(d.msg, '未取得可校验的下载版本，请重新比较。', 'error');
+      }
     } catch (err) {
-      if (diffState === st) showPlaceholder(`比较失败：${err.message}`);
+      if (diffState === st) {
+        st.data = null;
+        showPlaceholder(`比较失败：${err.message}`);
+      }
     } finally {
       if (diffState === st) updateButtons();
     }
   }
 
-  // 哪一边是「将要生效」的新值：上传 → 本地；下载 / 查看 → 云端；冲突时两边都不预设
+  // 建议保留的一侧与差异视图的显示顺序独立。
   function incomingSide() {
     const st = diffState;
     if (st.mode === 'upload') return 'local';
-    if (st.mode === 'conflict') return null;
+    if (needsDirectionChoice(st.mode)) return null;
     const row = CSM().tableRow(st.path);
     return row && row.direction === 'upload' ? 'local' : 'cloud';
   }
@@ -148,7 +170,7 @@
     const summary = el('div', 'dm-summary');
     if (diff.identical) {
       summary.appendChild(el('span', 'diff-same', '✓ 两边内容完全一致（只是修改时间不同）。'));
-      summary.append(' 点「用云端覆盖本地」即可把状态记为已同步（会先备份本地文件）。');
+      if (!needsDirectionChoice(mode) && data.local.exists) summary.append(' 可用底部的下载操作把状态记为已同步。');
     } else {
       const t = { add: 0, del: 0, mod: 0 };
       let changed = 0;
@@ -159,8 +181,7 @@
       const reordered = diff.sheets.filter(sheet => sheet.orderChanged).length;
       if (reordered) summary.appendChild(el('span', 'dm-n mod', `${reordered} 个工作表行序变化`));
       if (t.del) summary.appendChild(el('span', 'dm-n del', `−${t.del} 行`));
-      if (mode === 'conflict') summary.appendChild(el('span', 'diff-warn', '　上次同步后两边都改过：无论选哪个方向，另一边的改动都会被覆盖，请先确认需要保留的内容。'));
-      else summary.appendChild(el('span', 'dir-tip', `　「+」一边是${newSide === incomingSide() ? '将要生效的' : ''}${SIDE_NAME[newSide]}内容`));
+      summary.appendChild(el('span', 'dir-tip', `　当前视图中的「+」为${SIDE_NAME[newSide]}内容。`));
     }
     d.meta.appendChild(summary);
   }
@@ -644,47 +665,77 @@
     renderAll();
   });
 
-  function updateButtons(busy) {
+  function updateButtons() {
     const st = diffState;
-    const data = st && st.data;
-    d.dl.disabled = !!busy || !data;
-    d.record.disabled = d.findSubmit.disabled = !!busy || !data;
-    d.findClear.disabled = !!busy || !data;
-    d.ul.disabled = !!busy || !data || !data.local.exists;
-    d.ul.classList.toggle('hidden', !CSM().allowUpload());
+    const { data, busy, stale, mode } = st;
+    const choice = needsDirectionChoice(mode);
+    const allowUpload = CSM().allowUpload();
+    const createLocal = data && !data.local.exists;
+    const reviewedDownload = data?.downloadVersion?.reviewed === true;
+    const choiceReason = mode === 'review' ? '没有同步基准' : '两边都改过';
+    const choicePrompt = allowUpload ? '请选择保留哪一侧' : '请核对内容后确认下载';
+    d.direction.textContent = choice ? `${choiceReason}，${choicePrompt}。` : '选择同步方向';
+    d.dl.textContent = createLocal ? '云端 → 创建本地文件' : '云端 → 覆盖本地';
+    d.dlHint.textContent = createLocal ? '当前没有本地文件' : '覆盖前自动备份，可在列表的「本地备份」恢复';
+    d.dl.disabled = !!busy || !!stale || !reviewedDownload;
+    d.record.disabled = d.findSubmit.disabled = d.findClear.disabled = !!busy || !data;
+    d.ul.disabled = !!busy || !!stale || !allowUpload || !data?.local.exists;
+    d.ulAction.classList.toggle('hidden', !allowUpload);
+    d.refresh.classList.toggle('hidden', !stale && !(data && !reviewedDownload));
     const incoming = data ? incomingSide() : null;
-    d.dl.classList.toggle('diff-primary', !!data && st.mode !== 'conflict' && (incoming === 'cloud' || data.diff.identical));
-    d.ul.classList.toggle('diff-primary', !!data && st.mode !== 'conflict' && incoming === 'local' && !data.diff.identical);
-    d.cancel.disabled = !!busy;
+    d.dl.classList.toggle('diff-primary', !!data && !choice && (incoming === 'cloud' || data.diff.identical));
+    d.ul.classList.toggle('diff-primary', !!data && !choice && incoming === 'local' && !data.diff.identical);
+    d.close.disabled = d.cancel.disabled = !!busy;
     for (const b of [d.swap, d.prev, d.next, d.onlyCols, d.allRows]) if (!data) b.disabled = true; else if (b !== d.prev && b !== d.next) b.disabled = false;
     if (data) updatePos();
   }
 
+  function confirmOverwrite(st, button, hint) {
+    if (!needsDirectionChoice(st.mode) || (st.mode === 'conflict' && st.data.diff.identical)) return true;
+    return confirm(`${button.textContent}？\n\n${st.path}\n\n${hint.textContent}。`);
+  }
+
+  function startDiffOperation(st, message) {
+    st.busy = true;
+    d.modal.focus();
+    updateButtons();
+    setMsg(d.msg, message);
+  }
+
   async function doDownload() {
     const st = diffState;
-    if (!st || !st.data) return;
-    if (st.mode === 'conflict' && !st.data.diff.identical
-      && !confirm('用云端覆盖本地？\n\n本地在上次同步后的改动会被覆盖（覆盖前会自动备份，可在「🕘 本地备份」里恢复）。')) return;
-    updateButtons(true);
-    setMsg(d.msg, '下载中…');
-    const summary = await CSM().downloadPaths([st.path]);
-    if (diffState !== st) return;
-    if (summary && summary.successCount) finishDiff('downloaded');
-    else { setMsg(d.msg, '下载失败，详情见日志', 'error'); updateButtons(false); }
+    if (!st?.data || d.dl.disabled || !confirmOverwrite(st, d.dl, d.dlHint)) return;
+    startDiffOperation(st, '下载中…');
+    try {
+      const summary = await CSM().downloadPaths([st.path], { expected: st.data.downloadVersion });
+      if (diffState !== st) return;
+      if (summary?.successCount) { finishDiff('downloaded'); return; }
+      const result = summary?.results?.[0];
+      st.stale = !!result?.skipped;
+      const detail = result?.error || summary?.error || (st.stale ? '预览版本已变更' : '详情见日志');
+      setMsg(d.msg, `${st.stale ? '已跳过下载' : '下载失败'}：${detail}`, 'error');
+    } catch (err) {
+      if (diffState === st) setMsg(d.msg, `下载失败：${err.message}`, 'error');
+    } finally {
+      if (diffState === st) {
+        st.busy = false;
+        updateButtons();
+        if (st.stale) d.refresh.focus();
+      }
+    }
   }
 
   async function doUpload() {
     const st = diffState;
-    if (!st || !st.data) return;
-    if (st.mode === 'conflict' && !st.data.diff.identical
-      && !confirm('用本地覆盖云端？\n\n云端在上次同步后的改动会被覆盖（可在 Google 表格「版本历史」中找回）。')) return;
-    updateButtons(true);
-    setMsg(d.msg, '上传中…');
+    if (!st?.data || d.ul.disabled || !CSM().allowUpload() || !confirmOverwrite(st, d.ul, d.ulHint)) return;
+    startDiffOperation(st, '上传中…');
     // expect：以这次差异预览看到的云端版本为准；之后云端若又被改，服务端会拒绝（409）
     const r = await CSM().uploadRequest(st.path, { expect: st.data.cloud.modifiedTime });
     if (diffState !== st) return;
+    st.busy = false;
     if (r.ok) { finishDiff('uploaded'); return; }
     if (r.status === 409 && r.data.error === 'CLOUD_CHANGED') {
+      st.stale = true;
       const who = r.data.cloudModifiedBy ? `「${r.data.cloudModifiedBy}」` : '其他人';
       setMsg(d.msg, `云端在 ${fmt(r.data.cloudModifiedTime)} 被${who}修改过（晚于这次差异预览），已取消上传`, 'error');
       if (confirm(`你查看差异之后，云端又被${who}修改了（${fmt(r.data.cloudModifiedTime)}）。\n\n直接上传会覆盖这次修改，已取消上传。\n现在重新比较差异吗？`)) {
@@ -694,13 +745,18 @@
     } else {
       setMsg(d.msg, `上传失败：${r.data.error || r.status}`, 'error');
     }
-    updateButtons(false);
+    updateButtons();
+    if (st.stale) d.refresh.focus();
   }
 
   d.close.addEventListener('click', () => finishDiff(null));
   d.cancel.addEventListener('click', () => finishDiff(null));
   d.dl.addEventListener('click', doDownload);
   d.ul.addEventListener('click', doUpload);
+  d.refresh.addEventListener('click', () => {
+    d.close.focus();
+    loadDiff();
+  });
 
   // ======================= 本地备份 =======================
   const b = { modal: $('bk-modal'), path: $('bk-path'), tbody: $('bk-tbody'), msg: $('bk-msg'), close: $('bk-close') };
@@ -819,18 +875,35 @@
   h.filter.addEventListener('input', renderHistory);
   h.close.addEventListener('click', () => h.modal.classList.add('hidden'));
 
-  // Esc 关闭最上层的这几个弹窗
-  document.addEventListener('keydown', e => {
-    if (e.key !== 'Escape') {
-      // 差异预览里：J / K 或 ⌥↓ / ⌥↑ 跳到下一处 / 上一处改动
-      if (d.modal.classList.contains('hidden') || /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.metaKey || e.ctrlKey) return;
-      const k = e.key.toLowerCase();
-      if (k === 'j' || (e.altKey && e.key === 'ArrowDown')) { e.preventDefault(); step(1); }
-      else if (k === 'k' || (e.altKey && e.key === 'ArrowUp')) { e.preventDefault(); step(-1); }
+  d.modal.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      // 全局 Esc 会直接隐藏弹窗，差异预览还需要结束等待中的调用。
+      e.preventDefault();
+      e.stopPropagation();
+      if (!diffState?.busy) finishDiff(null);
       return;
     }
-    if (!d.modal.classList.contains('hidden')) { if (!d.cancel.disabled) finishDiff(null); }
-    else if (!b.modal.classList.contains('hidden')) b.modal.classList.add('hidden');
+    if (e.key === 'Tab') {
+      const controls = [...d.modal.querySelectorAll('button:not(:disabled), input:not(:disabled)')]
+        .filter(control => control.getClientRects().length);
+      const first = controls[0];
+      const last = controls.at(-1);
+      if (document.activeElement === d.modal || document.activeElement === (e.shiftKey ? first : last)) {
+        e.preventDefault();
+        (e.shiftKey ? last : first)?.focus();
+      }
+      return;
+    }
+    // J / K 或 ⌥↓ / ⌥↑ 跳到下一处 / 上一处改动
+    if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.metaKey || e.ctrlKey) return;
+    const k = e.key.toLowerCase();
+    if (k === 'j' || (e.altKey && e.key === 'ArrowDown')) { e.preventDefault(); step(1); }
+    else if (k === 'k' || (e.altKey && e.key === 'ArrowUp')) { e.preventDefault(); step(-1); }
+  });
+
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return;
+    if (!b.modal.classList.contains('hidden')) b.modal.classList.add('hidden');
     else if (!h.modal.classList.contains('hidden')) h.modal.classList.add('hidden');
   });
 

@@ -32,6 +32,16 @@
   }
 
   const failedPaths = batch => [...batch.items.values()].filter(item => item.status === 'failed').map(item => item.path);
+  const skippedPaths = batch => [...batch.items.values()].filter(item => item.status === 'skipped').map(item => item.path);
+
+  function describeScope(rows, visible, exportLabel) {
+    return {
+      count: rows.length,
+      outside: rows.filter(row => !visible.has(row.path)).length,
+      exportText: exportLabel ? `全部同步后自动执行「${exportLabel}」` : '本批仅下载'
+    };
+  }
+
   const complete = batch => batch.items.size > 0 && [...batch.items.values()].every(item => item.status === 'success');
 
   function counts(summary, reverse = false) {
@@ -71,5 +81,5 @@
     return lines.join('\n');
   }
 
-  return { create, apply, failedPaths, complete, counts, sampleText, format, itemStatus, actionStatus };
+  return { create, apply, failedPaths, skippedPaths, describeScope, complete, counts, sampleText, format, itemStatus, actionStatus };
 });

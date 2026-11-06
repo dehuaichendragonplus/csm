@@ -6,7 +6,7 @@
     error: { label: '错误', icon: '✖' },
     missing_local: { label: '本地缺失', icon: '⊘' },
     local_changed: { label: '本地变更', icon: '⟲' },
-    never_synced: { label: '未同步', icon: '✚' },
+    never_synced: { label: '需核对（无同步记录）', icon: '✚' },
     updated: { label: '有更新', icon: '⚡' },
     synced: { label: '已同步', icon: '●' }
   };
@@ -161,6 +161,12 @@
     selection: document.getElementById('selection-bar'),
     selectVisible: document.getElementById('select-visible-downloads'),
     selectionCount: document.getElementById('selection-count'),
+    viewSelection: document.getElementById('view-selection'),
+    batchConfirm: document.getElementById('batch-confirm'),
+    batchConfirmScope: document.getElementById('batch-confirm-scope'),
+    batchConfirmExport: document.getElementById('batch-confirm-export'),
+    batchConfirmItems: document.getElementById('batch-confirm-items'),
+    batchConfirmSubmit: document.getElementById('batch-confirm-submit'),
     clearSelection: document.getElementById('clear-selection'),
     downloadSelected: document.getElementById('download-selected'),
     batch: document.getElementById('batch-result'),
@@ -169,6 +175,8 @@
     batchToggle: document.getElementById('batch-toggle'),
     batchItems: document.getElementById('batch-items'),
     batchRetry: document.getElementById('batch-retry'),
+    batchReview: document.getElementById('batch-review'),
+    batchDiagnose: document.getElementById('batch-diagnose'),
     batchCopy: document.getElementById('batch-copy'),
     log: document.getElementById('log'),
     btnRefresh: document.getElementById('btn-refresh'),
@@ -200,6 +208,10 @@
     prefAfterWrap: document.getElementById('pref-after-wrap'),
     prefAfterDownload: document.getElementById('pref-after-download'),
     lastRefresh: document.getElementById('last-refresh'),
+    cloudStatusBar: document.getElementById('cloud-status-bar'),
+    retryRefresh: document.getElementById('retry-refresh'),
+    firstProject: document.getElementById('first-project'),
+    firstProjectAdd: document.getElementById('first-project-add'),
     tabStripProfile: document.getElementById('tab-strip-profile'),
     btnSettings: document.getElementById('btn-settings'),
     globalSettingsModal: document.getElementById('global-settings-modal'),
@@ -365,6 +377,11 @@
   let lastRows = null;
   let searchTerms = [];
   let activeFilter = 'all';
+  let visibleRows = [];
+  let skippedFilter = null;
+  let cloudStatus = 'loading';
+
+  const needsReview = row => ['never_synced', 'local_changed', 'conflict'].includes(row.status);
 
   function formatTime(iso) {
     if (!iso) return '—';
@@ -419,51 +436,36 @@
   function setBusy(on) {
     busyCount = Math.max(0, busyCount + (on ? 1 : -1));
     const busy = busyCount > 0;
-    [els.btnRefresh, els.btnSyncAll, els.btnClearState, ...els.customActions.querySelectorAll('button')].forEach(b => { b.disabled = busy; });
-    if (els.btnRefresh) els.btnRefresh.classList.toggle('spinning', busy);
+    [els.btnRefresh, els.retryRefresh, els.btnClearState, ...els.customActions.querySelectorAll('button')].forEach(b => { b.disabled = busy; });
+    els.btnSyncAll.disabled = busy || !(lastRows || []).some(row => row.direction === 'download');
     if (els.consoleIndicator) els.consoleIndicator.classList.toggle('busy', busy);
     renderSelection();
     renderBatch();
   }
 
-  function renderFilterChips(rows, counts) {
-    if (!els.statusFilters) return;
-    els.statusFilters.innerHTML = '';
-
-    const needsActionCount = (counts.conflict || 0) + (counts.updated || 0) + (counts.missing_local || 0) + (counts.never_synced || 0);
-    const starredCount = rows.filter(r => isFavorite(r.path)).length;
-
+  function renderFilterChips(rows, shown) {
+    els.statusFilters.replaceChildren();
     const filterDefs = [
       { id: 'all', label: '全部', count: rows.length },
-      { id: 'starred', label: '已收藏', count: starredCount, starred: true },
-      { id: 'needs_action', label: '待处理', count: needsActionCount, alert: needsActionCount > 0 },
-      { id: 'updated', label: '有更新', count: counts.updated || 0, alert: (counts.updated || 0) > 0 },
-      { id: 'conflict', label: '冲突', count: counts.conflict || 0, conflict: (counts.conflict || 0) > 0 },
-      { id: 'local_changed', label: '本地变更', count: counts.local_changed || 0 },
-      { id: 'missing_local', label: '本地缺失', count: counts.missing_local || 0 },
-      { id: 'synced', label: '已同步', count: counts.synced || 0 },
-      { id: 'error', label: '错误', count: counts.error || 0, error: (counts.error || 0) > 0 }
+      { id: 'download', label: '可下载', count: rows.filter(r => r.direction === 'download').length },
+      { id: 'needs_review', label: '需人工处理', count: rows.filter(needsReview).length },
+      { id: 'error', label: '查询异常', count: rows.filter(r => r.status === 'error').length },
+      { id: 'starred', label: '已收藏', count: rows.filter(r => isFavorite(r.path)).length },
+      { id: 'synced', label: '已同步', count: rows.filter(r => r.status === 'synced').length }
     ];
+    if (activeFilter === 'skipped') filterDefs.push({ id: 'skipped', label: '本批跳过', count: shown.length });
 
     filterDefs.forEach(def => {
-      // 0 计数的次要状态不占据空间
-      if (def.count === 0 && !['all', 'starred', 'needs_action', 'synced'].includes(def.id)) return;
-
-      const chip = document.createElement('div');
-      let cls = `filter-chip${activeFilter === def.id ? ' active' : ''}`;
-      if (def.starred) cls += ' is-starred';
-      if (def.alert && def.count > 0) cls += ' has-alert';
-      if (def.conflict && def.count > 0) cls += ' has-conflict';
-      if (def.error && def.count > 0) cls += ' has-error';
-      chip.className = cls;
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = `filter-chip${activeFilter === def.id ? ' active' : ''}`;
+      chip.setAttribute('aria-pressed', String(activeFilter === def.id));
+      if (def.count && def.id === 'needs_review') chip.classList.add('has-alert');
+      if (def.count && def.id === 'error') chip.classList.add('has-error');
+      if (def.id === 'starred') chip.classList.add('is-starred');
 
       const labelSpan = document.createElement('span');
-      if (def.starred) {
-        labelSpan.innerHTML = '<span class="chip-star-icon">⭐</span> 已收藏';
-      } else {
-        labelSpan.textContent = def.label;
-      }
-
+      labelSpan.textContent = def.label;
       const countSpan = document.createElement('span');
       countSpan.className = 'chip-count';
       countSpan.textContent = def.count;
@@ -489,13 +491,17 @@
     let pool = rows;
     if (activeFilter === 'starred') {
       pool = rows.filter(r => isFavorite(r.path));
-    } else if (activeFilter === 'needs_action') {
-      pool = rows.filter(r => r.direction === 'download' || r.direction === 'conflict' || r.status === 'never_synced');
+    } else if (activeFilter === 'needs_review') {
+      pool = rows.filter(needsReview);
+    } else if (activeFilter === 'download') {
+      pool = rows.filter(r => r.direction === 'download');
+    } else if (activeFilter === 'skipped') {
+      pool = rows.filter(r => skippedFilter.has(r.path));
     } else if (activeFilter !== 'all') {
       pool = rows.filter(r => r.status === activeFilter);
     }
 
-    const shown = searching ? pool.filter(r => TableSearch.matchRow(r, searchTerms)) : pool;
+    const shown = visibleRows = searching ? pool.filter(r => TableSearch.matchRow(r, searchTerms)) : pool;
     const downloadable = new Set(rows.filter(r => r.direction === 'download').map(r => r.path));
     for (const path of selectedDownloads) if (!downloadable.has(path)) selectedDownloads.delete(path);
     visibleDownloads = shown.filter(r => r.direction === 'download').map(r => r.path);
@@ -503,10 +509,11 @@
     shown.forEach(r => { (buckets[r.status] || (buckets[r.status] = [])).push(r); });
 
     // 渲染快捷状态过滤按钮
-    renderFilterChips(rows, counts);
+    renderFilterChips(rows, shown);
 
     // 更新一键下载按钮状态
     const syncCount = downloadable.size;
+    els.btnSyncAll.disabled = busyCount > 0 || !syncCount;
     if (els.syncAllLabel && els.syncAllBadge && els.syncAllIcon) {
       if (syncCount === 0) {
         els.btnSyncAll.classList.add('all-synced');
@@ -515,16 +522,14 @@
         els.syncAllIcon.innerHTML = window.CSMIcons ? window.CSMIcons.check : '✓';
       } else {
         els.btnSyncAll.classList.remove('all-synced');
-        els.syncAllBadge.classList.remove('hidden');
-        els.syncAllBadge.textContent = String(syncCount);
-        els.syncAllLabel.textContent = '下载所有更新';
+        els.syncAllLabel.textContent = `下载项目内 ${syncCount} 张`;
         els.syncAllIcon.innerHTML = window.CSMIcons ? window.CSMIcons.downloadAll : '⬇';
       }
     }
 
     // 全同步极简健康状态看板
     if (els.allSyncedBanner) {
-      if (rows.length > 0 && counts.synced === rows.length && !searching && activeFilter === 'all') {
+      if (cloudStatus === 'ready' && rows.length > 0 && counts.synced === rows.length && !searching && activeFilter === 'all') {
         els.allSyncedBanner.classList.remove('hidden');
         if (els.allSyncedMeta) {
           els.allSyncedMeta.textContent = `共 ${rows.length} 张配置表 · 全部健康最新`;
@@ -593,11 +598,11 @@
         const batchBtn = document.createElement('button');
         batchBtn.type = 'button';
         batchBtn.className = 'group-batch-btn';
-        batchBtn.innerHTML = `${window.CSMIcons ? window.CSMIcons.download : '⬇'} <span>下载此组 (${list.length})</span>`;
-        batchBtn.title = `一键下载「${STATUS_LABELS[key].label}」分组下的全部 ${list.length} 个表`;
+        batchBtn.innerHTML = `${window.CSMIcons ? window.CSMIcons.download : '⬇'} <span>下载本组当前结果 ${list.length} 张</span>`;
+        batchBtn.title = `查看「${STATUS_LABELS[key].label}」分组当前筛选内的下载范围`;
         batchBtn.addEventListener('click', (e) => {
           e.stopPropagation();
-          startBatch(list.filter(r => r.direction === 'download'));
+          previewBatch(list.filter(r => r.direction === 'download'), `当前结果 · ${STATUS_LABELS[key].label}`);
         });
         headerRight.appendChild(batchBtn);
       }
@@ -644,7 +649,26 @@
       } else if (activeFilter === 'starred') {
         msg = '还没有收藏任何配置表。点击表名左侧的 ☆ 即可添加高频关注的表格';
       }
-      p.innerHTML = `<img src="icons/empty-illustration.svg" class="empty-illustration" alt=""><span>${msg}</span>`;
+      const img = document.createElement('img');
+      img.src = 'icons/empty-illustration.svg';
+      img.className = 'empty-illustration';
+      img.alt = '';
+      const label = document.createElement('span');
+      label.textContent = msg;
+      p.append(img, label);
+      if (searching || activeFilter !== 'all') {
+        const reset = document.createElement('button');
+        reset.type = 'button';
+        reset.textContent = '清除搜索与筛选';
+        reset.addEventListener('click', () => {
+          els.search.value = '';
+          searchTerms = [];
+          activeFilter = 'all';
+          render();
+          els.search.focus();
+        });
+        p.appendChild(reset);
+      }
       els.groups.appendChild(p);
     }
   }
@@ -666,11 +690,16 @@
   function renderRow(row) {
     const div = document.createElement('div');
     // 按钮与配置表清单同一套规则：已同步不显示；云端较新（或本地缺失）显示「下载」，本地较新显示「上传」
-    const rowClickable = row.direction === 'download'; // 点整行 = 下载，只在云端较新时生效
+    const canSelect = row.direction === 'download';
     const timesTip = `云端修改：${formatTime(row.cloudModifiedTime)}\n本地文件修改：${row.localMtime ? formatTime(row.localMtime) : '本地没有文件'}`;
-    div.className = `row status-${row.status}${rowClickable ? ' clickable' : ''}`;
+    div.className = `row status-${row.status}${canSelect ? ' clickable' : ''}`;
     div.dataset.path = row.path;
-    if (rowClickable) div.addEventListener('click', () => { if (!downloadInProgress && !busyPaths.has(row.path)) syncOne(row.path); });
+    if (canSelect) div.addEventListener('click', e => {
+      if (busyCount || e.target.closest('button, input, a, label')) return;
+      const checkbox = div.querySelector('.row-select');
+      checkbox.checked = !checkbox.checked;
+      checkbox.dispatchEvent(new Event('change'));
+    });
 
     // 1. 配置表与本地路径 (Column 1)
     const tableCol = document.createElement('div');
@@ -694,7 +723,7 @@
     nameDiv.className = 'table-name';
     setHighlighted(nameDiv, row.name);
 
-    if (rowClickable) {
+    if (canSelect) {
       const select = document.createElement('input');
       select.type = 'checkbox';
       select.className = 'row-select';
@@ -842,11 +871,11 @@
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'row-btn';
-      btn.innerHTML = `${window.CSMIcons ? window.CSMIcons.download : '⬇'} <span>下载</span>`;
+      btn.innerHTML = `${window.CSMIcons ? window.CSMIcons.download : '⬇'} <span>下载到本地</span>`;
       btn.title = `云端较新：用云端表覆盖本地 xlsx\n${timesTip}`;
       btn.addEventListener('click', e => {
         e.stopPropagation();
-        syncOne(row.path);
+        syncOne(row);
       });
       primaryActions.appendChild(btn);
     } else if (row.direction === 'upload' && appConfig.allowUpload) {
@@ -860,15 +889,16 @@
         openDiff(row.path, 'upload');
       });
       primaryActions.appendChild(upBtn);
-    } else if (row.direction === 'conflict') {
+    } else if (row.direction === 'conflict' || row.direction === 'review') {
       const cfBtn = document.createElement('button');
       cfBtn.type = 'button';
       cfBtn.className = 'row-btn conflict-btn';
-      cfBtn.innerHTML = `${window.CSMIcons ? window.CSMIcons.alert : '⚠'} <span>解决冲突</span>`;
-      cfBtn.title = `上次同步后云端和本地都改过，不能自动决定方向。\n查看差异后选择保留哪一边。\n${timesTip}`;
+      const review = row.direction === 'review';
+      cfBtn.innerHTML = `${window.CSMIcons ? window.CSMIcons.alert : '⚠'} <span>${review ? '核对差异' : '解决冲突'}</span>`;
+      cfBtn.title = review ? '没有同步记录。核对差异后选择保留哪一边' : `上次同步后云端和本地都改过，不能自动决定方向。\n查看差异后选择保留哪一边。\n${timesTip}`;
       cfBtn.addEventListener('click', e => {
         e.stopPropagation();
-        openDiff(row.path, 'conflict');
+        openDiff(row.path, row.direction);
       });
       primaryActions.appendChild(cfBtn);
     }
@@ -916,85 +946,100 @@
     return div;
   }
 
+  const refreshRuns = new Map();
+
+  function setCloudStatus(status, message) {
+    cloudStatus = status;
+    els.lastRefresh.textContent = message;
+    els.cloudStatusBar.dataset.status = status;
+    els.retryRefresh.classList.toggle('hidden', status !== 'failed' && status !== 'partial');
+    els.btnRefresh.classList.toggle('spinning', status === 'loading' || status === 'checking');
+    if (status !== 'ready') els.allSyncedBanner.classList.add('hidden');
+  }
+
+  function showRefreshFailure(error) {
+    setCloudStatus('failed', lastRows ? '检查失败 · 显示上次结果' : '检查失败 · 暂无云端状态');
+    appendLog(`! 检查云端失败：${error}\n`);
+  }
+
+  function showAuthorizationRequired() {
+    els.authBanner.classList.remove('hidden');
+    setCloudStatus('auth', '完成 Google 授权后即可查看配置表状态');
+  }
+
   async function loadTables() {
     const id = currentId;
+    if (!id) return;
     try {
       const resp = await fetch(api('/tables'));
-      if (resp.status === 401) {
-        els.authBanner.classList.remove('hidden');
-        els.summary.textContent = '请先授权';
-        return;
-      }
+      const data = await resp.json();
+      if (id !== currentId) return;
+      if (resp.status === 401) { showAuthorizationRequired(); return; }
+      if (!resp.ok) { showRefreshFailure(data.error || resp.status); return; }
+
       els.authBanner.classList.add('hidden');
-      const data = await resp.json();
-      if (id !== currentId) return;
-      if (resp.ok) {
+      const stale = resp.headers.get('X-CSM-Stale');
+      if (stale) {
+        lastRefreshAt = Date.parse(stale) || 0;
+        setCloudStatus('loading', '正在查询云端 · 显示上次结果');
         render(data);
-        if (!knownAlerts) knownAlerts = new Set(alertRows(data).map(alertKey));
-        const stale = resp.headers.get('X-CSM-Stale');
-        if (stale) {
-          // 启动时先显示上次的云端状态，后台刷新（批量查询，通常几秒内完成）
-          els.lastRefresh.textContent = `显示的是 ${formatTime(stale) || '上次'} 的云端状态，正在后台刷新…`;
-          backgroundRefresh();
-        } else {
-          verifyUpdates(data).then(verified => {
-            if (verified && currentId === id) {
-              render(verified);
-              refreshProjectBadges();
-            }
-          });
-        }
-        return data;
-      } else appendLog(`! /api/tables error: ${data.error}\n`);
-    } catch (err) {
-      appendLog(`! fetch error: ${err.message}\n`);
-    }
-  }
-
-  async function refresh() {
-    const id = currentId;
-    setBusy(true);
-    appendLog('→ 刷新所有云端 modifiedTime…\n');
-    try {
-      const resp = await fetch(api('/refresh'), { method: 'POST' });
-      if (resp.status === 401) {
-        els.authBanner.classList.remove('hidden');
-        appendLog('! 需要授权\n');
-        return;
-      }
-      const data = await resp.json();
-      if (id !== currentId) return;
-      if (resp.ok) {
-        render(data);
-        markRefreshed(data, false);
-        const hasVerify = data.some(r => VERIFY_STATUSES.has(r.status));
-        let finalData = data;
-        if (hasVerify) {
-          appendLog('→ 正在核对云端与本地内容差异…\n');
-          const verified = await verifyUpdates(data, { force: true });
-          if (id !== currentId) return;
-          if (verified) {
-            finalData = verified;
-            render(verified);
-          }
-        }
-        appendLog('✓ 刷新完成\n');
-        markRefreshed(finalData, false);
-        refreshProjectBadges();
+        refresh({ force: false });
       } else {
-        appendLog(`! refresh error: ${data.error}\n`);
+        if (!refreshRuns.has(id)) {
+          setCloudStatus('checking', '正在核对配置表内容…');
+          render(data);
+          verifyUpdates(data).then(verified => {
+            if (id !== currentId || refreshRuns.has(id)) return;
+            const rows = verified || data;
+            markRefreshed(rows, false, resp.headers.get('X-CSM-Checked-At'));
+            render(rows);
+          });
+        } else render(data);
       }
+      return data;
     } catch (err) {
-      appendLog(`! ${err.message}\n`);
-    } finally {
-      if (id === currentId) setBusy(false);
+      if (id === currentId) showRefreshFailure(err.message);
     }
   }
 
-  function streamSync(paths, versions) {
+  function refresh({ force = true, notify = false } = {}) {
+    const id = currentId;
+    if (!id || els.batchConfirm.open) return;
+    if (refreshRuns.has(id)) return refreshRuns.get(id);
+    if (force && busyCount) return;
+    if (force) setBusy(true);
+    setCloudStatus('loading', lastRows ? '正在查询云端 · 显示上次结果' : '正在查询云端…');
+    const run = (async () => {
+      try {
+        const resp = await fetch(api(force ? '/refresh' : '/refresh?reuse=1'), { method: 'POST' });
+        const data = await resp.json();
+        if (id !== currentId) return;
+        if (resp.status === 401) { showAuthorizationRequired(); return; }
+        if (!resp.ok) { showRefreshFailure(data.error || resp.status); return; }
+        els.authBanner.classList.add('hidden');
+        setCloudStatus('checking', '正在核对配置表内容…');
+        render(data);
+        const verified = await verifyUpdates(data, { force });
+        if (id !== currentId) return;
+        const rows = verified || data;
+        markRefreshed(rows, notify, resp.headers.get('X-CSM-Checked-At'));
+        render(rows);
+        refreshProjectBadges();
+      } catch (err) {
+        if (id === currentId) showRefreshFailure(err.message);
+      } finally {
+        refreshRuns.delete(id);
+        if (force) setBusy(false);
+      }
+    })();
+    refreshRuns.set(id, run);
+    return run;
+  }
+
+  function streamSync(paths, versions, onResult) {
     // 本批所有表先标「排队中」，轮到谁再切换为「下载中」
     paths.forEach(p => { if (!busyPaths.has(p)) setRowBusy(p, true, '排队中…'); });
-    const summary = { successCount: 0, failedCount: 0, results: [], receivedDone: false };
+    const summary = { successCount: 0, failedCount: 0, results: [], receivedDone: false, onResult };
     return new Promise((done) => {
       const resolve = () => done(summary);
       fetch(api('/sync'), {
@@ -1061,6 +1106,7 @@
         const obj = JSON.parse(data);
         setRowBusy(obj.path, false);
         if (summary?.results) summary.results.push(obj);
+        summary?.onResult?.(obj);
         appendLog(obj.success ? `✓ ${obj.path}\n` : `✗ ${obj.path}${obj.error ? ': ' + obj.error : ''}\n`);
       } catch (_) {}
     } else if (event === 'done') {
@@ -1159,11 +1205,13 @@
     els.selectVisible.disabled = busyCount > 0;
     els.selectVisible.textContent = visibleCount === visibleDownloads.length ? '取消勾选当前筛选' : `勾选当前筛选的 ${visibleDownloads.length} 张`;
     els.selectionCount.textContent = count ? `已选 ${count} 张${visibleCount < count ? `（${count - visibleCount} 张在筛选范围外）` : ''}` : '';
+    els.viewSelection.classList.toggle('hidden', !count);
+    els.viewSelection.disabled = busyCount > 0;
     els.clearSelection.classList.toggle('hidden', !count);
     els.clearSelection.disabled = busyCount > 0;
     els.downloadSelected.classList.toggle('hidden', !count);
     els.downloadSelected.disabled = busyCount > 0;
-    els.downloadSelected.textContent = `下载选中的 ${count} 张`;
+    els.downloadSelected.textContent = `下载已选 ${count} 张`;
     els.groups.querySelectorAll('.row-select').forEach(input => {
       const path = input.closest('.row').dataset.path;
       input.checked = selectedDownloads.has(path);
@@ -1179,12 +1227,16 @@
     const count = status => items.filter(item => item.status === status).length;
     const failed = count('failed');
     const skipped = count('skipped');
+    const processed = items.length - count('pending');
     els.batchTitle.textContent = batch.running
-      ? `正在处理 ${items.length} 张表…`
+      ? `下载进度 · ${processed}/${items.length} 张已处理`
       : `下载结果 · ${count('success')}/${items.length} 张已同步${failed ? ` · ${failed} 张失败` : ''}${skipped ? ` · ${skipped} 张跳过` : ''}`;
-    els.batchAction.textContent = `${batch.action.label}：${SyncBatch.actionStatus[batch.action.status]}`;
+    els.batchAction.textContent = `自动导出 · ${batch.action.label} · ${SyncBatch.actionStatus[batch.action.status]}`;
     els.batchRetry.classList.toggle('hidden', !failed);
     els.batchRetry.disabled = busyCount > 0;
+    els.batchReview.classList.toggle('hidden', !skipped);
+    els.batchReview.disabled = busyCount > 0;
+    els.batchDiagnose.classList.toggle('hidden', batch.action.status !== 'failed');
     els.batchCopy.disabled = batch.running;
     els.batchToggle.textContent = batch.expanded ? '收起明细' : '查看明细';
     els.batchToggle.setAttribute('aria-expanded', String(!!batch.expanded));
@@ -1216,11 +1268,21 @@
     setBusy(true);
     try {
       const versions = Object.fromEntries(paths.map(path => [path, batch.items.get(path).version]));
-      const result = await streamSync(paths, versions);
+      for (const path of paths) {
+        const item = batch.items.get(path);
+        item.status = 'pending';
+        item.error = null;
+      }
+      renderBatch();
+      const result = await streamSync(paths, versions, item => {
+        if (!batch.items.has(item.path)) return;
+        SyncBatch.apply(batch, [item.path], [item]);
+        renderBatch();
+      });
       SyncBatch.apply(batch, paths, result.results, result.error);
       releaseRows(paths);
       for (const path of paths) if (batch.items.get(path).status === 'success') selectedDownloads.delete(path);
-      const skipped = [...batch.items.values()].some(item => item.status === 'skipped');
+      const skipped = SyncBatch.skippedPaths(batch).length > 0;
       if (SyncBatch.failedPaths(batch).length || skipped) batch.expanded = true;
       if (skipped && batch.action.status === 'waiting') batch.action.status = 'blocked';
       const latest = await loadTables();
@@ -1236,7 +1298,7 @@
         }
         batch.action.status = 'running';
         renderBatch();
-        const code = await runAction(batch.exportAction);
+        const code = await runAction(batch.exportAction, diagnostic => { batch.diagnostic = diagnostic; });
         batch.action.status = code === 0 ? 'success' : 'failed';
       }
     } finally {
@@ -1246,19 +1308,51 @@
     }
   }
 
-  function startBatch(rows) {
-    if (downloadInProgress || !rows.length) return;
+  const downloadVersion = row => ({
+    spreadsheetId: row.spreadsheetId,
+    cloudModifiedTime: row.cloudModifiedTime,
+    localVersion: row.localVersion
+  });
+
+  let batchPreview = null;
+  function previewBatch(rows, scope) {
+    if (busyCount || !rows.length || els.batchConfirm.open) return;
     const project = projects.find(p => p.id === currentId);
     if (!project) return;
+    const action = afterDownloadAction();
+    const visible = new Set(visibleDownloads);
+    const details = SyncBatch.describeScope(rows, visible, action?.label);
     const batch = SyncBatch.create(project.name, rows.map(row => ({
       path: row.path,
       name: row.name,
-      version: { spreadsheetId: row.spreadsheetId, cloudModifiedTime: row.cloudModifiedTime, localVersion: row.localVersion }
+      version: downloadVersion(row)
     })));
-    batch.exportAction = afterDownloadAction();
-    batch.action = batch.exportAction ? { label: batch.exportAction.label, status: 'waiting' } : { label: '导出', status: 'disabled' };
-    batches.set(currentId, batch);
-    return runBatch(batch, rows.map(row => row.path));
+    batch.exportAction = action;
+    batch.action = action ? { label: action.label, status: 'waiting' } : { label: '导出', status: 'disabled' };
+    batchPreview = { projectId: project.id, batch };
+
+    els.batchConfirmScope.textContent = `${project.name} · ${scope} · ${details.count} 张${details.outside ? `（${details.outside} 张在筛选范围外）` : ''}`;
+    els.batchConfirmExport.textContent = details.exportText;
+    els.batchConfirmSubmit.textContent = `下载 ${details.count} 张到本地`;
+    els.batchConfirmItems.replaceChildren(...rows.map(row => {
+      const item = document.createElement('li');
+      item.textContent = [row.name || row.path, row.name && row.path, !visible.has(row.path) && '筛选范围外'].filter(Boolean).join(' · ');
+      return item;
+    }));
+    els.batchConfirm.returnValue = 'cancel';
+    els.batchConfirm.showModal();
+  }
+
+  els.batchConfirm.addEventListener('close', () => {
+    const preview = batchPreview;
+    batchPreview = null;
+    if (!preview || els.batchConfirm.returnValue !== 'download' || preview.projectId !== currentId || busyCount) return;
+    batches.set(currentId, preview.batch);
+    return runBatch(preview.batch, [...preview.batch.items.keys()]);
+  });
+
+  function previewSelected() {
+    previewBatch((lastRows || []).filter(row => row.direction === 'download' && selectedDownloads.has(row.path)), '已选表');
   }
 
   els.selectVisible.addEventListener('click', () => {
@@ -1270,10 +1364,30 @@
     renderSelection();
   });
   els.clearSelection.addEventListener('click', () => { selectedDownloads.clear(); renderSelection(); });
-  els.downloadSelected.addEventListener('click', () => startBatch((lastRows || []).filter(row => row.direction === 'download' && selectedDownloads.has(row.path))));
+  els.downloadSelected.addEventListener('click', previewSelected);
+  els.viewSelection.addEventListener('click', previewSelected);
   els.batchRetry.addEventListener('click', () => {
     const batch = batches.get(currentId);
     if (batch) runBatch(batch, SyncBatch.failedPaths(batch));
+  });
+  els.batchReview.addEventListener('click', async () => {
+    const batch = batches.get(currentId);
+    if (!batch || busyCount) return;
+    const id = currentId;
+    skippedFilter = new Set(SyncBatch.skippedPaths(batch));
+    activeFilter = 'skipped';
+    els.search.value = '';
+    searchTerms = [];
+    render();
+    await refresh();
+    if (currentId === id && activeFilter === 'skipped') {
+      els.groups.querySelector('.group, .empty-tip')?.scrollIntoView({ block: 'nearest' });
+    }
+  });
+  els.batchDiagnose.addEventListener('click', () => {
+    const batch = batches.get(currentId);
+    if (batch?.diagnostic) showDiagnostic(batch.exportAction, batch.diagnostic);
+    else setConsoleCollapsed(false);
   });
   els.batchToggle.addEventListener('click', () => {
     const batch = batches.get(currentId);
@@ -1291,12 +1405,13 @@
   });
 
   // 差异窗口、清单等现有入口仍使用各自的确认方式。
-  async function downloadPaths(paths) {
-    if (downloadInProgress) return null;
+  async function downloadPaths(paths, { expected } = {}) {
+    if (downloadInProgress || !currentId) return null;
     downloadInProgress = true;
     setBusy(true);
     try {
-      const summary = await streamSync(paths);
+      const versions = expected ? { [paths[0]]: expected } : undefined;
+      const summary = await streamSync(paths, versions);
       releaseRows(paths);
       await loadTables();
       await runAfterDownload(summary, new Set(paths).size);
@@ -1312,12 +1427,17 @@
     return Promise.resolve(null);
   }
 
-  async function syncOne(p) {
-    await downloadPaths([p]);
+  async function syncOne(row) {
+    if (busyCount || row.direction !== 'download') return;
+    const result = await downloadPaths([row.path], { expected: downloadVersion(row) });
+    const item = result?.results[0];
+    if (item?.success) showToast('已下载到本地', 'ok');
+    else if (item?.skipped) showToast('同步版本已变化，请刷新后重新核对', 'info', 5000);
+    else showToast('下载失败，请查看控制台日志', 'error', 5000);
   }
 
   function syncAllUpdated() {
-    return startBatch((lastRows || []).filter(row => row.direction === 'download'));
+    previewBatch((lastRows || []).filter(row => row.direction === 'download'), '当前项目全部可下载表');
   }
 
   async function clearState() {
@@ -1339,7 +1459,8 @@
     }
   }
 
-  async function runAction(action) {
+  async function runAction(action, onDiagnostic) {
+    const actionProject = currentId;
     setBusy(true);
     clearDiagnostic();
     appendLog(`→ ${action.label}…\n`);
@@ -1357,7 +1478,10 @@
       if (summary.exitCode !== 0 && summary.exitCode != null) {
         if (window.ActionErrorParser) {
           const diag = window.ActionErrorParser.parseActionError(actionLogs.join('\n'), lastRows || []);
-          if (diag) showDiagnostic(action, diag);
+          if (diag && currentId === actionProject) {
+            onDiagnostic?.(diag);
+            showDiagnostic(action, diag);
+          }
         }
       }
       return summary.exitCode ?? -1;
@@ -1406,9 +1530,14 @@
   const alertRows = rows => rows.filter(r => r.direction === 'download' || r.direction === 'conflict');
   const alertKey = r => `${r.path}|${r.cloudModifiedTime || ''}`;
 
-  function markRefreshed(rows, notify) {
-    lastRefreshAt = Date.now();
-    els.lastRefresh.textContent = `上次刷新 ${new Date(lastRefreshAt).toLocaleTimeString('zh-CN', { hour12: false })}`;
+  function markRefreshed(rows, notify, checkedAt) {
+    lastRefreshAt = Date.parse(checkedAt) || Date.now();
+    const time = new Date(lastRefreshAt).toLocaleTimeString('zh-CN', { hour12: false });
+    const errors = rows.filter(row => row.status === 'error').length;
+    const failures = rows.filter(row => verifyFailures.has(row.path)).length;
+    const issues = [errors && `${errors} 张查询异常`, failures && `${failures} 张内容核对失败`].filter(Boolean);
+    if (issues.length) setCloudStatus('partial', `已检查 ${time} · ${issues.join(' · ')}`);
+    else setCloudStatus('ready', `上次成功检查 ${time}`);
     const fresh = alertRows(rows).filter(r => !knownAlerts || !knownAlerts.has(alertKey(r)));
     const first = !knownAlerts;
     knownAlerts = new Set(alertRows(rows).map(alertKey));
@@ -1425,44 +1554,9 @@
     }
   }
 
-  async function silentRefresh() {
-    if (!currentId || busyCount > 0 || document.querySelector('.modal:not(.hidden)')) return;
-    const id = currentId;
-    try {
-      const resp = await fetch(api('/refresh?reuse=1'), { method: 'POST' });
-      if (!resp.ok || id !== currentId) return;
-      const data = await resp.json();
-      render(data);
-      const verified = await verifyUpdates(data);
-      if (id !== currentId) return;
-      if (verified) render(verified);
-      markRefreshed(verified || data, true);
-      refreshProjectBadges();
-    } catch (_) { /* 网络问题等下次 */ }
-  }
-
-  // 启动时用了上次的云端状态：后台刷新一次，再核对内容
-  async function backgroundRefresh() {
-    const id = currentId;
-    try {
-      const resp = await fetch(api('/refresh?reuse=1'), { method: 'POST' });
-      const data = await resp.json().catch(() => null);
-      if (id !== currentId) return;
-      if (!resp.ok || !data) {
-        els.lastRefresh.textContent = '后台刷新失败，显示的是上次的云端状态';
-        if (data && data.error) appendLog(`! 后台刷新失败：${data.error}\n`);
-        return;
-      }
-      render(data);
-      knownAlerts = null; // 以刷新后的结果为基准，不把启动前就有的更新当成新提醒
-      const verified = await verifyUpdates(data);
-      if (id !== currentId) return;
-      if (verified) render(verified);
-      markRefreshed(verified || data, false);
-      refreshProjectBadges();
-    } catch (err) {
-      if (id === currentId) els.lastRefresh.textContent = '后台刷新失败，显示的是上次的云端状态';
-    }
+  function silentRefresh() {
+    if (busyCount || document.querySelector('.modal:not(.hidden)') || els.batchConfirm.open) return;
+    return refresh({ force: false, notify: true });
   }
 
   // 「有更新 / 冲突 / 本地变更」的表：修改时间或文件字节变了不代表内容变了，导出云端与本地比较，内容一致的自动记为已同步
@@ -1491,7 +1585,8 @@
           body: JSON.stringify({ paths, force })
         });
         const data = await resp.json().catch(() => ({}));
-        if (id !== currentId || !resp.ok) return rows;
+        if (id !== currentId) return rows;
+        if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
         const same = (data.results || []).filter(r => r.identical);
         const failed = (data.results || []).filter(r => r.error);
         if (same.length) {
@@ -1508,7 +1603,14 @@
           appendLog(`! 内容核对失败 ${failure.path}：${failure.error}\n`);
         }
         return data.tables || rows;
-      } catch (_) {
+      } catch (err) {
+        if (id === currentId) {
+          for (const path of paths) {
+            const row = byPath.get(path);
+            verifyFailures.set(path, { cloud: row.cloudModifiedTime, local: row.localVersion, error: err.message });
+          }
+          appendLog(`! 核对配置表内容失败：${err.message}\n`);
+        }
         return rows;
       } finally {
         verifyRuns.delete(id);
@@ -1580,6 +1682,7 @@
     const p = projects.find(x => x.id === currentId);
     els.projectPanel.classList.toggle('hidden', !p);
     els.summaryBar.classList.toggle('hidden', !p);
+    els.cloudStatusBar.classList.toggle('hidden', !p);
     if (!p) return;
     els.projectName.textContent = p.name;
     els.projectDir.textContent = p.dir;
@@ -1630,15 +1733,23 @@
   }
 
   async function selectProject(id) {
-    if (downloadInProgress) {
+    if (downloadInProgress || els.batchConfirm.open) {
       if (id !== currentId) showToast('本批下载或导出进行中', 'info');
       return;
     }
+    const changed = currentId !== id;
     currentId = id;
+    if (changed) {
+      document.dispatchEvent(new Event('csm-project-changed'));
+      els.search.value = '';
+      searchTerms = [];
+      clearDiagnostic();
+    }
     selectedDownloads.clear();
     expandedSummaries.clear();
     verifyFailures.clear();
     visibleDownloads = [];
+    visibleRows = [];
     renderSelection();
     renderBatch();
     try { localStorage.setItem(PROJECT_KEY, id); } catch (_) {}
@@ -1646,13 +1757,16 @@
     groupExpandedState.clear();
     lastRows = null; // 换项目后不能再拿旧项目的列表做搜索
     activeFilter = 'all';
+    skippedFilter = null;
     knownAlerts = null;
     lastRefreshAt = 0;
-    els.lastRefresh.textContent = '';
+    els.btnSyncAll.disabled = true;
+    els.authBanner.classList.add('hidden');
+    setCloudStatus('loading', '正在检查 Google 授权与云端状态…');
     els.groups.innerHTML = '';
     els.summary.textContent = '加载中…';
     await loadConfig();
-    await loadTables();
+    if (id === currentId) await loadTables();
   }
 
   async function loadProjects(preferId) {
@@ -1660,14 +1774,20 @@
     let saved = null;
     try { saved = localStorage.getItem(PROJECT_KEY); } catch (_) {}
     const pick = [preferId, currentId, saved].find(id => id && projects.some(p => p.id === id)) || (projects[0] && projects[0].id);
+    els.firstProject.classList.toggle('hidden', !!pick);
     if (!pick) {
-      currentId = null;
+      if (currentId) {
+        currentId = null;
+        document.dispatchEvent(new Event('csm-project-changed'));
+      }
+      els.allSyncedBanner.classList.add('hidden');
+      els.authBanner.classList.add('hidden');
       renderSelection();
       renderBatch();
       lastRows = null;
       renderTabs();
       els.customActions.innerHTML = '';
-      els.groups.innerHTML = '<div class="empty-tip"><img src="icons/empty-illustration.svg" class="empty-illustration" alt=""><span>还没有项目，点右上方「＋ 添加项目」选择配置表目录</span></div>';
+      els.groups.replaceChildren();
       els.summary.textContent = '';
       return;
     }
@@ -1694,7 +1814,6 @@
     if (!resp.ok) { appendLog('! 移除失败\n'); return; }
     projectSummaries.delete(p.id);
     batches.delete(p.id);
-    if (p.id === currentId) currentId = null;
     await loadProjects();
   }
 
@@ -1712,46 +1831,72 @@
   let dirCurrent = null;
   const DIR_KEY = 'syncmanager.lastDir';
 
+  let dirBrowseId = 0;
   async function browse(p) {
-    dirEls.msg.textContent = '';
-    const resp = await fetch(`/api/fs/list${p ? `?path=${encodeURIComponent(p)}` : ''}`);
-    const data = await resp.json();
-    if (!resp.ok) { dirEls.msg.textContent = data.error; return; }
-    dirCurrent = data.path;
-    dirEls.path.textContent = data.path + (data.hint ? '  ★' : '');
-    dirEls.list.innerHTML = '';
-    const addItem = (text, target, star) => {
-      const li = document.createElement('li');
-      li.textContent = text;
-      if (star) { const s = document.createElement('span'); s.className = 'star'; s.textContent = '★'; li.appendChild(s); }
-      li.addEventListener('click', () => browse(target));
-      dirEls.list.appendChild(li);
-    };
-    if (data.parent) addItem('⬆ 上一级', data.parent, false);
-    data.dirs.forEach(d => addItem(`📁 ${d.name}`, d.path, d.hint));
+    const browseId = ++dirBrowseId;
+    dirEls.pick.disabled = true;
+    dirCurrent = null;
+    dirEls.msg.textContent = '正在检查目录…';
+    try {
+      const resp = await fetch(`/api/fs/list${p ? `?path=${encodeURIComponent(p)}` : ''}`);
+      const data = await resp.json();
+      if (browseId !== dirBrowseId) return;
+      if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+      dirCurrent = data.path;
+      dirEls.path.textContent = data.path;
+      dirEls.msg.textContent = data.hint
+        ? '已找到项目配置或配置表清单，可以添加。'
+        : '此目录没有找到配置表清单。请继续浏览，或用系统选择器重新选目录。';
+      dirEls.pick.disabled = !data.hint;
+      dirEls.list.replaceChildren();
+      const addItem = (text, target, star) => {
+        const li = document.createElement('li');
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = `${text}${star ? ' ★' : ''}`;
+        button.addEventListener('click', () => browse(target));
+        li.appendChild(button);
+        dirEls.list.appendChild(li);
+      };
+      if (data.parent) addItem('上一级', data.parent, false);
+      data.dirs.forEach(d => addItem(d.name, d.path, d.hint));
+    } catch (err) {
+      if (browseId === dirBrowseId) dirEls.msg.textContent = `无法读取目录：${err.message}`;
+    }
   }
 
   function openDirModal() {
+    if (downloadInProgress) return;
     dirEls.modal.classList.remove('hidden');
     dirEls.name.value = '';
-    let last = null;
-    try { last = localStorage.getItem(DIR_KEY); } catch (_) {}
-    browse(last);
+    dirEls.native.focus();
+    browse(lsGet(DIR_KEY));
   }
 
   async function addCurrentDir() {
-    dirEls.msg.textContent = '';
-    const resp = await fetch('/api/projects', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ dir: dirCurrent, name: dirEls.name.value })
-    });
-    const data = await resp.json();
-    if (!resp.ok) { dirEls.msg.textContent = data.error; return; }
-    try { localStorage.setItem(DIR_KEY, dirCurrent); } catch (_) {}
-    dirEls.modal.classList.add('hidden');
-    appendLog(`✓ 已添加项目「${data.project.name}」${data.generated ? '（已自动生成 syncmanager.config.json，可按需补充导出服务与动作）' : ''}\n`);
-    await loadProjects(data.project.id);
+    if (!dirCurrent || dirEls.pick.disabled) return;
+    const dir = dirCurrent;
+    const browseId = dirBrowseId;
+    dirEls.pick.disabled = true;
+    dirEls.msg.textContent = '正在添加项目…';
+    try {
+      const resp = await fetch('/api/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dir, name: dirEls.name.value })
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+      lsSet(DIR_KEY, dir);
+      dirEls.modal.classList.add('hidden');
+      appendLog(`✓ 已添加项目「${data.project.name}」${data.generated ? '（已自动生成 syncmanager.config.json）' : ''}\n`);
+      await loadProjects(data.project.id);
+    } catch (err) {
+      if (browseId === dirBrowseId) {
+        dirEls.pick.disabled = false;
+        dirEls.msg.textContent = `添加失败：${err.message}`;
+      }
+    }
   }
 
   async function pickNative() {
@@ -1775,14 +1920,13 @@
   }
 
   els.btnAddProject.addEventListener('click', openDirModal);
+  els.firstProjectAdd.addEventListener('click', openDirModal);
   dirEls.native.addEventListener('click', pickNative);
   dirEls.close.addEventListener('click', () => dirEls.modal.classList.add('hidden'));
   dirEls.pick.addEventListener('click', addCurrentDir);
 
-  els.btnRefresh.addEventListener('click', () => {
-    refresh();
-    showToast('正在刷新云端状态…', 'info');
-  });
+  els.btnRefresh.addEventListener('click', () => refresh());
+  els.retryRefresh.addEventListener('click', () => refresh());
   els.btnSyncAll.addEventListener('click', syncAllUpdated);
   els.btnClearState.addEventListener('click', () => {
     clearState();
@@ -1861,7 +2005,7 @@
       const s = await (await fetch('/api/auth-status')).json();
       const profile = els.tabStripProfile;
       if (!s.authorized) {
-        if (els.authBanner) els.authBanner.classList.remove('hidden');
+        if (currentId) showAuthorizationRequired();
         if (profile) profile.title = '未授权 Google 账号 · 点击打开全局偏好设置 (⌘,)';
         if (els.globalAuthBadge) {
           els.globalAuthBadge.className = 'auth-status-badge badge-unauth';
@@ -2004,23 +2148,25 @@
     });
   }
   els.search.addEventListener('keydown', e => {
+    if (e.isComposing || e.keyCode === 229) return;
     if (e.key === 'Escape') {
       els.search.value = '';
       searchTerms = [];
       render();
       els.search.blur();
-    } else if (e.key === 'Enter') {
-      // 回车：只命中一个表时直接下载它
-      const hits = (lastRows || []).filter(r => TableSearch.matchRow(r, searchTerms));
-      if (searchTerms.length && hits.length === 1 && !busyPaths.has(hits[0].path)) {
-        if (hits[0].direction === 'download') syncOne(hits[0].path);
-        else if (hits[0].direction === 'conflict') openDiff(hits[0].path, 'conflict');
-      }
+    } else if (e.key === 'Enter' && searchTerms.length && visibleRows.length) {
+      e.preventDefault();
+      const row = els.groups.querySelector('.row');
+      if (!row) return;
+      row.tabIndex = -1;
+      row.focus({ preventScroll: true });
+      row.scrollIntoView({ block: 'nearest' });
     }
   });
 
   // ---------- 全局快捷键体系（Keyboard-First） ----------
   document.addEventListener('keydown', e => {
+    if (e.isComposing || e.keyCode === 229 || els.batchConfirm.open) return;
     const typing = /^(INPUT|TEXTAREA)$/.test(document.activeElement && document.activeElement.tagName);
     const anyModalOpen = !!document.querySelector('.modal:not(.hidden)');
 
@@ -2043,7 +2189,6 @@
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'r') {
       e.preventDefault();
       refresh();
-      showToast('正在刷新云端状态…', 'info');
       return;
     }
 

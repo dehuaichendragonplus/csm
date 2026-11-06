@@ -49,11 +49,16 @@
         </button>
       </div>
 
+      <div id="cloud-status-bar" class="cloud-status-bar hidden" aria-label="云端状态">
+        <span id="last-refresh" role="status"></span>
+        <button id="retry-refresh" type="button" class="hidden">重新检查</button>
+      </div>
+
       <!-- 右侧行动按钮群 -->
       <div class="toolbar-actions">
-        <button id="btn-sync-all" type="button" class="btn-primary-action" title="一键下载所有更新：自动比对云端最新修改，下载所有云端较新或本地缺失的配置表">
+        <button id="btn-sync-all" type="button" class="btn-primary-action" title="查看当前项目中可直接下载的配置表">
           <span class="btn-icon" id="sync-all-icon"></span>
-          <span class="btn-label" id="sync-all-label">下载所有更新</span>
+          <span class="btn-label" id="sync-all-label">下载项目更新</span>
           <span id="sync-all-badge" class="btn-badge hidden">0</span>
         </button>
         <button id="btn-manage-filelist" type="button" class="btn-icon-action" title="管理配置表 (filelist.json)：新增配置表、绑定 Google Sheets、移除配置表或修改本地根目录">
@@ -79,7 +84,6 @@
       <div class="bookmarks-left">
         <div id="status-filters" class="status-filters"></div>
         <span id="summary" class="summary-text hidden">加载中…</span>
-        <span id="last-refresh" class="dir-tip hidden"></span>
       </div>
       <div class="bookmarks-right">
         <div class="search-box">
@@ -104,6 +108,24 @@
   <!-- 主滚动区域 -->
   <div id="app-main-content">
 
+    <section id="first-project" class="first-project hidden" aria-labelledby="first-project-title">
+      <h2 id="first-project-title">添加第一个项目</h2>
+      <ol>
+        <li>选择包含配置表清单的目录</li>
+        <li>检查 Google 授权，获取云端表格状态</li>
+        <li>查看配置表，选择要处理的更新</li>
+      </ol>
+      <button id="first-project-add" type="button" class="primary">选择项目目录…</button>
+    </section>
+
+    <!-- 授权提示 Banner -->
+    <section id="auth-banner" class="auth-banner hidden">
+      <div>
+        <strong>需要 Google 授权</strong>
+        <p style="margin:4px 0 0;font-size:12px;color:#92400e;">需要授权才能查询云端表格变更状态并同步数据。</p>
+      </div>
+      <a href="/auth/start" class="btn-primary" style="padding:6px 14px;border-radius:6px;text-decoration:none;font-weight:600;display:inline-block;background:#2563eb;color:#fff;">前往授权</a>
+    </section>
     <!-- 全同步健康状态看板 -->
     <div id="all-synced-banner" class="all-synced-banner hidden">
       <div class="all-synced-content">
@@ -120,29 +142,38 @@
     <section id="selection-bar" class="sync-selection hidden" aria-label="批量选表">
       <button id="select-visible-downloads" type="button"></button>
       <span id="selection-count" aria-live="polite"></span>
+      <button id="view-selection" type="button">查看已选</button>
       <button id="clear-selection" type="button">清空</button>
       <button id="download-selected" type="button" class="primary">下载选中</button>
     </section>
+    <dialog id="batch-confirm" class="batch-confirm" aria-labelledby="batch-confirm-title">
+      <form method="dialog">
+        <header class="modal-head"><strong id="batch-confirm-title">确认批量下载</strong></header>
+        <div class="batch-confirm-body">
+          <p id="batch-confirm-scope"></p>
+          <p id="batch-confirm-export"></p>
+          <ul id="batch-confirm-items" aria-label="将下载的配置表"></ul>
+        </div>
+        <footer class="modal-foot">
+          <button type="submit" value="cancel" autofocus>取消</button>
+          <button type="submit" value="download" id="batch-confirm-submit" class="primary">开始下载</button>
+        </footer>
+      </form>
+    </dialog>
     <section id="batch-result" class="sync-batch hidden" aria-label="下载批次结果">
       <div class="sync-batch-head">
         <strong id="batch-title" role="status"></strong>
         <span id="batch-action"></span>
         <button id="batch-toggle" type="button" aria-controls="batch-items">明细</button>
         <button id="batch-retry" type="button">重试失败项</button>
+        <button id="batch-review" type="button">刷新并查看跳过项</button>
+        <button id="batch-diagnose" type="button">查看导出错误</button>
         <button id="batch-copy" type="button">复制本批变更摘要</button>
       </div>
       <ul id="batch-items" class="sync-batch-items hidden"></ul>
     </section>
     <main id="groups" class="groups"></main>
 
-    <!-- 授权提示 Banner -->
-    <section id="auth-banner" class="auth-banner hidden">
-      <div>
-        <strong>需要 Google 授权</strong>
-        <p style="margin:4px 0 0;font-size:12px;color:#92400e;">需要授权才能查询云端表格变更状态并同步数据。</p>
-      </div>
-      <a href="/auth/start" class="btn-primary" style="padding:6px 14px;border-radius:6px;text-decoration:none;font-weight:600;display:inline-block;background:#2563eb;color:#fff;">前往授权</a>
-    </section>
   </div>
 
   <!-- 底部可折叠抽屉式控制台 -->
@@ -198,16 +229,16 @@
       </header>
       <div class="dir-toolbar">
         <button id="dir-native" type="button">在访达中选择…</button>
-        <span class="dir-tip" style="color:var(--text-tertiary);font-size:12px;">或在下方逐级浏览</span>
+        <span class="dir-tip">或浏览下方带 ★ 的目录</span>
       </div>
       <div id="dir-path" class="dir-path"></div>
       <ul id="dir-list" class="dir-list"></ul>
       <label class="dir-name">项目名称
         <input id="dir-name" type="text" placeholder="留空则使用配置里的 title / 目录名">
       </label>
-      <p id="dir-msg" class="dir-msg"></p>
+      <p id="dir-msg" class="dir-msg" role="status"></p>
       <footer class="modal-foot">
-        <span class="dir-tip" style="color:var(--text-tertiary);font-size:12px;">含 syncmanager.config.json 或 filelist.json 的目录会标 ★</span>
+        <span class="dir-tip">选择包含项目配置或配置表清单的目录</span>
         <button id="dir-pick" type="button" class="primary">添加此目录</button>
       </footer>
     </div>
@@ -246,9 +277,9 @@
               <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3.5 5.5a1.5 1.5 0 0 1 1.5-1.5h3.6a1.5 1.5 0 0 1 1.1.5l1.3 1.5h4a1.5 1.5 0 0 1 1.5 1.5v7a1.5 1.5 0 0 1-1.5 1.5h-10A1.5 1.5 0 0 1 3.5 14v-8.5z"/></svg>
               <span>打开本地目录</span>
             </button>
-            <button id="fl-cloud-refresh" type="button" class="fl-btn fl-btn-secondary" title="云端文件移动或改名后，重新查询全部云端路径并写回 filelist.json">
+            <button id="fl-cloud-refresh" type="button" class="fl-btn fl-btn-secondary" title="查询已关联表格的云端路径，查看变化后可选择写入清单" aria-controls="fl-cloud-preview" aria-expanded="false">
               <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3.5 10a6.5 6.5 0 0 1 11.5-4.2L17 8M17 3.5V8h-4.5M16.5 10a6.5 6.5 0 0 1-11.5 4.2L3 12M3 16.5V12h4.5"/></svg>
-              <span>刷新云端路径</span>
+              <span>查询云端路径</span>
             </button>
             <button id="fl-root-edit" type="button" class="fl-btn fl-btn-secondary" title="自定义 Google Drive 云端根目录与本地目录对应关系">
               <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="10" cy="10" r="2.8"/><path d="M16.2 12.4a1.2 1.2 0 0 0 .2 1.4l.1.1a1.5 1.5 0 0 1-2.1 2.1l-.1-.1a1.2 1.2 0 0 0-1.4-.2 1.2 1.2 0 0 0-.7 1.1v.2a1.5 1.5 0 0 1-3 0v-.2a1.2 1.2 0 0 0-.8-1.1 1.2 1.2 0 0 0-1.4.2l-.1.1a1.5 1.5 0 0 1-2.1-2.1l.1-.1a1.2 1.2 0 0 0 .2-1.4 1.2 1.2 0 0 0-1.1-.7H3.8a1.5 1.5 0 0 1 0-3h.2a1.2 1.2 0 0 0 1.1-.8 1.2 1.2 0 0 0-.2-1.4l-.1-.1a1.5 1.5 0 0 1 2.1-2.1l.1.1a1.2 1.2 0 0 0 1.4.2 1.2 1.2 0 0 0 .7-1.1v-.2a1.5 1.5 0 0 1 3 0v.2a1.2 1.2 0 0 0 .8 1.1 1.2 1.2 0 0 0 1.4-.2l.1-.1a1.5 1.5 0 0 1 2.1 2.1l-.1.1a1.2 1.2 0 0 0-.2 1.4 1.2 1.2 0 0 0 1.1.7h.2a1.5 1.5 0 0 1 0 3h-.2a1.2 1.2 0 0 0-1.1.8z"/></svg>
@@ -258,6 +289,20 @@
         </div>
       </div>
 
+      <section id="fl-cloud-preview" class="fl-cloud-preview hidden" aria-labelledby="fl-cloud-preview-title">
+        <div class="fl-cloud-preview-head">
+          <div>
+            <strong id="fl-cloud-preview-title">云端路径预览</strong>
+            <p id="fl-cloud-preview-status" role="status"></p>
+          </div>
+          <div class="fl-cloud-preview-actions">
+            <button id="fl-cloud-preview-cancel" type="button" class="fl-btn fl-btn-secondary">关闭预览</button>
+            <button id="fl-cloud-preview-apply" type="button" class="btn btn-primary hidden">应用到清单</button>
+          </div>
+        </div>
+        <div id="fl-cloud-preview-rows" class="fl-cloud-preview-rows"></div>
+      </section>
+
       <!-- 搜索、分段筛选与操作工具栏 -->
       <div class="fl-toolbar">
         <div class="fl-toolbar-left">
@@ -266,10 +311,10 @@
               <span>全部</span> <span id="fl-tab-all" class="fl-tab-count">0</span>
             </button>
             <button type="button" class="fl-tab" data-tab="cloud">
-              <span>云端已关联</span> <span id="fl-tab-cloud" class="fl-tab-count">0</span>
+              <span>已关联</span> <span id="fl-tab-cloud" class="fl-tab-count">0</span>
             </button>
             <button type="button" class="fl-tab" data-tab="local">
-              <span>本地未入库</span> <span id="fl-tab-local" class="fl-tab-count">0</span>
+              <span>仅本地</span> <span id="fl-tab-local" class="fl-tab-count">0</span>
             </button>
           </div>
         </div>
@@ -636,7 +681,7 @@
   </div>
 
   <!-- 差异预览：本地 xlsx ↔ 云端表 -->
-  <div id="diff-modal" class="modal modal-top hidden">
+  <div id="diff-modal" class="modal modal-top hidden" role="dialog" aria-modal="true" aria-labelledby="diff-title" tabindex="-1">
     <div class="modal-box diff-box">
       <header class="modal-head">
         <div><strong id="diff-title">差异预览</strong> <span id="diff-path" class="fl-file"></span></div>
@@ -667,12 +712,24 @@
         <section id="diff-view" class="diff-view"></section>
         <div id="diff-ruler" class="diff-ruler" title="点击跳转"></div>
       </div>
-      <footer class="modal-foot">
-        <p id="diff-msg" class="fl-msg"></p>
-        <div class="fl-foot-btns">
+      <footer class="modal-foot diff-footer">
+        <div class="diff-footer-info">
+          <strong id="diff-direction-status"></strong>
+          <div class="diff-feedback">
+            <p id="diff-msg" class="fl-msg" role="status"></p>
+            <button id="diff-refresh" type="button" class="hidden">重新比较</button>
+          </div>
+        </div>
+        <div class="diff-footer-actions">
+          <div class="diff-action">
+            <button id="diff-download" type="button" class="diff-dl" aria-describedby="diff-download-hint">云端 → 覆盖本地</button>
+            <small id="diff-download-hint">覆盖前自动备份，可在列表的「本地备份」恢复</small>
+          </div>
+          <div id="diff-upload-action" class="diff-action">
+            <button id="diff-upload" type="button" class="diff-ul" aria-describedby="diff-upload-hint">本地 → 覆盖云端</button>
+            <small id="diff-upload-hint">可在 Google 表格的「文件 → 版本历史」恢复</small>
+          </div>
           <button id="diff-cancel" type="button">关闭</button>
-          <button id="diff-download" type="button" class="diff-dl">⬇ 用云端覆盖本地</button>
-          <button id="diff-upload" type="button" class="diff-ul">⬆ 用本地覆盖云端</button>
         </div>
       </footer>
     </div>

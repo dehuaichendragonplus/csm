@@ -7,7 +7,7 @@ const open = require('open');
 const { findAvailablePort } = require('./lib/port-scanner');
 const oauth = require('./lib/oauth');
 const { loadFilelist } = require('./lib/filelist-loader');
-const { loadState, saveState, updateEntry, hashFile } = require('./lib/sync-state');
+const { loadState, saveState, updateEntry, hashFile, fileVersion } = require('./lib/sync-state');
 const { google } = require('googleapis');
 const { getModifiedTimes, getCloudInfo, getCurrentUser, withRetry, uploadXlsxToSheet, downloadViaDrive, getFileInfo, resolveFolderPath, findSheetInFolder, createSheetFromXlsx } = require('./lib/drive-api');
 const backups = require('./lib/backups');
@@ -117,6 +117,7 @@ async function main(opts = {}) {
   const driveCacheFetchedAt = new Map(); // projectId -> ISO 时间
   const verifyCaches = new Map(); // projectId -> { [path]: { key, checkedAt, summary } }
   const diffSnapshots = new Map(); // 最近两次差异预览的工作簿，按 ID 搜索复用
+  const cloudPathPreviews = new Map(); // projectId -> 最近一次待应用的云端路径预览
   const downloadsInProgress = new Set();
   const verifyStatuses = new Set(['updated', 'conflict', 'local_changed']);
 
@@ -170,6 +171,9 @@ async function main(opts = {}) {
     const filelist = loadFilelist(ctx.cfg.filelistPath);
     const ids = filelist.filter(e => e.spreadsheetId).map(e => e.spreadsheetId);
     const map = await getModifiedTimes(ids, oauth2Client);
+    if (map.size && [...map.values()].every(v => v.error && !['forbidden', 'not_found'].includes(v.error))) {
+      throw new Error('本次无法查询云端表格，请检查网络或 Google 授权后重试');
+    }
     driveCaches.set(ctx.id, map);
     driveCacheFresh.set(ctx.id, true);
     const fetchedAt = new Date().toISOString();
@@ -194,17 +198,16 @@ async function main(opts = {}) {
     if (!loadDiskDriveCache(ctx)) await refreshDriveCache(ctx);
     return driveCacheFresh.get(ctx.id) === false;
   }
-  function markStale(res, ctx) {
-    res.set('X-CSM-Stale', driveCacheFetchedAt.get(ctx.id) || '1');
+  function markCloudChecked(res, ctx, stale = false) {
+    const checkedAt = driveCacheFetchedAt.get(ctx.id);
+    if (checkedAt) res.set('X-CSM-Checked-At', checkedAt);
+    if (stale) res.set('X-CSM-Stale', checkedAt || '1');
   }
 
   // 用入仓的 sidecar 为尚无本地状态的条目补状态：xlsx 来自 git 而非过期下载，应视为已同步
-  function bootstrapStateFromSidecar(ctx, filelist) {
-    if (!ctx.cfg.sidecarPath) return;
+  function bootstrapStateFromSidecar(ctx, filelist, state) {
+    if (!ctx.cfg.sidecarPath) return false;
     const sidecar = loadSidecar(ctx.cfg.sidecarPath);
-    if (Object.keys(sidecar).length === 0) return;
-    const statePath = ctx.cfg.statePath;
-    const state = loadState(statePath);
     let changed = false;
     for (const entry of filelist) {
       if (state[entry.path]) continue;
@@ -221,12 +224,11 @@ async function main(opts = {}) {
       };
       changed = true;
     }
-    if (changed) saveState(statePath, state);
+    return changed;
   }
 
   // 旧的同步记录没有内容指纹：文件修改时间与记录一致（同步后没动过）时补记指纹，之后 git 操作只改时间也能识别为未改动
-  function backfillHashes(ctx, filelist) {
-    const state = loadState(ctx.cfg.statePath);
+  function backfillHashes(filelist, state) {
     let changed = false;
     for (const entry of filelist) {
       const row = state[entry.path];
@@ -237,19 +239,21 @@ async function main(opts = {}) {
       const h = hashFile(entry.savePath);
       if (h) { row.lastSyncedHash = h; changed = true; }
     }
-    if (changed) saveState(ctx.cfg.statePath, state);
+    return changed;
   }
 
   function verifyKey(entry, row, localHash, cfg) {
     return JSON.stringify([entry.spreadsheetId, row.cloudModifiedTime, localHash, entry.diffKeys, entry.mergeCells, cfg.exportUrl]);
   }
 
-  function tablesOf(ctx) {
+  function tablesOf(ctx, { driveMap = driveCaches.get(ctx.id), persistState = true } = {}) {
     const filelist = loadFilelist(ctx.cfg.filelistPath);
-    bootstrapStateFromSidecar(ctx, filelist);
-    backfillHashes(ctx, filelist);
+    const state = loadState(ctx.cfg.statePath);
+    const bootstrapped = bootstrapStateFromSidecar(ctx, filelist, state);
+    const backfilled = backfillHashes(filelist, state);
+    if (persistState && (bootstrapped || backfilled)) saveState(ctx.cfg.statePath, state);
     const cache = verifyCacheOf(ctx.id);
-    return aggregateTables(filelist, driveCaches.get(ctx.id), loadState(ctx.cfg.statePath)).map((row, i) => {
+    return aggregateTables(filelist, driveMap, state).map((row, i) => {
       const saved = Object.hasOwn(cache, row.path) && cache[row.path];
       if (!saved?.summary || driveCacheFresh.get(ctx.id) !== true || !verifyStatuses.has(row.status)) return row;
       const entry = filelist[i];
@@ -276,6 +280,7 @@ async function main(opts = {}) {
       driveCaches.clear();
       driveCacheFresh.clear();
       diffSnapshots.clear();
+      cloudPathPreviews.clear();
       authEpoch++;
       for (const project of loadProjects(REGISTRY_PATH)) clearVerifyCache(project.id);
       if (opts.authSuccessHtml) res.type('html').send(opts.authSuccessHtml);
@@ -309,6 +314,7 @@ async function main(opts = {}) {
       driveCaches.clear();
       driveCacheFresh.clear();
       diffSnapshots.clear();
+      cloudPathPreviews.clear();
       authEpoch++;
       for (const project of loadProjects(REGISTRY_PATH)) clearVerifyCache(project.id);
       res.json({ ok: true });
@@ -377,6 +383,7 @@ async function main(opts = {}) {
     if (!removeProject(REGISTRY_PATH, req.params.id)) return res.status(404).json({ error: 'unknown project' });
     driveCaches.delete(req.params.id);
     driveCacheFresh.delete(req.params.id);
+    cloudPathPreviews.delete(req.params.id);
     res.json({ ok: true });
   });
 
@@ -483,7 +490,7 @@ async function main(opts = {}) {
     if (!hasToken) return res.status(401).json({ error: 'OAUTH_REQUIRED' });
     try {
       // 启动时先用上次的云端时间立即显示，界面看到 X-CSM-Stale 后会在后台刷新
-      if (await ensureDriveCache(req.ctx)) markStale(res, req.ctx);
+      markCloudChecked(res, req.ctx, await ensureDriveCache(req.ctx));
       res.json(tablesOf(req.ctx));
     } catch (err) {
       if (err.message === 'OAUTH_REQUIRED') return res.status(401).json({ error: 'OAUTH_REQUIRED' });
@@ -494,6 +501,7 @@ async function main(opts = {}) {
   projectRouter.post('/refresh', async (req, res) => {
     try {
       await refreshDriveCache(req.ctx);
+      markCloudChecked(res, req.ctx);
       if (req.query.reuse !== '1') clearVerifyCache(req.ctx.id);
       res.json(tablesOf(req.ctx));
     } catch (err) {
@@ -553,6 +561,7 @@ async function main(opts = {}) {
         const drive = new Map([[entry.spreadsheetId, info]]);
         checkDownloadBinding(ctx, entry);
         const state = loadState(cfg.statePath);
+        bootstrapStateFromSidecar(ctx, [entry], state);
         const [row] = aggregateTables([entry], drive, state);
         const localHash = hashFile(entry.savePath);
         if (row.status === 'synced' && row.lastSyncedModifiedTime === version.cloudModifiedTime
@@ -564,7 +573,8 @@ async function main(opts = {}) {
           driveCaches.get(id).set(entry.spreadsheetId, info);
           return { info, backup: null, summary: null, alreadySynced: true };
         }
-        if (row.direction !== 'download' || row.spreadsheetId !== version.spreadsheetId
+        if ((version.reviewed !== true && row.direction !== 'download') || row.status === 'error'
+            || row.spreadsheetId !== version.spreadsheetId
             || row.cloudModifiedTime !== version.cloudModifiedTime || row.localVersion !== version.localVersion) {
           throw skipDownload('版本或同步方向已变化，请刷新后重新选择');
         }
@@ -727,7 +737,7 @@ async function main(opts = {}) {
   });
 
   // ---------- 配置表清单（filelist.json）预览与编辑 ----------
-  const editorStatus = err => ({ INVALID: 400, INVALID_JSON: 500, NOT_FOUND: 404, DUPLICATE_PATH: 409, DUPLICATE_ID: 409 }[err.code] || 500);
+  const editorStatus = err => ({ INVALID: 400, INVALID_JSON: 500, NOT_FOUND: 404, DUPLICATE_PATH: 409, DUPLICATE_ID: 409, STALE_PREVIEW: 409 }[err.code] || 500);
   const sendEditorError = (res, err) => res.status(err.status || editorStatus(err)).json({ error: err.message, code: err.code, paths: err.paths });
 
   // 云端目录树：文件夹元信息全局缓存；云端根目录按项目缓存
@@ -791,9 +801,10 @@ async function main(opts = {}) {
 
   // 新增 / 修改后条目还没有云端位置时补查并写回；查询失败不影响保存
   async function withCloudLocation(ctx, entry) {
-    if (!hasToken || !entry.spreadsheetId || (entry.cloudDir && entry.cloudFile)) return entry;
+    if (!hasToken || !entry.spreadsheetId || (typeof entry.cloudDir === 'string' && entry.cloudFile)) return entry;
     try {
-      await persistCloudLocations(ctx, [entry.spreadsheetId]);
+      const locs = await tree().locateMany([entry.spreadsheetId]);
+      filelistEditor.setCloudLocations(ctx.cfg.filelistPath, locs);
       const { entries } = filelistEditor.readFilelistRaw(ctx.cfg.filelistPath);
       return entries.find(e => e.path === entry.path) || entry;
     } catch (_) {
@@ -815,12 +826,13 @@ async function main(opts = {}) {
     try {
       const { entries } = filelistEditor.readFilelistRaw(cfg.filelistPath);
       const baseDir = path.dirname(cfg.filelistPath);
-      // 同步状态（与主列表同一套判定）；云端修改时间缓存为空时先查一次
+      // 与主列表用同一套状态判定；打开清单只读，查询结果和补出的同步基准仅供本次显示。
       const syncByPath = new Map();
       if (hasToken) {
         try {
-          await ensureDriveCache(req.ctx);
-          for (const t of tablesOf(req.ctx)) syncByPath.set(t.path, t);
+          const driveMap = loadDiskDriveCache(req.ctx) ? driveCaches.get(req.ctx.id) :
+            await getModifiedTimes(entries.map(e => e.spreadsheetId), oauth2Client);
+          for (const t of tablesOf(req.ctx, { driveMap, persistState: false })) syncByPath.set(t.path, t);
         } catch (_) { /* 查不到云端时只是不显示同步按钮 */ }
       }
       const rows = entries.map(e => {
@@ -834,6 +846,7 @@ async function main(opts = {}) {
           status: t.status,
           cloudModifiedTime: t.cloudModifiedTime,
           cloudModifiedBy: t.cloudModifiedBy,
+          localVersion: t.localVersion,
           direction: t.direction // 与主列表同一个判定结果
         } : null;
         return { ...e, local, sync };
@@ -1007,28 +1020,69 @@ async function main(opts = {}) {
     return prev;
   }
 
-  // 查询云端位置并写回 filelist.json（cloudDir / cloudFile），之后打开清单直接读取，不再重复查询
-  async function persistCloudLocations(ctx, ids) {
-    const locs = await tree().locateMany(ids);
-    const ok = {};
-    const failed = {};
-    for (const [id, loc] of Object.entries(locs)) {
-      if (loc.error) failed[id] = loc.error; else ok[id] = loc;
-    }
-    const updated = Object.keys(ok).length ? filelistEditor.setCloudLocations(ctx.cfg.filelistPath, ok) : 0;
-    return { updated, failed, queried: Object.keys(locs).length };
+  function cloudPathScope(ctx) {
+    if (!ctx) return null;
+    return JSON.stringify([ctx.project.dir, ctx.cfg.filelistPath, ctx.cfg.cloudRoot, authEpoch]);
   }
 
-  // body: { all: true } 全部重新查询（云端文件移动 / 改名后用）；否则只查还没有云端位置的条目
+  function staleCloudPreview() {
+    return Object.assign(new Error('项目、目录映射或预览已变化，请重新查询云端路径'), { code: 'STALE_PREVIEW' });
+  }
+
+  // 只查询已关联的表，逐行展示旧位置与新位置。应用只接受本项目服务端保留的预览。
   projectRouter.post('/filelist/cloud-paths', async (req, res) => {
     if (!hasToken) return res.status(401).json({ error: 'OAUTH_REQUIRED' });
+    const { ctx } = req;
+    let preview;
     try {
-      const { entries } = filelistEditor.readFilelistRaw(req.ctx.cfg.filelistPath);
-      const all = !!(req.body && req.body.all);
-      const ids = entries
-        .filter(e => String(e.spreadsheetId || '').trim() && (all || !e.cloudDir || !e.cloudFile))
-        .map(e => String(e.spreadsheetId).trim());
-      res.json(ids.length ? await persistCloudLocations(req.ctx, ids) : { updated: 0, failed: {}, queried: 0 });
+      const { entries, raw } = filelistEditor.readFilelistRaw(ctx.cfg.filelistPath);
+      preview = { id: randomUUID(), scope: cloudPathScope(ctx), raw };
+      cloudPathPreviews.set(ctx.id, preview);
+      const ids = [...new Set(entries.map(e => String(e.spreadsheetId || '').trim()).filter(Boolean))];
+      // 此次查询也要识别父文件夹改名或移动，因此使用本次查询独有的文件夹缓存。
+      const locs = ids.length ? await driveTree.createTreeClient(oauth2Client).locateMany(ids) : {};
+      if (cloudPathPreviews.get(ctx.id) !== preview || cloudPathScope(getCtx(ctx.id)) !== preview.scope) {
+        throw staleCloudPreview();
+      }
+      filelistEditor.readFilelistRaw(ctx.cfg.filelistPath, raw);
+      const changes = [];
+      const failures = [];
+      const usable = {};
+      for (const e of entries) {
+        const id = String(e.spreadsheetId || '').trim();
+        if (!id) continue;
+        const loc = Object.hasOwn(locs, id) ? locs[id] : null;
+        const row = { path: e.path, name: e.name };
+        if (loc?.error || !filelistEditor.cloudFields(loc)) {
+          failures.push({ ...row, error: loc?.error || '无法取得云端位置' });
+          continue;
+        }
+        const after = filelistEditor.cloudLocationChange(e, loc);
+        if (!after) continue;
+        usable[id] = loc;
+        const before = { cloudDir: e.cloudDir ?? null, cloudFile: e.cloudFile ?? null };
+        changes.push({ ...row, before, after });
+      }
+      if (changes.length) preview.locs = usable;
+      else cloudPathPreviews.delete(ctx.id);
+      res.json({ previewId: changes.length ? preview.id : null, queried: ids.length, changes, failures });
+    } catch (err) {
+      if (cloudPathPreviews.get(ctx.id) === preview) cloudPathPreviews.delete(ctx.id);
+      sendEditorError(res, err);
+    }
+  });
+
+  projectRouter.post('/filelist/cloud-paths/apply', (req, res) => {
+    if (!hasToken) return res.status(401).json({ error: 'OAUTH_REQUIRED' });
+    const { ctx } = req;
+    const preview = cloudPathPreviews.get(ctx.id);
+    try {
+      if (!preview?.locs || preview.id !== req.body?.previewId || preview.scope !== cloudPathScope(ctx)) {
+        throw staleCloudPreview();
+      }
+      cloudPathPreviews.delete(ctx.id);
+      const updated = filelistEditor.setCloudLocations(ctx.cfg.filelistPath, preview.locs, preview.raw);
+      res.json({ updated });
     } catch (err) {
       sendEditorError(res, err);
     }
@@ -1176,6 +1230,12 @@ async function main(opts = {}) {
         snapshot,
         path: entry.path,
         name: entry.name,
+        downloadVersion: {
+          spreadsheetId: entry.spreadsheetId,
+          cloudModifiedTime: info.modifiedTime,
+          localVersion: localStat ? fileVersion(localStat) : null,
+          reviewed: true
+        },
         local: localStat ? { exists: true, size: localStat.size, mtime: localStat.mtime.toISOString() } : { exists: false },
         cloud: { modifiedTime: info.modifiedTime, modifiedBy: info.modifiedBy, name: info.name },
         diff: diffWorkbooks(localWb, cloudWb, { keys: entry.diffKeys })
