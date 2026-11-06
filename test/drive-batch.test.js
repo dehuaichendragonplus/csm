@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { getModifiedTimes, buildBatchBody, parseBatchResponse } = require('../lib/drive-api');
+const { getModifiedTimes, buildBatchBody, parseBatchResponse, toCloudInfo, CLOUD_FIELDS } = require('../lib/drive-api');
 
 // 按 Drive batch API 的格式拼一个响应：items = [{ status, body }]
 function fakeBatchResponse(items, boundary = 'batch_abc') {
@@ -68,4 +68,56 @@ test('getModifiedTimes：超过 100 个分块请求；被限流的条目和失�
   assert.strictEqual(m.get('id0').modifiedTime, 't0');
   assert.ok(m.get('id3').error, '被限流的条目重查（这里重查也失败）后记为错误');
   assert.ok(m.get('id120').error, '整块失败的条目重查后记为错误');
+});
+
+test('toCloudInfo：优先取 lastModifyingUser，退避到 owners 或 sharingUser', () => {
+  // 1. 标准有 displayName
+  assert.strictEqual(toCloudInfo({
+    modifiedTime: '2026-01-01T00:00:00Z',
+    name: 'T1',
+    lastModifyingUser: { displayName: '李四', emailAddress: 'lisi@example.com' }
+  }).modifiedBy, '李四');
+
+  // 2. 只有 emailAddress
+  assert.strictEqual(toCloudInfo({
+    modifiedTime: '2026-01-01T00:00:00Z',
+    name: 'T2',
+    lastModifyingUser: { emailAddress: 'bot@example.com' }
+  }).modifiedBy, 'bot@example.com');
+
+  // 3. lastModifyingUser 为空字串或仅有 kind，兜底取 owners[0]
+  assert.strictEqual(toCloudInfo({
+    modifiedTime: '2026-01-01T00:00:00Z',
+    name: 'T3',
+    lastModifyingUser: { kind: 'drive#user', displayName: '', me: false },
+    owners: [{ displayName: '王五', emailAddress: 'wangwu@example.com' }]
+  }).modifiedBy, '王五');
+
+  // 4. lastModifyingUser 缺失，取 owners
+  assert.strictEqual(toCloudInfo({
+    modifiedTime: '2026-01-01T00:00:00Z',
+    name: 'T4',
+    owners: [{ displayName: '赵六' }]
+  }).modifiedBy, '赵六');
+
+  // 5. lastModifyingUser 与 owners 均无，取 sharingUser
+  assert.strictEqual(toCloudInfo({
+    modifiedTime: '2026-01-01T00:00:00Z',
+    name: 'T5',
+    sharingUser: { displayName: '钱七' }
+  }).modifiedBy, '钱七');
+
+  // 6. 全无用户信息，返回 null
+  assert.strictEqual(toCloudInfo({
+    modifiedTime: '2026-01-01T00:00:00Z',
+    name: 'T6'
+  }).modifiedBy, null);
+});
+
+test('buildBatchBody：生成的字段包含 lastModifyingUser 与 owners，不带易被 Batch API 误吞的括号子字段', () => {
+  assert.ok(CLOUD_FIELDS.includes('lastModifyingUser'));
+  assert.ok(CLOUD_FIELDS.includes('owners'));
+  assert.ok(!CLOUD_FIELDS.includes('('), 'CLOUD_FIELDS 不应包含括号子选择器，避免 Google Batch API 剔除非本人修改人');
+  const body = buildBatchBody(['id1'], 'test_bound');
+  assert.match(body, /fields=id,modifiedTime,name,lastModifyingUser,owners/);
 });
