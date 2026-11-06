@@ -1,6 +1,7 @@
 'use strict';
 const path = require('node:path');
 const fs = require('node:fs');
+const { randomUUID } = require('node:crypto');
 const express = require('express');
 const open = require('open');
 const { findAvailablePort } = require('./lib/port-scanner');
@@ -12,7 +13,7 @@ const { getModifiedTimes, getCloudInfo, getCurrentUser, withRetry, uploadXlsxToS
 const backups = require('./lib/backups');
 const { appendHistory, readHistory } = require('./lib/history');
 const { readWorkbook } = require('./lib/xlsx-reader');
-const { diffWorkbooks } = require('./lib/xlsx-diff');
+const { diffWorkbooks, summarizeDiff, findRecords } = require('./lib/xlsx-diff');
 const updateCheck = require('./lib/update-check');
 const PKG = require('./package.json');
 const localTables = require('./lib/local-tables');
@@ -114,7 +115,10 @@ async function main(opts = {}) {
   // 内存里的云端时间是不是本次运行实际查询过的（false = 从磁盘读的上次结果，界面会在后台补刷）
   const driveCacheFresh = new Map(); // projectId -> boolean
   const driveCacheFetchedAt = new Map(); // projectId -> ISO 时间
-  const verifyCaches = new Map(); // projectId -> { [path]: key }（已确认内容不同的版本）
+  const verifyCaches = new Map(); // projectId -> { [path]: { key, checkedAt, summary } }
+  const diffSnapshots = new Map(); // 最近两次差异预览的工作簿，按 ID 搜索复用
+  const downloadsInProgress = new Set();
+  const verifyStatuses = new Set(['updated', 'conflict', 'local_changed']);
 
   function readJson(file, fallback) {
     try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (_) { return fallback; }
@@ -139,6 +143,7 @@ async function main(opts = {}) {
 
   // 当前 Google 账号（写操作历史用），授权后首次需要时查询一次
   let currentUser = null;
+  let authEpoch = 0;
   async function actor() {
     if (!currentUser && hasToken) {
       try { currentUser = await getCurrentUser(oauth2Client); } catch (_) { currentUser = { name: null, email: null }; }
@@ -235,11 +240,22 @@ async function main(opts = {}) {
     if (changed) saveState(ctx.cfg.statePath, state);
   }
 
+  function verifyKey(entry, row, localHash, cfg) {
+    return JSON.stringify([entry.spreadsheetId, row.cloudModifiedTime, localHash, entry.diffKeys, entry.mergeCells, cfg.exportUrl]);
+  }
+
   function tablesOf(ctx) {
     const filelist = loadFilelist(ctx.cfg.filelistPath);
     bootstrapStateFromSidecar(ctx, filelist);
     backfillHashes(ctx, filelist);
-    return aggregateTables(filelist, driveCaches.get(ctx.id), loadState(ctx.cfg.statePath));
+    const cache = verifyCacheOf(ctx.id);
+    return aggregateTables(filelist, driveCaches.get(ctx.id), loadState(ctx.cfg.statePath)).map((row, i) => {
+      const saved = Object.hasOwn(cache, row.path) && cache[row.path];
+      if (!saved?.summary || driveCacheFresh.get(ctx.id) !== true || !verifyStatuses.has(row.status)) return row;
+      const entry = filelist[i];
+      if (saved.key !== verifyKey(entry, row, hashFile(entry.savePath), ctx.cfg)) return row;
+      return { ...row, changeSummary: saved.summary, checkedAt: saved.checkedAt };
+    });
   }
 
   // ---------- 全局：授权 / 健康检查 ----------
@@ -259,6 +275,9 @@ async function main(opts = {}) {
       currentUser = null;
       driveCaches.clear();
       driveCacheFresh.clear();
+      diffSnapshots.clear();
+      authEpoch++;
+      for (const project of loadProjects(REGISTRY_PATH)) clearVerifyCache(project.id);
       if (opts.authSuccessHtml) res.type('html').send(opts.authSuccessHtml);
       else res.redirect('/');
       onAuthorized();
@@ -289,6 +308,9 @@ async function main(opts = {}) {
       currentUser = null;
       driveCaches.clear();
       driveCacheFresh.clear();
+      diffSnapshots.clear();
+      authEpoch++;
+      for (const project of loadProjects(REGISTRY_PATH)) clearVerifyCache(project.id);
       res.json({ ok: true });
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -472,7 +494,7 @@ async function main(opts = {}) {
   projectRouter.post('/refresh', async (req, res) => {
     try {
       await refreshDriveCache(req.ctx);
-      clearVerifyCache(req.ctx.id);
+      if (req.query.reuse !== '1') clearVerifyCache(req.ctx.id);
       res.json(tablesOf(req.ctx));
     } catch (err) {
       if (err.message === 'OAUTH_REQUIRED') return res.status(401).json({ error: 'OAUTH_REQUIRED' });
@@ -497,33 +519,100 @@ async function main(opts = {}) {
     }
   }
 
-  // 下载一张表：先查云端当前修改时间（作为同步基准）→ 备份本地 → 导出覆盖 → 记录同步状态与历史
-  async function downloadTable(ctx, entry, log) {
+  function skipDownload(message) {
+    return Object.assign(new Error(message), { code: 'SYNC_SKIPPED' });
+  }
+
+  function checkDownloadBinding(ctx, entry) {
+    try {
+      const cfg = loadConfig(path.join(ctx.project.dir, CONFIG_FILENAME), { statePath: ctx.cfg.statePath });
+      const latest = loadFilelist(cfg.filelistPath).find(row => row.path === entry.path);
+      if (latest?.spreadsheetId === entry.spreadsheetId && latest.savePath === entry.savePath
+          && !!latest.mergeCells === !!entry.mergeCells
+          && JSON.stringify(latest.diffKeys) === JSON.stringify(entry.diffKeys)
+          && cfg.filelistPath === ctx.cfg.filelistPath && cfg.exportUrl === ctx.cfg.exportUrl
+          && cfg.exportPassword === ctx.cfg.exportPassword && cfg.sidecarPath === ctx.cfg.sidecarPath) return;
+    } catch (_) { /* 项目配置或表清单已无法读取 */ }
+    throw skipDownload('配置表绑定或导出设置已变化，请刷新后重新选择');
+  }
+
+  // 批量下载先检查用户所选版本，把云端导出到暂存文件，确认两端仍一致后再替换。
+  async function downloadTable(ctx, entry, log, version) {
     const { cfg, id } = ctx;
-    // 先取修改时间再导出：导出期间云端又被改了，记下的是较早的时间，下次刷新会显示「有更新」，不会漏
+    const epoch = authEpoch;
     const info = await getCloudInfo(entry.spreadsheetId, oauth2Client);
-    const backup = backups.backupFile(backupRootOf(id), entry.path, entry.savePath, { reason: '下载前自动备份' });
-    if (backup && !backup.deduped) log(`  ↳ 已备份本地文件（${backup.id}）\n`);
-    await exportCloud(cfg, entry, entry.savePath, {
-      onRetry: ({ attempt, waitMs, error }) => log(`  ⟳ retrying (${attempt}/3) after ${waitMs / 1000}s… (${error.message})\n`)
-    });
-    const stat = fs.statSync(entry.savePath);
-    updateEntry(cfg.statePath, entry.path, {
-      lastSyncedModifiedTime: info.modifiedTime,
-      lastSyncedSize: stat.size,
-      lastSyncedMtime: stat.mtime.toISOString(),
-      lastSyncedHash: hashFile(entry.savePath)
-    });
-    if (cfg.sidecarPath) updateSidecar(cfg.sidecarPath, entry.path, info.modifiedTime);
-    delete verifyCacheOf(id)[entry.path];
-    driveCaches.get(id).set(entry.spreadsheetId, info);
-    return { info, backup };
+    const options = {
+      onRetry: ({ attempt, waitMs, error }) => log(`  ↳ 重试 ${attempt}/3（${waitMs / 1000} 秒后）：${error.message}\n`)
+    };
+    let tmp;
+    let summary = null;
+    let backup;
+    try {
+      if (version) {
+        if (epoch !== authEpoch) throw skipDownload('Google 账号已变更，请重新选择');
+        const drive = new Map([[entry.spreadsheetId, info]]);
+        checkDownloadBinding(ctx, entry);
+        const state = loadState(cfg.statePath);
+        const [row] = aggregateTables([entry], drive, state);
+        const localHash = hashFile(entry.savePath);
+        if (row.status === 'synced' && row.lastSyncedModifiedTime === version.cloudModifiedTime
+            && row.cloudModifiedTime === version.cloudModifiedTime && row.spreadsheetId === version.spreadsheetId
+            && localHash && state[entry.path]?.lastSyncedHash === localHash) {
+          if (cfg.sidecarPath && loadSidecar(cfg.sidecarPath)[entry.path] !== info.modifiedTime) {
+            updateSidecar(cfg.sidecarPath, entry.path, info.modifiedTime);
+          }
+          driveCaches.get(id).set(entry.spreadsheetId, info);
+          return { info, backup: null, summary: null, alreadySynced: true };
+        }
+        if (row.direction !== 'download' || row.spreadsheetId !== version.spreadsheetId
+            || row.cloudModifiedTime !== version.cloudModifiedTime || row.localVersion !== version.localVersion) {
+          throw skipDownload('版本或同步方向已变化，请刷新后重新选择');
+        }
+        if (row.localExists && !localHash) throw new Error('无法读取本地表格');
+        // 暂存文件与目标在同一目录，替换时可原子重命名。
+        tmp = `${entry.savePath}.csm-${randomUUID()}.tmp`;
+        await exportCloud(cfg, entry, tmp, options);
+        const cloud = readWorkbook(tmp);
+        try {
+          const local = row.localExists ? readWorkbook(entry.savePath) : [];
+          summary = summarizeDiff(diffWorkbooks(local, cloud, { keys: entry.diffKeys, view: false, maxChanges: 0 }));
+        } catch (err) {
+          log(`  ↳ 无法生成差异摘要：${err.message}\n`);
+        }
+        const latest = await getCloudInfo(entry.spreadsheetId, oauth2Client);
+        if (epoch !== authEpoch) throw skipDownload('Google 账号已变更，请重新选择');
+        checkDownloadBinding(ctx, entry);
+        if (latest.modifiedTime !== info.modifiedTime || hashFile(entry.savePath) !== localHash) {
+          throw skipDownload('下载期间两端版本有变化，请刷新后重新选择');
+        }
+      }
+      backup = backups.backupFile(backupRootOf(id), entry.path, entry.savePath, { reason: '下载前自动备份' });
+      if (backup && !backup.deduped) log(`  ↳ 已备份本地文件（${backup.id}）\n`);
+      if (tmp) fs.renameSync(tmp, entry.savePath);
+      else await exportCloud(cfg, entry, entry.savePath, options);
+      const stat = fs.statSync(entry.savePath);
+      updateEntry(cfg.statePath, entry.path, {
+        lastSyncedModifiedTime: info.modifiedTime,
+        lastSyncedSize: stat.size,
+        lastSyncedMtime: stat.mtime.toISOString(),
+        lastSyncedHash: hashFile(entry.savePath)
+      });
+      if (cfg.sidecarPath) updateSidecar(cfg.sidecarPath, entry.path, info.modifiedTime);
+      delete verifyCacheOf(id)[entry.path];
+      driveCaches.get(id).set(entry.spreadsheetId, info);
+      return { info, backup, summary };
+    } finally {
+      if (tmp) fs.rmSync(tmp, { force: true });
+    }
   }
 
   projectRouter.post('/sync', async (req, res) => {
-    const { cfg } = req.ctx;
-    const { paths } = req.body || {};
-    if (!Array.isArray(paths)) return res.status(400).json({ error: 'paths must be an array' });
+    const { cfg, id } = req.ctx;
+    const { paths, versions } = req.body || {};
+    if (!Array.isArray(paths) || paths.some(p => typeof p !== 'string')) return res.status(400).json({ error: 'paths must be an array of strings' });
+    if (versions != null && (typeof versions !== 'object' || paths.some(p => !Object.hasOwn(versions, p) || !versions[p]))) {
+      return res.status(400).json({ error: '批次缺少表格版本' });
+    }
     if (!hasToken) return res.status(401).json({ error: 'OAUTH_REQUIRED' });
 
     sseSetup(res);
@@ -540,27 +629,27 @@ async function main(opts = {}) {
       while (queue.length) {
         const p = queue.shift();
         const entry = byPath.get(p);
-        if (!entry) {
-          emit('log', `! unknown path: ${p}\n`);
-          failedCount++;
-          continue;
-        }
-        if (entry.incomplete) {
-          emit('log', `! skipped (incomplete): ${p} - ${entry.incompleteReason}\n`);
-          failedCount++;
-          continue;
-        }
-        emit('table-start', { path: entry.path });
-        emit('log', `→ downloading ${entry.name} (${p})\n`);
+        const downloadKey = JSON.stringify([id, p]);
+        emit('table-start', { path: p });
         try {
-          const { info, backup } = await downloadTable(req.ctx, entry, line => emit('log', line));
-          await logHistory(req.ctx, { op: 'download', path: entry.path, name: entry.name, ok: true, cloudModifiedTime: info.modifiedTime, cloudModifiedBy: info.modifiedBy, backup: backup && backup.id });
-          emit('table-done', { path: entry.path, success: true, backup: backup && backup.id });
-          successCount++;
+          if (!entry || entry.incomplete) throw skipDownload(entry?.incompleteReason || '表格已从清单移除');
+          if (downloadsInProgress.has(downloadKey)) throw new Error('该表正在下载，请稍后重试');
+          downloadsInProgress.add(downloadKey);
+          try {
+            emit('log', `→ downloading ${entry.name} (${p})\n`);
+            const { info, backup, summary, alreadySynced } = await downloadTable(req.ctx, entry, line => emit('log', line), versions?.[p]);
+            if (!alreadySynced) {
+              await logHistory(req.ctx, { op: 'download', path: p, name: entry.name, ok: true, cloudModifiedTime: info.modifiedTime, cloudModifiedBy: info.modifiedBy, backup: backup && backup.id });
+            }
+            emit('table-done', { path: p, success: true, backup: backup && backup.id, ...(versions ? { summary } : {}) });
+            successCount++;
+          } finally {
+            downloadsInProgress.delete(downloadKey);
+          }
         } catch (err) {
-          await logHistory(req.ctx, { op: 'download', path: entry.path, name: entry.name, ok: false, error: err.message });
-          emit('log', `✗ failed: ${p} — ${err.message}\n`);
-          emit('table-done', { path: entry.path, success: false, error: err.message });
+          const skipped = err.code === 'SYNC_SKIPPED';
+          await logHistory(req.ctx, { op: 'download', path: p, name: entry?.name, ok: false, error: err.message });
+          emit('table-done', { path: p, success: false, skipped, error: err.message });
           failedCount++;
         }
       }
@@ -1057,7 +1146,15 @@ async function main(opts = {}) {
     const entry = loadFilelist(cfg.filelistPath).find(e => e.path === req.query.path);
     if (!entry) return res.status(404).json({ error: `unknown path: ${req.query.path}` });
     if (!entry.spreadsheetId) return res.status(400).json({ error: '该表没有 spreadsheetId' });
+    if (typeof req.query.record === 'string') {
+      const snapshot = diffSnapshots.get(req.query.snapshot);
+      if (!snapshot || snapshot.id !== req.ctx.id || snapshot.path !== entry.path) {
+        return res.status(410).json({ error: '差异预览已过期，请重新打开后再查找' });
+      }
+      return res.json({ sheets: findRecords(snapshot.local, snapshot.cloud, req.query.record, snapshot.keys) });
+    }
     fs.mkdirSync(TMP_DIR, { recursive: true });
+    const epoch = authEpoch;
     const tmp = path.join(TMP_DIR, `diff-${req.ctx.id}-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.xlsx`);
     try {
       const info = await getCloudInfo(entry.spreadsheetId, oauth2Client);
@@ -1070,13 +1167,18 @@ async function main(opts = {}) {
       } catch (err) {
         if (localStat) return res.status(422).json({ error: `本地文件无法解析：${err.message}` });
       }
+      if (epoch !== authEpoch) return res.status(409).json({ error: 'Google 账号已变更，请重新打开差异预览' });
       const cloudWb = readWorkbook(tmp);
+      const snapshot = randomUUID();
+      diffSnapshots.set(snapshot, { id: req.ctx.id, path: entry.path, local: localWb, cloud: cloudWb, keys: entry.diffKeys });
+      if (diffSnapshots.size > 2) diffSnapshots.delete(diffSnapshots.keys().next().value);
       res.json({
+        snapshot,
         path: entry.path,
         name: entry.name,
         local: localStat ? { exists: true, size: localStat.size, mtime: localStat.mtime.toISOString() } : { exists: false },
         cloud: { modifiedTime: info.modifiedTime, modifiedBy: info.modifiedBy, name: info.name },
-        diff: diffWorkbooks(localWb, cloudWb)
+        diff: diffWorkbooks(localWb, cloudWb, { keys: entry.diffKeys })
       });
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -1089,26 +1191,28 @@ async function main(opts = {}) {
   // 云端：有人打开又关闭、改了格式 / 批注等；本地：Excel 打开后重新保存、git 操作改写文件等（字节指纹变了，单元格没变）。
   // 对「有更新 / 冲突 / 本地变更」的表导出云端、与本地逐单元格比较；值完全一致就记为已同步（等同于下载了一份相同的内容），
   // 不再出现在对应分组里。不一致的结果按「路径 + 云端时间 + 本地指纹」缓存，同一版本不重复导出。
-  const VERIFY_STATUSES = new Set(['updated', 'conflict', 'local_changed']);
   const VERIFY_CONCURRENCY = 2;
 
   async function verifyTable(ctx, row, entry, { force = false } = {}) {
     const cache = verifyCacheOf(ctx.id);
+    const epoch = authEpoch;
     const localHash = hashFile(entry.savePath);
-    const key = `${row.cloudModifiedTime}|${localHash}`;
-    if (!force && cache[entry.path] === key) return { path: entry.path, identical: false, cached: true };
+    const key = verifyKey(entry, row, localHash, ctx.cfg);
+    if (!force && cache[entry.path]?.key === key) return { path: entry.path, identical: false, cached: true };
     fs.mkdirSync(TMP_DIR, { recursive: true });
     const tmp = path.join(TMP_DIR, `verify-${ctx.id}-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.xlsx`);
     try {
       await exportCloud(ctx.cfg, entry, tmp);
-      const diff = diffWorkbooks(readWorkbook(entry.savePath), readWorkbook(tmp), { maxChanges: 1 });
+      const diff = diffWorkbooks(readWorkbook(entry.savePath), readWorkbook(tmp), { keys: entry.diffKeys, maxChanges: 0, view: false });
+      // 核对期间本地被改过时，等下次刷新重新比较。
+      if (epoch !== authEpoch || verifyCacheOf(ctx.id) !== cache || hashFile(entry.savePath) !== localHash) {
+        return { path: entry.path, identical: false, changed: true };
+      }
       if (!diff.identical) {
-        cache[entry.path] = key;
+        cache[entry.path] = { key, checkedAt: new Date().toISOString(), summary: summarizeDiff(diff) };
         writeJson(verifyCachePathOf(ctx.id), cache);
         return { path: entry.path, identical: false };
       }
-      // 本地文件在核对期间被改过就不记（下次刷新再核对）
-      if (hashFile(entry.savePath) !== localHash) return { path: entry.path, identical: false, changed: true };
       const stat = fs.statSync(entry.savePath);
       updateEntry(ctx.cfg.statePath, entry.path, {
         lastSyncedModifiedTime: row.cloudModifiedTime,
@@ -1132,7 +1236,7 @@ async function main(opts = {}) {
     const want = Array.isArray(req.body && req.body.paths) ? new Set(req.body.paths) : null;
     try {
       const byPath = new Map(loadFilelist(ctx.cfg.filelistPath).map(e => [e.path, e]));
-      const rows = tablesOf(ctx).filter(r => VERIFY_STATUSES.has(r.status) && r.cloudModifiedTime && (!want || want.has(r.path)) && byPath.has(r.path));
+      const rows = tablesOf(ctx).filter(r => verifyStatuses.has(r.status) && r.cloudModifiedTime && (!want || want.has(r.path)) && byPath.has(r.path));
       const results = [];
       const queue = [...rows];
       async function worker() {

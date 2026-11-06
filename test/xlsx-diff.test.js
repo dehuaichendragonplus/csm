@@ -116,3 +116,57 @@ test('view：只在一边的工作表，全部行作为新增 / 删除展示', (
   const d = diffWorkbooks([{ name: 'A', rows: [['a'], ['b']] }], []);
   assert.deepStrictEqual(d.sheets[0].view.rows.map(r => [r.k, r.l]), [['L', 1], ['L', 2]]);
 });
+
+test('按唯一业务 ID 对齐重排后的记录，摘要保留真实字段变化', () => {
+  const L = [{ name: 'Item', rows: [['id', 'price'], ['001', '6'], ['002', '9']] }];
+  const C = [{ name: 'Item', rows: [['id', 'price'], ['002', '9'], ['001', '12'], ['003', '10']] }];
+  const { diffWorkbooks, summarizeDiff } = require('../lib/xlsx-diff');
+  const diff = diffWorkbooks(L, C, { view: false });
+  assert.deepStrictEqual(diff.sheets[0].stats, { modified: 1, localOnly: 0, cloudOnly: 1, cells: 1 });
+  assert.strictEqual(diff.sheets[0].orderChanged, true);
+  assert.deepStrictEqual(summarizeDiff(diff).samples[0], {
+    sheet: 'Item', record: '001', field: 'price', local: '6', cloud: '12'
+  });
+});
+
+test('纯重排保留差异状态，重复 ID 回退为普通行对比', () => {
+  const book = rows => [{ name: 'Item', rows: [['##var', 'id', 'price'], ['##type', 'string', 'int'], ...rows] }];
+  const a = book([['', '001', '6'], ['', '002', '9']]);
+  const b = book([['', '002', '9'], ['', '001', '6']]);
+  assert.strictEqual(diffWorkbooks(a, b).identical, false);
+  assert.strictEqual(diffWorkbooks(a, b).sheets[0].orderChanged, true);
+  const c = book([['', '001', '6'], ['', '001', '7']]);
+  assert.strictEqual(diffWorkbooks(a, c).sheets[0].alignedByKey, false);
+});
+
+test('记录查找以完整工作簿为范围，支持一致的记录和配置的组合主键', () => {
+  const { findRecords } = require('../lib/xlsx-diff');
+  const local = [{ name: 'Prices', rows: [['region', 'code', 'price'], ['CN', '012', '6'], ['US', '012', '7']] }];
+  const cloud = [{ name: 'Prices', rows: [['region', 'code', 'price'], ['US', '012', '7'], ['CN', '012', '12']] }];
+  const sheets = findRecords(local, cloud, '012', { Prices: ['region', 'code'] });
+  assert.deepStrictEqual(sheets[0].view.rows.map(r => [r.k, r.l, r.c]), [['~', 2, 3], ['=', 3, 2]]);
+  assert.strictEqual(findRecords(local, cloud, '12', { Prices: ['region', 'code'] }).length, 0);
+});
+
+test('按 ID 查到重复键时，分别列出两端匹配项，避免把其他 ID 当成对应记录', () => {
+  const { findRecords } = require('../lib/xlsx-diff');
+  const book = rows => [{ name: 'S', rows: [['id', 'price'], ...rows] }];
+  const local = book([['A', '1'], ['A', '2'], ['B', '3']]);
+  const cloud = book([['B', '9'], ['B', '10'], ['A', '11']]);
+  const [sheet] = findRecords(local, cloud, 'A');
+  assert.strictEqual(sheet.alignedByKey, false);
+  assert.deepStrictEqual(sheet.view.rows.map(r => [r.k, r.v[0]]), [['L', 'A'], ['L', 'A'], ['C', 'A']]);
+});
+
+test('按 ID 查找能命中完整差异展示上限之后的记录', () => {
+  const { findRecords } = require('../lib/xlsx-diff');
+  const book = price => [{
+    name: 'Item', rows: [['id', 'price'], ...Array.from({ length: 2005 }, (_, i) => [String(i), price])]
+  }];
+  const local = book('6');
+  const cloud = book('12');
+  assert.strictEqual(diffWorkbooks(local, cloud).sheets[0].view.truncated, true);
+  const [sheet] = findRecords(local, cloud, '2004');
+  assert.deepStrictEqual(sheet.view.rows[0].lv, ['2004', '6']);
+  assert.deepStrictEqual(sheet.view.rows[0].cv, ['2004', '12']);
+});

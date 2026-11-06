@@ -23,6 +23,8 @@
     tree: $('diff-tree'), view: $('diff-view'), ruler: $('diff-ruler'), pos: $('diff-pos'),
     seg: $('diff-mode-seg'), swap: $('diff-swap'), onlyCols: $('diff-onlycols'), allRows: $('diff-allrows'),
     prev: $('diff-prev'), next: $('diff-next'),
+    find: $('diff-find'), record: $('diff-record'), findSubmit: $('diff-find-submit'),
+    findClear: $('diff-find-clear'), findStatus: $('diff-find-status'),
     msg: $('diff-msg'), close: $('diff-close'), cancel: $('diff-cancel'), dl: $('diff-download'), ul: $('diff-upload')
   };
   // diffState：{ path, mode, data, resolve, token, oldSide, newSide, sheet, expanded, showSame, groups, cur }
@@ -73,6 +75,11 @@
     const token = Symbol('diff');
     st.token = token;
     st.data = null;
+    st.recordSheets = null;
+    st.recordToken = null;
+    d.record.value = '';
+    d.findStatus.textContent = '';
+    d.findClear.classList.add('hidden');
     d.meta.textContent = '';
     showPlaceholder('正在从云端导出并逐单元格比较…（大表需要几秒）');
     setMsg(d.msg, '');
@@ -149,6 +156,8 @@
       summary.append(`${changed} 个工作表有差异：`);
       if (t.mod) summary.appendChild(el('span', 'dm-n mod', `修改 ${t.mod} 行`));
       if (t.add) summary.appendChild(el('span', 'dm-n add', `+${t.add} 行`));
+      const reordered = diff.sheets.filter(sheet => sheet.orderChanged).length;
+      if (reordered) summary.appendChild(el('span', 'dm-n mod', `${reordered} 个工作表行序变化`));
       if (t.del) summary.appendChild(el('span', 'dm-n del', `−${t.del} 行`));
       if (mode === 'conflict') summary.appendChild(el('span', 'diff-warn', '　上次同步后两边都改过：无论选哪个方向，另一边的改动都会被覆盖，请先确认需要保留的内容。'));
       else summary.appendChild(el('span', 'dir-tip', `　「+」一边是${newSide === incomingSide() ? '将要生效的' : ''}${SIDE_NAME[newSide]}内容`));
@@ -162,11 +171,70 @@
     d.allRows.checked = prefs.allRows;
   }
 
+  const activeSheets = st => st.recordSheets || st.data.diff.sheets;
+
+  function setRecordResults(st, sheets) {
+    if (sheets && !st.recordSheets) st.fullSheet = st.sheet;
+    st.recordSheets = sheets;
+    st.sheet = sheets ? 0 : st.fullSheet ?? st.sheet;
+    st.expanded = new Map();
+    d.findClear.classList.toggle('hidden', !sheets);
+    renderTree();
+    renderSheet();
+  }
+
+  d.find.addEventListener('submit', async e => {
+    e.preventDefault();
+    const st = diffState;
+    const record = d.record.value.trim();
+    if (!st?.data || !record) return;
+    const token = Symbol('record');
+    st.recordToken = token;
+    d.findStatus.textContent = '查找中…';
+    const params = new URLSearchParams({ path: st.path, record, snapshot: st.data.snapshot });
+    try {
+      const response = await fetch(CSM().api(`/diff?${params}`));
+      const data = await response.json();
+      if (diffState !== st || st.recordToken !== token) return;
+      if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+      const sheets = data.sheets;
+      if (sheets.length) {
+        setRecordResults(st, sheets);
+        const count = sheets.reduce((n, sheet) => n + sheet.matches, 0);
+        d.findStatus.textContent = `找到 ${count} 条记录 · ${sheets.length} 个工作表`;
+      } else {
+        if (st.recordSheets) setRecordResults(st, null);
+        d.findStatus.textContent = '未找到此 ID';
+      }
+    } catch (err) {
+      if (diffState === st && st.recordToken === token) d.findStatus.textContent = err.message;
+    }
+  });
+  d.findClear.addEventListener('click', () => {
+    const st = diffState;
+    if (!st?.data) return;
+    st.recordToken = null;
+    d.record.value = '';
+    d.findStatus.textContent = '';
+    if (st.recordSheets) setRecordResults(st, null);
+    d.record.focus();
+  });
+
   // ---------- 左侧：工作表列表 ----------
   function renderTree() {
     const st = diffState;
-    const sheets = st.data.diff.sheets;
+    const sheets = activeSheets(st);
     d.tree.innerHTML = '';
+    if (st.recordSheets) {
+      d.tree.appendChild(el('div', 'dt-head', '匹配的工作表'));
+      sheets.forEach((sheet, i) => {
+        const item = el('div', `dt-item${i === st.sheet ? ' sel' : ''}`);
+        item.append(el('span', 'dt-name', sheet.name), el('span', 'dt-cnt', `${sheet.matches} 条`));
+        item.addEventListener('click', () => selectSheet(i));
+        d.tree.appendChild(item);
+      });
+      return;
+    }
     const changed = sheets.map((s, i) => [s, i]).filter(([s]) => s.status !== 'same');
     const same = sheets.map((s, i) => [s, i]).filter(([s]) => s.status === 'same');
     d.tree.appendChild(el('div', 'dt-head', changed.length ? `${changed.length} 个工作表有差异` : '工作表'));
@@ -174,7 +242,8 @@
       const c = sheetCounts(s);
       const it = el('div', `dt-item${i === st.sheet ? ' sel' : ''}${c ? '' : ' same'}`);
       let badge = ['=', 'same'];
-      if (c) badge = c.mod || (c.add && c.del) ? ['M', 'mod'] : c.add ? ['+', 'add'] : ['−', 'del'];
+      if (s.orderChanged) badge = ['↕', 'mod'];
+      else if (c) badge = c.mod || (c.add && c.del) ? ['M', 'mod'] : c.add ? ['+', 'add'] : ['−', 'del'];
       if (s.status === 'local_only' || s.status === 'cloud_only') it.title = `只在${SIDE_NAME[s.status === 'local_only' ? 'local' : 'cloud']}有这个工作表`;
       it.appendChild(el('span', `dt-badge ${badge[1]}`, badge[0]));
       it.appendChild(el('span', 'dt-name', s.name));
@@ -216,6 +285,10 @@
     for (const r of sheet.view.rows) {
       if (r.k === '=') out.push({ t: 'ctx', o: oldIsLocal ? r.l : r.c, n: oldIsLocal ? r.c : r.l, v: r.v });
       else if (r.k === '~') out.push({ t: 'mod', o: oldIsLocal ? r.l : r.c, n: oldIsLocal ? r.c : r.l, ov: oldIsLocal ? r.lv : r.cv, nv: oldIsLocal ? r.cv : r.lv, d: new Set(r.d) });
+      else if (diffState.recordSheets && !sheet.alignedByKey) {
+        const local = r.k === 'L';
+        out.push({ t: 'ctx', o: oldIsLocal === local ? r.l ?? r.c : null, n: oldIsLocal !== local ? r.l ?? r.c : null, v: r.v });
+      }
       else if (r.k === 'L') out.push(oldIsLocal ? { t: 'del', o: r.l, v: r.v } : { t: 'add', n: r.l, v: r.v });
       else if (r.k === 'C') out.push(oldIsLocal ? { t: 'add', n: r.c, v: r.v } : { t: 'del', o: r.c, v: r.v });
       else out.push({ t: 'gap', count: r.n, o: oldIsLocal ? r.l : r.c, n: oldIsLocal ? r.c : r.l, fixed: true });
@@ -321,6 +394,7 @@
   }
 
   function gapText(r) {
+    if (activeSheets(diffState)[diffState.sheet]?.orderChanged) return `⋯ ${r.fixed ? '' : '展开 '}${r.count} 行相同内容`;
     const range = (a, n) => (a == null ? '' : n > 1 ? `${a}–${a + n - 1}` : `${a}`);
     return `⋯ ${r.fixed ? '' : '展开 '}${r.count} 行相同内容（− ${range(r.o, r.count)} / + ${range(r.n, r.count)}）${r.fixed ? '：表太大，未加载' : ''}`;
   }
@@ -334,7 +408,7 @@
     h += '</tr></thead><tbody>';
     rows.forEach((r, x) => {
       const g = r.g >= 0 ? ` data-g="${r.g}"` : '';
-      if (r.t === 'ctx') h += `<tr><td class="gut g1">${r.o}</td><td class="gut g2">${r.n}</td><td class="sign s3"></td>${cellsHtml(r.v, cols)}</tr>`;
+      if (r.t === 'ctx') h += `<tr><td class="gut g1">${r.o ?? ''}</td><td class="gut g2">${r.n ?? ''}</td><td class="sign s3"></td>${cellsHtml(r.v, cols)}</tr>`;
       else if (r.t === 'del') h += `<tr class="del"${g}><td class="gut g1">${r.o}</td><td class="gut g2"></td><td class="sign s3">−</td>${cellsHtml(r.v, cols)}</tr>`;
       else if (r.t === 'add') h += `<tr class="add"${g}><td class="gut g1"></td><td class="gut g2">${r.n}</td><td class="sign s3">+</td>${cellsHtml(r.v, cols)}</tr>`;
       else if (r.t === 'mod') {
@@ -357,7 +431,7 @@
     rows.forEach((r, x) => {
       const g = r.g >= 0 ? ` data-g="${r.g}"` : '';
       const no = side === 'old' ? r.o : r.n;
-      if (r.t === 'ctx') h += `<tr><td class="gut g1">${no}</td><td class="sign s2"></td>${cellsHtml(r.v, cols)}</tr>`;
+      if (r.t === 'ctx') h += no == null ? fill(g) : `<tr><td class="gut g1">${no}</td><td class="sign s2"></td>${cellsHtml(r.v, cols)}</tr>`;
       else if (r.t === 'del') h += side === 'old' ? `<tr class="del"${g}><td class="gut g1">${no}</td><td class="sign s2">−</td>${cellsHtml(r.v, cols)}</tr>` : fill(g);
       else if (r.t === 'add') h += side === 'new' ? `<tr class="add"${g}><td class="gut g1">${no}</td><td class="sign s2">+</td>${cellsHtml(r.v, cols)}</tr>` : fill(g);
       else if (r.t === 'mod') {
@@ -372,7 +446,7 @@
   let panes = [];
   function renderSheet() {
     const st = diffState;
-    const sheet = st.data.diff.sheets[st.sheet];
+    const sheet = activeSheets(st)[st.sheet];
     d.view.innerHTML = '';
     d.ruler.innerHTML = '';
     st.groups = [];
@@ -386,7 +460,8 @@
       updatePos();
       return;
     }
-    const rows = foldRows(orientedRows(sheet));
+    const oriented = orientedRows(sheet);
+    const rows = st.recordSheets ? oriented : foldRows(oriented);
     const groupCount = groupRows(rows);
     const cols = visibleCols(sheet, rows);
     const widths = colWidths(sheet, rows, cols);
@@ -421,6 +496,9 @@
     }
     for (const p of panes) p.addEventListener('click', onViewClick);
     const notes = [];
+    if (sheet.orderChanged) notes.push('已有记录的行序发生变化，两侧行号保留原位置。');
+    if (st.recordSheets && !sheet.alignedByKey) notes.push('这个工作表无法按唯一主键配对，匹配项按两侧分别列出。');
+    if (st.recordSheets && sheet.matches > sheet.view.rows.length) notes.push(`当前显示前 ${sheet.view.rows.length} 条匹配。`);
     if (sheet.view.truncated) notes.push('改动太多，只显示前 2000 处；完整内容请直接打开两边文件比较。');
     if (!sheet.view.full) notes.push('表很大，相同的行只保留改动前后几行，无法展开。');
     if (prefs.onlyCols && cols.length < sheet.view.cols) notes.push(`已隐藏 ${sheet.view.cols - cols.length} 个没有改动的列。`);
@@ -519,7 +597,7 @@
     const target = st.cur + dir;
     if (target >= 0 && target < st.groups.length) { goTo(target); return; }
     // 跨到上 / 下一个有差异的工作表
-    const sheets = st.data.diff.sheets;
+    const sheets = activeSheets(st);
     for (let i = st.sheet + dir; i >= 0 && i < sheets.length; i += dir) {
       if (sheets[i].status === 'same') continue;
       selectSheet(i, { jump: dir > 0 ? 'first' : 'last' });
@@ -531,7 +609,7 @@
     const st = diffState;
     const n = st && st.groups ? st.groups.length : 0;
     d.pos.textContent = n ? (st.cur >= 0 ? `第 ${st.cur + 1} / ${n} 处` : `共 ${n} 处改动`) : '';
-    const sheets = st && st.data ? st.data.diff.sheets : [];
+    const sheets = st && st.data ? activeSheets(st) : [];
     const hasPrevSheet = sheets.slice(0, st ? st.sheet : 0).some(s => s.status !== 'same');
     const hasNextSheet = sheets.slice(st ? st.sheet + 1 : 0).some(s => s.status !== 'same');
     d.prev.disabled = !(st && (st.cur > 0 || hasPrevSheet));
@@ -570,6 +648,8 @@
     const st = diffState;
     const data = st && st.data;
     d.dl.disabled = !!busy || !data;
+    d.record.disabled = d.findSubmit.disabled = !!busy || !data;
+    d.findClear.disabled = !!busy || !data;
     d.ul.disabled = !!busy || !data || !data.local.exists;
     d.ul.classList.toggle('hidden', !CSM().allowUpload());
     const incoming = data ? incomingSide() : null;

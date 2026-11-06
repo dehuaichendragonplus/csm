@@ -16,7 +16,8 @@
   let appConfig = { allowUpload: true, actions: [] };
   const DEFAULT_COLLAPSED = new Set(['synced', 'local_changed']);
   // 两边内容可能不一致、值得看差异的状态
-  const verifyingPaths = new Set(); // 正在核对内容的表
+  const verifyFailures = new Map();
+  const verifyRuns = new Map(); // 各项目正在核对的路径和请求
   const DIFF_STATUSES = new Set(['conflict', 'updated', 'never_synced', 'local_changed']);
   // Tracks each group's expanded/collapsed state across re-renders (render() rebuilds the DOM from scratch).
   // Populated lazily from DEFAULT_COLLAPSED the first time a group is seen, then mutated by user clicks.
@@ -157,6 +158,18 @@
     btnAddProject: document.getElementById('btn-add-project'),
     summary: document.getElementById('summary'),
     groups: document.getElementById('groups'),
+    selection: document.getElementById('selection-bar'),
+    selectVisible: document.getElementById('select-visible-downloads'),
+    selectionCount: document.getElementById('selection-count'),
+    clearSelection: document.getElementById('clear-selection'),
+    downloadSelected: document.getElementById('download-selected'),
+    batch: document.getElementById('batch-result'),
+    batchTitle: document.getElementById('batch-title'),
+    batchAction: document.getElementById('batch-action'),
+    batchToggle: document.getElementById('batch-toggle'),
+    batchItems: document.getElementById('batch-items'),
+    batchRetry: document.getElementById('batch-retry'),
+    batchCopy: document.getElementById('batch-copy'),
     log: document.getElementById('log'),
     btnRefresh: document.getElementById('btn-refresh'),
     btnSyncAll: document.getElementById('btn-sync-all'),
@@ -398,12 +411,19 @@
 
   // 多个操作可并发（例如连续点了几行的下载），用计数保证全部结束后才恢复顶部按钮
   let busyCount = 0;
+  const selectedDownloads = new Set();
+  const expandedSummaries = new Set();
+  const batches = new Map();
+  let visibleDownloads = [];
+  let downloadInProgress = false;
   function setBusy(on) {
     busyCount = Math.max(0, busyCount + (on ? 1 : -1));
     const busy = busyCount > 0;
     [els.btnRefresh, els.btnSyncAll, els.btnClearState, ...els.customActions.querySelectorAll('button')].forEach(b => { b.disabled = busy; });
     if (els.btnRefresh) els.btnRefresh.classList.toggle('spinning', busy);
     if (els.consoleIndicator) els.consoleIndicator.classList.toggle('busy', busy);
+    renderSelection();
+    renderBatch();
   }
 
   function renderFilterChips(rows, counts) {
@@ -476,18 +496,22 @@
     }
 
     const shown = searching ? pool.filter(r => TableSearch.matchRow(r, searchTerms)) : pool;
+    const downloadable = new Set(rows.filter(r => r.direction === 'download').map(r => r.path));
+    for (const path of selectedDownloads) if (!downloadable.has(path)) selectedDownloads.delete(path);
+    visibleDownloads = shown.filter(r => r.direction === 'download').map(r => r.path);
+    renderSelection();
     shown.forEach(r => { (buckets[r.status] || (buckets[r.status] = [])).push(r); });
 
     // 渲染快捷状态过滤按钮
     renderFilterChips(rows, counts);
 
     // 更新一键下载按钮状态
-    const syncCount = (counts.updated || 0) + (counts.missing_local || 0);
+    const syncCount = downloadable.size;
     if (els.syncAllLabel && els.syncAllBadge && els.syncAllIcon) {
       if (syncCount === 0) {
         els.btnSyncAll.classList.add('all-synced');
         els.syncAllBadge.classList.add('hidden');
-        els.syncAllLabel.textContent = '已全部同步';
+        els.syncAllLabel.textContent = counts.synced === rows.length && rows.length ? '已全部同步' : '无可下载更新';
         els.syncAllIcon.innerHTML = window.CSMIcons ? window.CSMIcons.check : '✓';
       } else {
         els.btnSyncAll.classList.remove('all-synced');
@@ -499,9 +523,8 @@
     }
 
     // 全同步极简健康状态看板
-    const needsAttention = (counts.updated || 0) + (counts.missing_local || 0) + (counts.conflict || 0);
     if (els.allSyncedBanner) {
-      if (rows.length > 0 && needsAttention === 0 && !searching && activeFilter === 'all') {
+      if (rows.length > 0 && counts.synced === rows.length && !searching && activeFilter === 'all') {
         els.allSyncedBanner.classList.remove('hidden');
         if (els.allSyncedMeta) {
           els.allSyncedMeta.textContent = `共 ${rows.length} 张配置表 · 全部健康最新`;
@@ -574,7 +597,7 @@
         batchBtn.title = `一键下载「${STATUS_LABELS[key].label}」分组下的全部 ${list.length} 个表`;
         batchBtn.addEventListener('click', (e) => {
           e.stopPropagation();
-          downloadPaths(list.map(r => r.path));
+          startBatch(list.filter(r => r.direction === 'download'));
         });
         headerRight.appendChild(batchBtn);
       }
@@ -647,7 +670,7 @@
     const timesTip = `云端修改：${formatTime(row.cloudModifiedTime)}\n本地文件修改：${row.localMtime ? formatTime(row.localMtime) : '本地没有文件'}`;
     div.className = `row status-${row.status}${rowClickable ? ' clickable' : ''}`;
     div.dataset.path = row.path;
-    if (rowClickable) div.addEventListener('click', () => { if (!busyPaths.has(row.path)) syncOne(row.path); });
+    if (rowClickable) div.addEventListener('click', () => { if (!downloadInProgress && !busyPaths.has(row.path)) syncOne(row.path); });
 
     // 1. 配置表与本地路径 (Column 1)
     const tableCol = document.createElement('div');
@@ -671,6 +694,21 @@
     nameDiv.className = 'table-name';
     setHighlighted(nameDiv, row.name);
 
+    if (rowClickable) {
+      const select = document.createElement('input');
+      select.type = 'checkbox';
+      select.className = 'row-select';
+      select.checked = selectedDownloads.has(row.path);
+      select.disabled = busyCount > 0;
+      select.setAttribute('aria-label', `选择下载 ${row.name || row.path}`);
+      select.addEventListener('click', e => e.stopPropagation());
+      select.addEventListener('change', () => {
+        if (select.checked) selectedDownloads.add(row.path);
+        else selectedDownloads.delete(row.path);
+        renderSelection();
+      });
+      tableMain.appendChild(select);
+    }
     tableMain.append(starBtn, nameDiv);
 
     const tableSub = document.createElement('div');
@@ -682,6 +720,7 @@
 
     tableSub.appendChild(pathSpan);
     tableCol.append(tableMain, tableSub);
+    if (row.changeSummary || VERIFY_STATUSES.has(row.status)) appendChangeSummary(tableCol, row);
 
     // 2. 关联云端表与最后修改人 (Column 2)
     const cloudCol = document.createElement('div');
@@ -789,7 +828,7 @@
 
     const stateEl = document.createElement('span');
     stateEl.className = 'row-state';
-    if (verifyingPaths.has(row.path)) {
+    if (verifyRuns.get(currentId)?.paths.has(row.path)) {
       div.classList.add('row-verifying');
       stateEl.textContent = '核对中…';
       stateEl.title = '云端修改时间变了：正在导出云端内容与本地逐单元格比较，内容一致会自动标为已同步';
@@ -905,6 +944,7 @@
             }
           });
         }
+        return data;
       } else appendLog(`! /api/tables error: ${data.error}\n`);
     } catch (err) {
       appendLog(`! fetch error: ${err.message}\n`);
@@ -951,31 +991,35 @@
     }
   }
 
-  function streamSync(paths) {
+  function streamSync(paths, versions) {
     // 本批所有表先标「排队中」，轮到谁再切换为「下载中」
     paths.forEach(p => { if (!busyPaths.has(p)) setRowBusy(p, true, '排队中…'); });
-    const summary = { successCount: 0, failedCount: 0 };
+    const summary = { successCount: 0, failedCount: 0, results: [], receivedDone: false };
     return new Promise((done) => {
       const resolve = () => done(summary);
       fetch(api('/sync'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ paths })
+        body: JSON.stringify({ paths, versions })
       }).then(async response => {
         if (response.status === 401) {
+          summary.error = '需要 Google 授权';
           els.authBanner.classList.remove('hidden');
           appendLog('! 需要授权\n');
           resolve();
           return;
         }
         if (!response.ok) {
-          appendLog(`! /api/sync HTTP ${response.status}\n`);
+          const data = await response.json().catch(() => ({}));
+          summary.error = data.error || `下载请求失败（HTTP ${response.status}）`;
+          appendLog(`! ${summary.error}\n`);
           resolve();
           return;
         }
         await consumeSSE(response, resolve, summary);
       }).catch(err => {
-        appendLog(`! ${err.message}\n`);
+        summary.error = `下载连接中断：${err.message}`;
+        appendLog(`! ${summary.error}\n`);
         resolve();
       });
     });
@@ -1016,12 +1060,13 @@
       try {
         const obj = JSON.parse(data);
         setRowBusy(obj.path, false);
+        if (summary?.results) summary.results.push(obj);
         appendLog(obj.success ? `✓ ${obj.path}\n` : `✗ ${obj.path}${obj.error ? ': ' + obj.error : ''}\n`);
       } catch (_) {}
     } else if (event === 'done') {
       try {
         const obj = JSON.parse(data);
-        if (summary) Object.assign(summary, obj);
+        if (summary) Object.assign(summary, obj, { receivedDone: true });
         appendLog(`\n=== done: success=${obj.successCount ?? 'n/a'} failed=${obj.failedCount ?? 'n/a'} exit=${obj.exitCode ?? '—'} ===\n`);
       } catch (_) {}
     } else if (event === 'error') {
@@ -1065,16 +1110,199 @@
     }
   }
 
-  // 下载一批表（主列表、清单弹窗、差异预览共用）：结束后刷新列表，并按偏好执行「下载后动作」
+  function appendChangeSummary(parent, row) {
+    const summary = row.changeSummary;
+    const verifying = verifyRuns.get(currentId)?.paths.has(row.path);
+    const line = document.createElement(summary ? 'button' : 'span');
+    line.className = 'row-change-summary';
+    if (!summary) {
+      const failure = verifyFailures.get(row.path);
+      const failed = failure && failure.cloud === row.cloudModifiedTime && failure.local === row.localVersion;
+      line.textContent = verifying ? '正在核对内容…' : failed ? '内容核对失败' : '等待内容核对';
+      if (failed) line.title = failure.error;
+      parent.appendChild(line);
+      return;
+    }
+    const reverse = row.direction === 'upload';
+    line.type = 'button';
+    line.textContent = SyncBatch.counts(summary, reverse);
+    line.title = `${reverse ? '云端旧值 → 本地值' : '本地值 → 云端值'} · 核对于 ${formatTime(row.checkedAt)}`;
+    line.setAttribute('aria-expanded', String(expandedSummaries.has(row.path)));
+    const detail = document.createElement('div');
+    detail.className = 'row-change-detail';
+    const label = document.createElement('small');
+    label.textContent = summary.samples.length ? `${line.title} · 部分字段变化` : line.title;
+    detail.appendChild(label);
+    for (const sample of summary.samples) {
+      const item = document.createElement('span');
+      item.textContent = SyncBatch.sampleText(sample, reverse);
+      item.title = item.textContent;
+      detail.appendChild(item);
+    }
+    detail.classList.toggle('hidden', !expandedSummaries.has(row.path));
+    line.addEventListener('click', e => {
+      e.stopPropagation();
+      if (expandedSummaries.has(row.path)) expandedSummaries.delete(row.path);
+      else expandedSummaries.add(row.path);
+      line.setAttribute('aria-expanded', String(expandedSummaries.has(row.path)));
+      detail.classList.toggle('hidden', !expandedSummaries.has(row.path));
+    });
+    detail.addEventListener('click', e => e.stopPropagation());
+    parent.append(line, detail);
+  }
+
+  function renderSelection() {
+    const count = selectedDownloads.size;
+    const visibleCount = visibleDownloads.filter(path => selectedDownloads.has(path)).length;
+    els.selection.classList.toggle('hidden', !currentId || (!count && !visibleDownloads.length));
+    els.selectVisible.classList.toggle('hidden', !visibleDownloads.length);
+    els.selectVisible.disabled = busyCount > 0;
+    els.selectVisible.textContent = visibleCount === visibleDownloads.length ? '取消勾选当前筛选' : `勾选当前筛选的 ${visibleDownloads.length} 张`;
+    els.selectionCount.textContent = count ? `已选 ${count} 张${visibleCount < count ? `（${count - visibleCount} 张在筛选范围外）` : ''}` : '';
+    els.clearSelection.classList.toggle('hidden', !count);
+    els.clearSelection.disabled = busyCount > 0;
+    els.downloadSelected.classList.toggle('hidden', !count);
+    els.downloadSelected.disabled = busyCount > 0;
+    els.downloadSelected.textContent = `下载选中的 ${count} 张`;
+    els.groups.querySelectorAll('.row-select').forEach(input => {
+      const path = input.closest('.row').dataset.path;
+      input.checked = selectedDownloads.has(path);
+      input.disabled = busyCount > 0;
+    });
+  }
+
+  function renderBatch() {
+    const batch = batches.get(currentId);
+    els.batch.classList.toggle('hidden', !batch);
+    if (!batch) return;
+    const items = [...batch.items.values()];
+    const count = status => items.filter(item => item.status === status).length;
+    const failed = count('failed');
+    const skipped = count('skipped');
+    els.batchTitle.textContent = batch.running
+      ? `正在处理 ${items.length} 张表…`
+      : `下载结果 · ${count('success')}/${items.length} 张已同步${failed ? ` · ${failed} 张失败` : ''}${skipped ? ` · ${skipped} 张跳过` : ''}`;
+    els.batchAction.textContent = `${batch.action.label}：${SyncBatch.actionStatus[batch.action.status]}`;
+    els.batchRetry.classList.toggle('hidden', !failed);
+    els.batchRetry.disabled = busyCount > 0;
+    els.batchCopy.disabled = batch.running;
+    els.batchToggle.textContent = batch.expanded ? '收起明细' : '查看明细';
+    els.batchToggle.setAttribute('aria-expanded', String(!!batch.expanded));
+    els.batchItems.classList.toggle('hidden', !batch.expanded);
+    els.batchItems.replaceChildren();
+    if (!batch.expanded) return;
+    for (const item of items) {
+      const li = document.createElement('li');
+      li.className = `sync-batch-item ${item.status}`;
+      const name = document.createElement('strong');
+      name.textContent = item.name || item.path;
+      name.title = item.path;
+      const status = document.createElement('span');
+      status.textContent = [SyncBatch.itemStatus[item.status], item.error || (item.summary ? SyncBatch.counts(item.summary) : '')].filter(Boolean).join(' · ');
+      li.append(name, status);
+      els.batchItems.appendChild(li);
+    }
+  }
+
+  function afterDownloadAction() {
+    const id = lsGet(afterKey());
+    return id && (appConfig.actions || []).find(a => a.id === id);
+  }
+
+  async function runBatch(batch, paths) {
+    if (downloadInProgress || !paths.length) return;
+    downloadInProgress = true;
+    batch.running = true;
+    setBusy(true);
+    try {
+      const versions = Object.fromEntries(paths.map(path => [path, batch.items.get(path).version]));
+      const result = await streamSync(paths, versions);
+      SyncBatch.apply(batch, paths, result.results, result.error);
+      releaseRows(paths);
+      for (const path of paths) if (batch.items.get(path).status === 'success') selectedDownloads.delete(path);
+      const skipped = [...batch.items.values()].some(item => item.status === 'skipped');
+      if (SyncBatch.failedPaths(batch).length || skipped) batch.expanded = true;
+      if (skipped && batch.action.status === 'waiting') batch.action.status = 'blocked';
+      const latest = await loadTables();
+      if (SyncBatch.complete(batch) && batch.exportAction && batch.action.status === 'waiting') {
+        const rows = new Map((latest || []).map(row => [row.path, row]));
+        if ([...batch.items.values()].some(item => {
+          const row = rows.get(item.path);
+          return row?.status !== 'synced' || row.spreadsheetId !== item.version.spreadsheetId
+            || row.lastSyncedModifiedTime !== item.version.cloudModifiedTime;
+        })) {
+          batch.action.status = 'blocked';
+          return;
+        }
+        batch.action.status = 'running';
+        renderBatch();
+        const code = await runAction(batch.exportAction);
+        batch.action.status = code === 0 ? 'success' : 'failed';
+      }
+    } finally {
+      downloadInProgress = false;
+      batch.running = false;
+      setBusy(false);
+    }
+  }
+
+  function startBatch(rows) {
+    if (downloadInProgress || !rows.length) return;
+    const project = projects.find(p => p.id === currentId);
+    if (!project) return;
+    const batch = SyncBatch.create(project.name, rows.map(row => ({
+      path: row.path,
+      name: row.name,
+      version: { spreadsheetId: row.spreadsheetId, cloudModifiedTime: row.cloudModifiedTime, localVersion: row.localVersion }
+    })));
+    batch.exportAction = afterDownloadAction();
+    batch.action = batch.exportAction ? { label: batch.exportAction.label, status: 'waiting' } : { label: '导出', status: 'disabled' };
+    batches.set(currentId, batch);
+    return runBatch(batch, rows.map(row => row.path));
+  }
+
+  els.selectVisible.addEventListener('click', () => {
+    const allSelected = visibleDownloads.every(path => selectedDownloads.has(path));
+    for (const path of visibleDownloads) {
+      if (allSelected) selectedDownloads.delete(path);
+      else selectedDownloads.add(path);
+    }
+    renderSelection();
+  });
+  els.clearSelection.addEventListener('click', () => { selectedDownloads.clear(); renderSelection(); });
+  els.downloadSelected.addEventListener('click', () => startBatch((lastRows || []).filter(row => row.direction === 'download' && selectedDownloads.has(row.path))));
+  els.batchRetry.addEventListener('click', () => {
+    const batch = batches.get(currentId);
+    if (batch) runBatch(batch, SyncBatch.failedPaths(batch));
+  });
+  els.batchToggle.addEventListener('click', () => {
+    const batch = batches.get(currentId);
+    if (batch) { batch.expanded = !batch.expanded; renderBatch(); }
+  });
+  els.batchCopy.addEventListener('click', async () => {
+    const batch = batches.get(currentId);
+    if (!batch) return;
+    try {
+      await navigator.clipboard.writeText(SyncBatch.format(batch));
+      showToast('已复制本批变更摘要', 'ok');
+    } catch (_) {
+      showToast('无法访问剪贴板，请检查浏览器权限', 'error');
+    }
+  });
+
+  // 差异窗口、清单等现有入口仍使用各自的确认方式。
   async function downloadPaths(paths) {
+    if (downloadInProgress) return null;
+    downloadInProgress = true;
     setBusy(true);
     try {
       const summary = await streamSync(paths);
       releaseRows(paths);
       await loadTables();
-      await runAfterDownload(summary);
+      await runAfterDownload(summary, new Set(paths).size);
       return summary;
     } finally {
+      downloadInProgress = false;
       setBusy(false);
     }
   }
@@ -1088,24 +1316,8 @@
     await downloadPaths([p]);
   }
 
-  async function syncAllUpdated() {
-    setBusy(true);
-    const resp = await fetch(api('/tables'));
-    if (!resp.ok) { appendLog('! 无法获取列表\n'); setBusy(false); return; }
-    const rows = await resp.json();
-    // 只下载云端较新（或本地缺失）的表；本地较新的不覆盖，留给用户逐个确认上传
-    const paths = rows.filter(r => r.direction === 'download').map(r => r.path);
-    const localNewer = rows.filter(r => r.direction === 'upload');
-    const conflicts = rows.filter(r => r.direction === 'conflict');
-    if (localNewer.length) appendLog(`（${localNewer.length} 张表本地较新，不会被下载覆盖：${localNewer.map(r => r.name).join('、')}）\n`);
-    if (conflicts.length) appendLog(`（⚠ ${conflicts.length} 张表两边都改过，需逐个查看差异后处理：${conflicts.map(r => r.name).join('、')}）\n`);
-    if (paths.length === 0) {
-      appendLog('（没有需要下载的表）\n');
-      setBusy(false);
-      return;
-    }
-    await downloadPaths(paths);
-    setBusy(false);
+  function syncAllUpdated() {
+    return startBatch((lastRows || []).filter(row => row.direction === 'download'));
   }
 
   async function clearState() {
@@ -1136,7 +1348,7 @@
       const response = await fetch(api(`/action/${encodeURIComponent(action.id)}`), { method: 'POST' });
       if (!response.ok) {
         appendLog(`! action ${action.id} HTTP ${response.status}\n`);
-        return;
+        return -1;
       }
       const summary = { exitCode: null, successCount: null, failedCount: null };
       await new Promise(resolve => consumeSSE(response, resolve, summary, l => actionLogs.push(l)));
@@ -1148,6 +1360,10 @@
           if (diag) showDiagnostic(action, diag);
         }
       }
+      return summary.exitCode ?? -1;
+    } catch (err) {
+      appendLog(`! 执行「${action.label}」失败：${err.message}\n`);
+      return -1;
     } finally {
       setBusy(false);
     }
@@ -1174,10 +1390,9 @@
     els.prefAfterDownload.value = actions.some(a => a.id === saved) ? saved : '';
   }
 
-  async function runAfterDownload(summary) {
-    if (!summary || !summary.successCount) return;
-    const id = lsGet(afterKey());
-    const action = id && (appConfig.actions || []).find(a => a.id === id);
+  async function runAfterDownload(summary, expected) {
+    if (!summary?.receivedDone || !expected || summary.failedCount || summary.successCount !== expected) return;
+    const action = afterDownloadAction();
     if (!action) return;
     appendLog(`→ 下载完成，按设置自动执行「${action.label}」\n`);
     await runAction(action);
@@ -1214,7 +1429,7 @@
     if (!currentId || busyCount > 0 || document.querySelector('.modal:not(.hidden)')) return;
     const id = currentId;
     try {
-      const resp = await fetch(api('/refresh'), { method: 'POST' });
+      const resp = await fetch(api('/refresh?reuse=1'), { method: 'POST' });
       if (!resp.ok || id !== currentId) return;
       const data = await resp.json();
       render(data);
@@ -1230,7 +1445,7 @@
   async function backgroundRefresh() {
     const id = currentId;
     try {
-      const resp = await fetch(api('/refresh'), { method: 'POST' });
+      const resp = await fetch(api('/refresh?reuse=1'), { method: 'POST' });
       const data = await resp.json().catch(() => null);
       if (id !== currentId) return;
       if (!resp.ok || !data) {
@@ -1252,15 +1467,23 @@
 
   // 「有更新 / 冲突 / 本地变更」的表：修改时间或文件字节变了不代表内容变了，导出云端与本地比较，内容一致的自动记为已同步
   const VERIFY_STATUSES = new Set(['updated', 'conflict', 'local_changed']);
-  let verifyRun = null;
   async function verifyUpdates(rows, { force = false } = {}) {
     const id = currentId;
-    const paths = (rows || []).filter(r => VERIFY_STATUSES.has(r.status)).map(r => r.path);
+    const paths = (rows || []).filter(r => VERIFY_STATUSES.has(r.status) && (force || !r.changeSummary)).map(r => r.path);
     if (!paths.length) return rows;
-    if (verifyRun) return verifyRun; // 同一时间只跑一轮
-    verifyRun = (async () => {
-      paths.forEach(p => verifyingPaths.add(p));
-      render();
+    const current = verifyRuns.get(id);
+    if (current) {
+      if (!force) return current.promise;
+      await current.promise;
+      if (id !== currentId) return rows;
+      return verifyUpdates(rows, { force });
+    }
+    const run = { paths: new Set(paths) };
+    verifyRuns.set(id, run);
+    const byPath = new Map((rows || []).map(row => [row.path, row]));
+    paths.forEach(path => verifyFailures.delete(path));
+    render();
+    run.promise = (async () => {
       try {
         const resp = await fetch(api('/verify'), {
           method: 'POST',
@@ -1272,7 +1495,6 @@
         const same = (data.results || []).filter(r => r.identical);
         const failed = (data.results || []).filter(r => r.error);
         if (same.length) {
-          const byPath = new Map((rows || []).map(r => [r.path, r]));
           const nameOf = r => (byPath.get(r.path) || {}).name || r.path;
           const localOnly = same.filter(r => r.previousStatus === 'local_changed');
           const cloud = same.filter(r => r.previousStatus !== 'local_changed');
@@ -1280,21 +1502,21 @@
           if (localOnly.length) appendLog(`✓ 内容核对：${localOnly.length} 张表本地文件被重新保存过但内容与云端一致，已标为已同步：${localOnly.map(nameOf).join('、')}\n`);
           refreshProjectBadges();
         }
-        failed.forEach(r => appendLog(`! 内容核对失败 ${r.path}：${r.error}\n`));
+        for (const failure of failed) {
+          const row = byPath.get(failure.path);
+          if (row) verifyFailures.set(row.path, { cloud: row.cloudModifiedTime, local: row.localVersion, error: failure.error });
+          appendLog(`! 内容核对失败 ${failure.path}：${failure.error}\n`);
+        }
         return data.tables || rows;
       } catch (_) {
         return rows;
       } finally {
-        paths.forEach(p => verifyingPaths.delete(p));
+        verifyRuns.delete(id);
       }
     })();
-    try {
-      const result = await verifyRun;
-      if (id === currentId && result && result !== rows) render(result);
-      return result;
-    } finally {
-      verifyRun = null;
-    }
+    const result = await run.promise;
+    if (id === currentId) render(result);
+    return result;
   }
 
   function applyAutoRefresh() {
@@ -1408,7 +1630,17 @@
   }
 
   async function selectProject(id) {
+    if (downloadInProgress) {
+      if (id !== currentId) showToast('本批下载或导出进行中', 'info');
+      return;
+    }
     currentId = id;
+    selectedDownloads.clear();
+    expandedSummaries.clear();
+    verifyFailures.clear();
+    visibleDownloads = [];
+    renderSelection();
+    renderBatch();
     try { localStorage.setItem(PROJECT_KEY, id); } catch (_) {}
     renderTabs();
     groupExpandedState.clear();
@@ -1430,6 +1662,8 @@
     const pick = [preferId, currentId, saved].find(id => id && projects.some(p => p.id === id)) || (projects[0] && projects[0].id);
     if (!pick) {
       currentId = null;
+      renderSelection();
+      renderBatch();
       lastRows = null;
       renderTabs();
       els.customActions.innerHTML = '';
@@ -1454,10 +1688,12 @@
   }
 
   async function removeProject(p) {
+    if (downloadInProgress) return;
     if (!confirm(`从平台移除项目「${p.name}」吗？\n\n只是不再管理它，项目目录里的文件不会被删除。`)) return;
     const resp = await fetch(`/api/projects/${encodeURIComponent(p.id)}`, { method: 'DELETE' });
     if (!resp.ok) { appendLog('! 移除失败\n'); return; }
     projectSummaries.delete(p.id);
+    batches.delete(p.id);
     if (p.id === currentId) currentId = null;
     await loadProjects();
   }

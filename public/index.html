@@ -117,6 +117,22 @@
     </div>
 
     <!-- 主表格分组列表 -->
+    <section id="selection-bar" class="sync-selection hidden" aria-label="批量选表">
+      <button id="select-visible-downloads" type="button"></button>
+      <span id="selection-count" aria-live="polite"></span>
+      <button id="clear-selection" type="button">清空</button>
+      <button id="download-selected" type="button" class="primary">下载选中</button>
+    </section>
+    <section id="batch-result" class="sync-batch hidden" aria-label="下载批次结果">
+      <div class="sync-batch-head">
+        <strong id="batch-title" role="status"></strong>
+        <span id="batch-action"></span>
+        <button id="batch-toggle" type="button" aria-controls="batch-items">明细</button>
+        <button id="batch-retry" type="button">重试失败项</button>
+        <button id="batch-copy" type="button">复制本批变更摘要</button>
+      </div>
+      <ul id="batch-items" class="sync-batch-items hidden"></ul>
+    </section>
     <main id="groups" class="groups"></main>
 
     <!-- 授权提示 Banner -->
@@ -640,6 +656,12 @@
         <button type="button" id="diff-prev" title="上一处改动（K / ⌥↑）">↑</button>
         <button type="button" id="diff-next" title="下一处改动（J / ⌥↓）">↓</button>
       </div>
+      <form id="diff-find" class="diff-find">
+        <input id="diff-record" type="search" aria-label="业务 ID" placeholder="按业务 ID 查找记录" autocomplete="off" spellcheck="false" maxlength="200">
+        <button id="diff-find-submit" type="submit">查找</button>
+        <button id="diff-find-clear" type="button" class="hidden">返回完整差异</button>
+        <span id="diff-find-status" role="status"></span>
+      </form>
       <div class="diff-main">
         <aside id="diff-tree" class="diff-tree"></aside>
         <section id="diff-view" class="diff-view"></section>
@@ -687,6 +709,7 @@
   <script src="icons.js"></script>
   <script src="table-search.js"></script>
   <script src="action-error-parser.js"></script>
+  <script src="sync-batch.js"></script>
   <script src="app.js"></script>
   <script src="panels.js"></script>
   <script src="filelist-manager.js"></script>

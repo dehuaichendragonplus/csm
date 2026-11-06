@@ -3,7 +3,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const { loadState, saveState, updateEntry } = require('../lib/sync-state');
+const { loadState, saveState, updateEntry, hashFile } = require('../lib/sync-state');
 
 function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'sync-state-test-'));
@@ -63,7 +63,6 @@ test('updateEntry preserves existing entries', () => {
 });
 
 test('hashFile：内容不变时复用缓存；内容和修改时间变了会重新计算', () => {
-  const { hashFile } = require('../lib/sync-state');
   const fs = require('node:fs');
   const path = require('node:path');
   const os = require('node:os');
@@ -75,4 +74,20 @@ test('hashFile：内容不变时复用缓存；内容和修改时间变了会重
   fs.utimesSync(f, new Date(), new Date(Date.now() + 5000));
   assert.notStrictEqual(hashFile(f), h1);
   assert.strictEqual(hashFile(path.join(path.dirname(f), 'missing.xlsx')), null);
+});
+
+test('文件尺寸和 mtime 相同但内容被覆写时，指纹缓存会重新计算', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'csm-hash-'));
+  const file = path.join(dir, 'same-size.xlsx');
+  const fixedTime = new Date('2026-11-01T00:00:00Z');
+  try {
+    fs.writeFileSync(file, 'old');
+    fs.utimesSync(file, fixedTime, fixedTime);
+    const before = hashFile(file);
+    fs.writeFileSync(file, 'new');
+    fs.utimesSync(file, fixedTime, fixedTime);
+    assert.notStrictEqual(hashFile(file), before);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

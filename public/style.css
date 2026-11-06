@@ -3926,3 +3926,97 @@ kbd {
 .diagnostic-actions .btn.hidden {
   display: none !important;
 }
+
+/* 批量选表、结果与行内变化 */
+.sync-selection,
+.sync-batch {
+  margin: 10px 0;
+  padding: 8px 12px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  font-size: 12px;
+}
+
+.sync-selection,
+.sync-batch-head,
+.diff-find {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.sync-selection #selection-count,
+.sync-batch-head strong {
+  margin-right: auto;
+}
+
+.sync-batch-items {
+  max-height: 240px;
+  overflow: auto;
+  padding: 0;
+  margin: 8px 0 0;
+  list-style: none;
+}
+
+.sync-batch-item {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 6px 0;
+  border-top: 1px solid var(--border-subtle);
+  overflow-wrap: anywhere;
+}
+
+.sync-batch-item.failed span,
+.sync-batch-item.skipped span {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.row-select {
+  margin: 0;
+  flex: 0 0 auto;
+  accent-color: var(--border-focus);
+  cursor: pointer;
+}
+
+.row-change-summary,
+.row-change-detail {
+  display: block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+button.row-change-summary {
+  padding: 0;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: var(--primary-text);
+}
+
+.row-change-detail {
+  border-left: 2px solid var(--border-default);
+  padding-left: 6px;
+}
+
+.row-change-detail span,
+.row-change-detail small {
+  display: block;
+}
+
+.diff-find {
+  padding: 5px 16px;
+  border-bottom: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.diff-find input {
+  width: 200px;
+}
