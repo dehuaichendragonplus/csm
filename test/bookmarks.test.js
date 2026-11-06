@@ -93,6 +93,7 @@ test('bookmarks API: GET, POST, PUT, DELETE 完整生命周期', async () => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'csm-api-bm-'));
   const { port, server } = await main({
     dataDir,
+    port: 0,
     openBrowser: false
   });
   const baseUrl = `http://localhost:${port}`;

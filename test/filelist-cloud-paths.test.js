@@ -54,7 +54,7 @@ test('管理配置表的路径预览只读，应用时仅写入确认过的路�
     }
   }));
 
-  const { server, port } = await main({ dataDir, credentialsPath, openBrowser: false });
+  const { server, port } = await main({ dataDir, credentialsPath, port: 0, openBrowser: false });
   t.after(() => new Promise(resolve => server.close(resolve)));
   async function request(route, body, id = projects[0].id) {
     const options = body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {};

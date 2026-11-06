@@ -41,6 +41,7 @@ test('projects-summary, badge, and notify APIs', async () => {
 
   const { port, server } = await main({
     dataDir,
+    port: 0,
     openBrowser: false,
     setBadge: count => { badgeCalls.push(count); },
     showNotification: payload => { notifyCalls.push(payload); return true; }

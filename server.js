@@ -101,7 +101,7 @@ async function main(opts = {}) {
   const onAuthorized = opts.onAuthorized || (() => {});
 
   migrateLegacyToken(TOKEN_PATH);
-  const port = await findAvailablePort(DEFAULT_PORT);
+  const listenPort = opts.port !== undefined ? opts.port : await findAvailablePort(DEFAULT_PORT);
   const app = express();
 
   // 拒绝跨站请求：浏览器会给跨站 POST 带上 Origin，只放行本机页面自己发的请求
@@ -116,7 +116,7 @@ async function main(opts = {}) {
   });
   app.use(express.json());
 
-  let { client: oauth2Client, hasToken } = buildOAuthClient(port, CREDENTIALS_PATH, TOKEN_PATH);
+  let { client: oauth2Client, hasToken } = buildOAuthClient(listenPort, CREDENTIALS_PATH, TOKEN_PATH);
   const driveCaches = new Map(); // projectId -> Map(spreadsheetId -> { modifiedTime, name, error })
 
   const statePathOf = id => path.join(DATA_DIR, 'projects', id, '.sync_state.json');
@@ -1537,11 +1537,12 @@ async function main(opts = {}) {
   // max-age=0：每次都向服务端校验，App 升级后不会用到浏览器里缓存的旧前端文件
   app.use(express.static(path.join(ROOT, 'public'), { maxAge: 0 }));
 
-  const url = `http://localhost:${port}/`;
   const server = await new Promise((resolve, reject) => {
-    const srv = app.listen(port, '127.0.0.1', () => resolve(srv));
+    const srv = app.listen(listenPort, '127.0.0.1', () => resolve(srv));
     srv.once('error', reject);
   });
+  const port = server.address().port;
+  const url = `http://localhost:${port}/`;
   console.log(`[csm] listening on ${url}`);
   console.log(`[csm] data dir: ${DATA_DIR}`);
   if (!hasToken) {

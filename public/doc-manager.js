@@ -1,12 +1,12 @@
-// 本地文档收藏与管理 (Document Bookmarks)
-// 纯本地存储，管理钉钉、飞书、Google 等在线文档外链，支持快捷下拉直达与专属管理弹窗。
+// 全局在线文档收藏与管理 (Global Document Bookmarks)
+// 纯本地存储，管理钉钉、飞书、Google 等在线文档外链，支持全局快捷直达与项目/通用分类管理。
 (function () {
   'use strict';
 
   const $ = id => document.getElementById(id);
 
   const el = {
-    // 书签栏快捷组件
+    // 顶部 Row 1 全局快捷组件
     widget: $('bookmarks-widget'),
     btnDropdown: $('btn-bookmarks-dropdown'),
     dropdownMenu: $('bookmarks-dropdown-menu'),
@@ -20,11 +20,12 @@
     modal: $('doc-modal'),
     close: $('doc-close'),
     tabAll: $('doc-tab-all'),
-    tabProject: $('doc-tab-project'),
     tabGlobal: $('doc-tab-global'),
+    tabProject: $('doc-tab-project'),
+    tableProjectFilter: $('doc-table-project-filter'),
     countAll: $('doc-count-all'),
-    countProject: $('doc-count-project'),
     countGlobal: $('doc-count-global'),
+    countProject: $('doc-count-project'),
     filter: $('doc-filter'),
     filterClear: $('doc-filter-clear'),
     btnAdd: $('doc-btn-add'),
@@ -36,11 +37,12 @@
     editTitle: $('doc-edit-title'),
     inputTitle: $('doc-input-title'),
     inputUrl: $('doc-input-url'),
-    cardProject: $('card-scope-project'),
     cardGlobal: $('card-scope-global'),
-    scopeProject: $('doc-scope-project'),
+    cardProject: $('card-scope-project'),
     scopeGlobal: $('doc-scope-global'),
-    scopeProjName: $('doc-scope-proj-name'),
+    scopeProject: $('doc-scope-project'),
+    pickerGroup: $('doc-project-picker-group'),
+    selectProject: $('doc-select-project'),
     urlDetectChip: $('doc-url-detect-chip'),
     inputDesc: $('doc-input-desc'),
     msg: $('doc-edit-msg'),
@@ -49,7 +51,9 @@
   };
 
   let bookmarks = [];
-  let currentTab = 'all'; // 'all' | 'project' | 'global'
+  let allProjects = [];
+  let currentTab = 'all'; // 'all' | 'global' | 'project'
+  let selectedFilterProject = ''; // 选中特定项目 ID 进行筛选
   let searchTerm = '';
   let editingId = null; // null 为新增，string 为编辑项 ID
 
@@ -68,9 +72,10 @@
     return window.CSM && typeof window.CSM.currentId === 'function' ? window.CSM.currentId() : null;
   }
 
-  function getCurrentProjectName() {
-    const elName = $('project-name');
-    return (elName && elName.textContent && elName.textContent.trim()) || '当前项目';
+  function getProjectNameById(projId) {
+    if (!projId) return '';
+    const p = allProjects.find(x => x.id === projId);
+    return p ? p.name : projId;
   }
 
   function escapeHtml(str) {
@@ -116,7 +121,6 @@
         }, 1500);
       }
     } catch (_) {
-      // 降级使用 input 选中复制
       const input = document.createElement('input');
       input.value = text;
       document.body.appendChild(input);
@@ -130,19 +134,60 @@
     }
   }
 
+  // ---------- 项目列表加载与选项填充 ----------
+  async function loadProjectsList() {
+    try {
+      const list = await api('/api/projects');
+      allProjects = Array.isArray(list) ? list : [];
+      renderProjectOptions();
+    } catch (e) {
+      console.warn('[bookmarks] load projects failed:', e);
+    }
+  }
+
+  function renderProjectOptions() {
+    // 1. 填充新增/编辑弹窗中的项目下拉框
+    if (el.selectProject) {
+      const curSelectVal = el.selectProject.value;
+      if (allProjects.length === 0) {
+        el.selectProject.innerHTML = '<option value="">暂无已添加的项目</option>';
+      } else {
+        el.selectProject.innerHTML = allProjects.map(p =>
+          `<option value="${escapeHtml(p.id)}">📁 ${escapeHtml(p.name)} (${escapeHtml(p.dir)})</option>`
+        ).join('');
+        if (curSelectVal && allProjects.some(p => p.id === curSelectVal)) {
+          el.selectProject.value = curSelectVal;
+        }
+      }
+    }
+
+    // 2. 填充管理列表表格上方的项目筛选器
+    if (el.tableProjectFilter) {
+      const curFilterVal = el.tableProjectFilter.value;
+      let opts = '<option value="">所有项目专属文档</option>';
+      allProjects.forEach(p => {
+        opts += `<option value="${escapeHtml(p.id)}">📁 ${escapeHtml(p.name)}</option>`;
+      });
+      el.tableProjectFilter.innerHTML = opts;
+      if (curFilterVal) {
+        el.tableProjectFilter.value = curFilterVal;
+      }
+    }
+  }
+
   // ---------- 数据获取与刷新 ----------
   async function refreshBookmarks() {
-    const projectId = getCurrentProjectId();
     try {
-      const qs = projectId ? `?projectId=${encodeURIComponent(projectId)}` : '';
-      const data = await api(`/api/bookmarks${qs}`);
+      await loadProjectsList();
+      // 全局功能：获取所有文档
+      const data = await api('/api/bookmarks');
       bookmarks = Array.isArray(data.bookmarks) ? data.bookmarks : [];
 
-      const pCount = data.projectCount !== undefined ? data.projectCount : bookmarks.filter(b => b.scope === 'project').length;
-      const gCount = data.globalCount !== undefined ? data.globalCount : bookmarks.filter(b => b.scope === 'global').length;
+      const gCount = bookmarks.filter(b => b.scope === 'global').length;
+      const pCount = bookmarks.filter(b => b.scope === 'project').length;
       const totalCount = bookmarks.length;
 
-      // 更新角标
+      // 更新顶部 Row 1 按钮角标
       if (el.badge) {
         el.badge.textContent = totalCount;
         el.badge.classList.toggle('hidden', totalCount === 0);
@@ -150,8 +195,8 @@
 
       // 更新弹窗 Tab 计数
       if (el.countAll) el.countAll.textContent = totalCount;
-      if (el.countProject) el.countProject.textContent = pCount;
       if (el.countGlobal) el.countGlobal.textContent = gCount;
+      if (el.countProject) el.countProject.textContent = pCount;
 
       renderDropdown();
       renderTable();
@@ -160,7 +205,7 @@
     }
   }
 
-  // ---------- 渲染书签栏下拉菜单 ----------
+  // ---------- 渲染顶部 Row 1 快捷下拉菜单 ----------
   function renderDropdown() {
     if (!el.dropdownList) return;
 
@@ -168,52 +213,61 @@
       el.dropdownList.innerHTML = `
         <div class="bm-empty-tip">
           暂无文档收藏<br>
-          <span style="color:var(--text-tertiary);font-size:11px;margin-top:4px;display:inline-block;">点击右上角「➕ 新增」添加钉钉、飞书或在线表格</span>
+          <span style="color:var(--text-tertiary);font-size:11px;margin-top:4px;display:inline-block;">点击右上角「➕ 新增」开始收藏钉钉、飞书或在线表格</span>
         </div>
       `;
       return;
     }
 
-    const projectDocs = bookmarks.filter(b => b.scope === 'project');
+    const currentProjId = getCurrentProjectId();
     const globalDocs = bookmarks.filter(b => b.scope === 'global');
+    const projectDocs = bookmarks.filter(b => b.scope === 'project');
 
     let html = '';
 
-    if (projectDocs.length > 0) {
-      html += `<div class="bm-section-title">📌 当前项目文档 (${projectDocs.length})</div>`;
-      for (const b of projectDocs) {
-        const plat = detectPlatform(b.url);
-        html += `
-          <div class="bm-item" data-url="${escapeHtml(b.url)}" title="${escapeHtml(b.title + (b.description ? ' - ' + b.description : ''))}">
-            <div class="bm-item-left">
-              <span class="bm-item-icon">${plat.icon}</span>
-              <div class="bm-item-info">
-                <div class="bm-item-title">${escapeHtml(b.title)}</div>
-                ${b.description ? `<div class="bm-item-desc">${escapeHtml(b.description)}</div>` : ''}
-              </div>
-            </div>
-            <span class="bm-item-ext" title="在新窗口打开">↗</span>
-          </div>
-        `;
-      }
-    }
-
+    // 1. 全局通用文档分组
     if (globalDocs.length > 0) {
       html += `<div class="bm-section-title">🌐 全局通用文档 (${globalDocs.length})</div>`;
       for (const b of globalDocs) {
         const plat = detectPlatform(b.url);
-        html += `
-          <div class="bm-item" data-url="${escapeHtml(b.url)}" title="${escapeHtml(b.title + (b.description ? ' - ' + b.description : ''))}">
-            <div class="bm-item-left">
-              <span class="bm-item-icon">${plat.icon}</span>
-              <div class="bm-item-info">
-                <div class="bm-item-title">${escapeHtml(b.title)}</div>
-                ${b.description ? `<div class="bm-item-desc">${escapeHtml(b.description)}</div>` : ''}
-              </div>
-            </div>
-            <span class="bm-item-ext" title="在新窗口打开">↗</span>
-          </div>
-        `;
+        html += renderDropdownItemHtml(b, plat);
+      }
+    }
+
+    // 2. 当前打开项目的专属文档（优先置顶展示）
+    if (currentProjId) {
+      const curProjDocs = projectDocs.filter(b => b.projectId === currentProjId);
+      if (curProjDocs.length > 0) {
+        const projName = getProjectNameById(currentProjId);
+        html += `<div class="bm-section-title">📌 当前项目: ${escapeHtml(projName)} (${curProjDocs.length})</div>`;
+        for (const b of curProjDocs) {
+          const plat = detectPlatform(b.url);
+          html += renderDropdownItemHtml(b, plat);
+        }
+      }
+    }
+
+    // 3. 其余项目的专属文档（按项目分组）
+    const otherProjects = allProjects.filter(p => !currentProjId || p.id !== currentProjId);
+    for (const proj of otherProjects) {
+      const pDocs = projectDocs.filter(b => b.projectId === proj.id);
+      if (pDocs.length > 0) {
+        html += `<div class="bm-section-title">📁 ${escapeHtml(proj.name)} (${pDocs.length})</div>`;
+        for (const b of pDocs) {
+          const plat = detectPlatform(b.url);
+          html += renderDropdownItemHtml(b, plat);
+        }
+      }
+    }
+
+    // 4. 未匹配到已知项目的项目文档（兜底）
+    const knownIds = new Set(allProjects.map(p => p.id));
+    const orphanDocs = projectDocs.filter(b => b.projectId && !knownIds.has(b.projectId));
+    if (orphanDocs.length > 0) {
+      html += `<div class="bm-section-title">📁 其他项目 (${orphanDocs.length})</div>`;
+      for (const b of orphanDocs) {
+        const plat = detectPlatform(b.url);
+        html += renderDropdownItemHtml(b, plat);
       }
     }
 
@@ -228,6 +282,21 @@
         closeDropdown();
       });
     });
+  }
+
+  function renderDropdownItemHtml(b, plat) {
+    return `
+      <div class="bm-item" data-url="${escapeHtml(b.url)}" title="${escapeHtml(b.title + (b.description ? ' - ' + b.description : ''))}">
+        <div class="bm-item-left">
+          <span class="bm-item-icon">${plat.icon}</span>
+          <div class="bm-item-info">
+            <div class="bm-item-title">${escapeHtml(b.title)}</div>
+            ${b.description ? `<div class="bm-item-desc">${escapeHtml(b.description)}</div>` : ''}
+          </div>
+        </div>
+        <span class="bm-item-ext" title="在新窗口打开">↗</span>
+      </div>
+    `;
   }
 
   function toggleDropdown() {
@@ -259,20 +328,27 @@
     let list = bookmarks.slice();
 
     // 1. Tab 过滤
-    if (currentTab === 'project') {
-      list = list.filter(b => b.scope === 'project');
-    } else if (currentTab === 'global') {
+    if (currentTab === 'global') {
       list = list.filter(b => b.scope === 'global');
+    } else if (currentTab === 'project') {
+      list = list.filter(b => b.scope === 'project');
+      if (selectedFilterProject) {
+        list = list.filter(b => b.projectId === selectedFilterProject);
+      }
+    } else if (currentTab === 'all' && selectedFilterProject) {
+      list = list.filter(b => b.scope === 'project' && b.projectId === selectedFilterProject);
     }
 
     // 2. 关键词搜索
     if (searchTerm) {
       const q = searchTerm.toLowerCase();
       list = list.filter(b => {
+        const projName = getProjectNameById(b.projectId).toLowerCase();
         return (
           (b.title && b.title.toLowerCase().includes(q)) ||
           (b.url && b.url.toLowerCase().includes(q)) ||
-          (b.description && b.description.toLowerCase().includes(q))
+          (b.description && b.description.toLowerCase().includes(q)) ||
+          projName.includes(q)
         );
       });
     }
@@ -288,14 +364,14 @@
       return;
     }
 
-    const projName = getCurrentProjectName();
     let rowsHtml = '';
 
     for (const b of list) {
       const plat = detectPlatform(b.url);
-      const isProj = b.scope === 'project';
-      const scopeLabel = isProj ? `${projName} 专属` : '全局通用';
-      const scopeClass = isProj ? 'tag-project' : 'tag-global';
+      const isGlobal = b.scope === 'global';
+      const projName = isGlobal ? '全局通用' : getProjectNameById(b.projectId);
+      const scopeLabel = isGlobal ? '🌐 全局通用' : `📁 ${projName}`;
+      const scopeClass = isGlobal ? 'tag-global' : 'tag-project';
 
       rowsHtml += `
         <tr data-id="${escapeHtml(b.id)}">
@@ -317,7 +393,7 @@
             </div>
           </td>
           <td>
-            <span class="doc-scope-tag ${scopeClass}">${escapeHtml(scopeLabel)}</span>
+            <span class="doc-scope-tag ${scopeClass}" title="${escapeHtml(scopeLabel)}">${escapeHtml(scopeLabel)}</span>
           </td>
           <td style="color:var(--text-secondary);font-size:12px;">
             ${escapeHtml(b.description || '-')}
@@ -393,8 +469,9 @@
 
   function updateScopeCards() {
     const isGlobal = el.scopeGlobal && el.scopeGlobal.checked;
-    if (el.cardProject) el.cardProject.classList.toggle('active', !isGlobal);
     if (el.cardGlobal) el.cardGlobal.classList.toggle('active', isGlobal);
+    if (el.cardProject) el.cardProject.classList.toggle('active', !isGlobal);
+    if (el.pickerGroup) el.pickerGroup.classList.toggle('hidden', isGlobal);
   }
 
   function updateUrlDetection() {
@@ -429,7 +506,7 @@
     el.urlDetectChip.classList.remove('hidden');
   }
 
-  function openEditModal(id = null) {
+  async function openEditModal(id = null) {
     if (!el.editModal) return;
     editingId = id;
     if (el.msg) {
@@ -437,8 +514,8 @@
       el.msg.className = 'fl-msg';
     }
 
-    const projName = getCurrentProjectName();
-    if (el.scopeProjName) el.scopeProjName.textContent = projName;
+    await loadProjectsList();
+    const currentProjId = getCurrentProjectId();
 
     if (id) {
       // 编辑已有项
@@ -448,10 +525,14 @@
       if (el.inputTitle) el.inputTitle.value = item.title || '';
       if (el.inputUrl) el.inputUrl.value = item.url || '';
       if (el.inputDesc) el.inputDesc.value = item.description || '';
+
       if (item.scope === 'global') {
         if (el.scopeGlobal) el.scopeGlobal.checked = true;
       } else {
         if (el.scopeProject) el.scopeProject.checked = true;
+        if (el.selectProject && item.projectId) {
+          el.selectProject.value = item.projectId;
+        }
       }
     } else {
       // 新增项
@@ -459,7 +540,16 @@
       if (el.inputTitle) el.inputTitle.value = '';
       if (el.inputUrl) el.inputUrl.value = '';
       if (el.inputDesc) el.inputDesc.value = '';
-      if (el.scopeProject) el.scopeProject.checked = true;
+
+      if (currentProjId && allProjects.some(p => p.id === currentProjId)) {
+        if (el.scopeProject) el.scopeProject.checked = true;
+        if (el.selectProject) el.selectProject.value = currentProjId;
+      } else if (allProjects.length > 0) {
+        if (el.scopeProject) el.scopeProject.checked = true;
+        if (el.selectProject) el.selectProject.value = allProjects[0].id;
+      } else {
+        if (el.scopeGlobal) el.scopeGlobal.checked = true;
+      }
     }
 
     updateScopeCards();
@@ -487,14 +577,8 @@
     const url = el.inputUrl ? el.inputUrl.value.trim() : '';
     const isGlobal = el.scopeGlobal && el.scopeGlobal.checked;
     const scope = isGlobal ? 'global' : 'project';
-    const projectId = scope === 'project' ? getCurrentProjectId() : null;
+    const projectId = scope === 'project' ? (el.selectProject ? el.selectProject.value : null) : null;
     const description = el.inputDesc ? el.inputDesc.value.trim() : '';
-
-    if (!title) {
-      showEditMsg('请输入文档名称', 'error');
-      if (el.inputTitle) el.inputTitle.focus();
-      return;
-    }
 
     if (!url) {
       showEditMsg('请输入文档链接', 'error');
@@ -505,6 +589,18 @@
     if (!/^https?:\/\//i.test(url)) {
       showEditMsg('链接必须以 http:// 或 https:// 开头', 'error');
       if (el.inputUrl) el.inputUrl.focus();
+      return;
+    }
+
+    if (!title) {
+      showEditMsg('请输入文档名称', 'error');
+      if (el.inputTitle) el.inputTitle.focus();
+      return;
+    }
+
+    if (scope === 'project' && !projectId) {
+      showEditMsg('请选择所属项目', 'error');
+      if (el.selectProject) el.selectProject.focus();
       return;
     }
 
@@ -537,7 +633,8 @@
       closeEditModal();
       await refreshBookmarks();
       if (window.CSM && typeof window.CSM.appendLog === 'function') {
-        window.CSM.appendLog(`📑 已${editingId ? '修改' : '新增'}文档收藏：${title}\n`);
+        const dest = scope === 'global' ? '全局通用' : getProjectNameById(projectId);
+        window.CSM.appendLog(`📑 已${editingId ? '修改' : '新增'}文档收藏「${title}」（${dest}）\n`);
       }
     } catch (err) {
       showEditMsg(err.message || '保存失败', 'error');
@@ -572,7 +669,7 @@
 
   // ---------- 事件绑定 ----------
   function initEvents() {
-    // 快捷下拉点击与外部点击关闭
+    // 顶部下拉切换与外部点击关闭
     if (el.btnDropdown) {
       el.btnDropdown.addEventListener('click', e => {
         e.stopPropagation();
@@ -627,42 +724,6 @@
       }
     });
 
-    // Tab 切换
-    const tabs = [
-      { btn: el.tabAll, tab: 'all' },
-      { btn: el.tabProject, tab: 'project' },
-      { btn: el.tabGlobal, tab: 'global' }
-    ];
-
-    tabs.forEach(({ btn, tab }) => {
-      if (!btn) return;
-      btn.addEventListener('click', () => {
-        tabs.forEach(t => t.btn && t.btn.classList.remove('active'));
-        btn.classList.add('active');
-        currentTab = tab;
-        renderTable();
-      });
-    });
-
-    // 搜索过滤
-    if (el.filter) {
-      el.filter.addEventListener('input', () => {
-        searchTerm = el.filter.value.trim();
-        if (el.filterClear) el.filterClear.classList.toggle('hidden', !searchTerm);
-        renderTable();
-      });
-    }
-
-    if (el.filterClear) {
-      el.filterClear.addEventListener('click', () => {
-        if (el.filter) el.filter.value = '';
-        searchTerm = '';
-        el.filterClear.classList.add('hidden');
-        renderTable();
-        if (el.filter) el.filter.focus();
-      });
-    }
-
     // 实时链接识别
     if (el.inputUrl) {
       el.inputUrl.addEventListener('input', updateUrlDetection);
@@ -702,6 +763,55 @@
       });
     }
 
+    // Tab 切换
+    const tabs = [
+      { btn: el.tabAll, tab: 'all' },
+      { btn: el.tabGlobal, tab: 'global' },
+      { btn: el.tabProject, tab: 'project' }
+    ];
+
+    tabs.forEach(({ btn, tab }) => {
+      if (!btn) return;
+      btn.addEventListener('click', () => {
+        tabs.forEach(t => t.btn && t.btn.classList.remove('active'));
+        btn.classList.add('active');
+        currentTab = tab;
+        renderTable();
+      });
+    });
+
+    // 项目筛选下拉框
+    if (el.tableProjectFilter) {
+      el.tableProjectFilter.addEventListener('change', () => {
+        selectedFilterProject = el.tableProjectFilter.value;
+        if (selectedFilterProject && currentTab === 'global') {
+          // 如果选了项目但当前在全局 Tab，自动切换到项目专属 Tab
+          if (el.tabProject) el.tabProject.click();
+        } else {
+          renderTable();
+        }
+      });
+    }
+
+    // 搜索过滤
+    if (el.filter) {
+      el.filter.addEventListener('input', () => {
+        searchTerm = el.filter.value.trim();
+        if (el.filterClear) el.filterClear.classList.toggle('hidden', !searchTerm);
+        renderTable();
+      });
+    }
+
+    if (el.filterClear) {
+      el.filterClear.addEventListener('click', () => {
+        if (el.filter) el.filter.value = '';
+        searchTerm = '';
+        el.filterClear.classList.add('hidden');
+        renderTable();
+        if (el.filter) el.filter.focus();
+      });
+    }
+
     // 回车提交表单
     [el.inputTitle, el.inputUrl, el.inputDesc].forEach(input => {
       if (!input) return;
@@ -713,7 +823,7 @@
       });
     });
 
-    // 监听项目切换
+    // 监听项目切换（更新下拉列表中“当前项目”的置顶状态）
     document.addEventListener('csm-project-changed', () => {
       refreshBookmarks();
     });

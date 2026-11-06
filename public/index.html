@@ -18,6 +18,27 @@
         <span class="chrome-plus-icon">+</span>
       </button>
       <div class="tab-strip-spacer"></div>
+      <!-- 全局文档收藏入口 -->
+      <div class="bookmarks-widget global-bookmarks-widget" id="bookmarks-widget">
+        <button id="btn-bookmarks-dropdown" type="button" class="tab-strip-bookmarks-btn" title="在线文档收藏：查看、跳转与管理所有项目和全局文档">
+          <span class="tab-strip-bm-icon">📑</span>
+          <span class="tab-strip-bm-label">文档收藏</span>
+          <span id="bookmarks-badge" class="tab-strip-bm-badge">0</span>
+          <span class="tab-strip-bm-arrow">▾</span>
+        </button>
+        <div id="bookmarks-dropdown-menu" class="bookmarks-dropdown hidden" role="menu">
+          <div class="bm-dropdown-header">
+            <span class="bm-dropdown-title">📑 在线文档收藏</span>
+            <button id="btn-bm-quick-add" type="button" class="btn-bm-text-action">➕ 新增</button>
+          </div>
+          <div id="bm-dropdown-list" class="bm-dropdown-list">
+            <!-- 动态渲染全局与各项目文档 -->
+          </div>
+          <div class="bm-dropdown-footer">
+            <button id="btn-bm-open-manager" type="button" class="bm-dropdown-manage-btn">⚙️ 管理所有文档…</button>
+          </div>
+        </div>
+      </div>
       <button class="tab-strip-profile" id="tab-strip-profile" type="button" title="全局偏好设置 (⌘,)：Google 账号状态、自动刷新周期、通知与快捷键">
         <span class="profile-brand" id="app-title" title="CSM">CSM Sync</span>
         <span class="profile-avatar" id="header-user-avatar">👤</span>
@@ -87,26 +108,6 @@
     <section id="summary-bar" class="chrome-bookmarks-bar hidden">
       <div class="bookmarks-left">
         <div id="status-filters" class="status-filters"></div>
-        <div class="bookmarks-widget" id="bookmarks-widget">
-          <button id="btn-bookmarks-dropdown" type="button" class="filter-chip chip-bookmarks" title="查看并跳转收藏的在线文档">
-            <span class="chip-icon">📑</span>
-            <span class="chip-label">收藏文档</span>
-            <span id="bookmarks-badge" class="chip-count">0</span>
-            <span class="chip-arrow">▾</span>
-          </button>
-          <div id="bookmarks-dropdown-menu" class="bookmarks-dropdown hidden" role="menu">
-            <div class="bm-dropdown-header">
-              <span class="bm-dropdown-title">📑 在线文档收藏</span>
-              <button id="btn-bm-quick-add" type="button" class="btn-bm-text-action">➕ 新增</button>
-            </div>
-            <div id="bm-dropdown-list" class="bm-dropdown-list">
-              <!-- 动态渲染项目与全局文档 -->
-            </div>
-            <div class="bm-dropdown-footer">
-              <button id="btn-bm-open-manager" type="button" class="bm-dropdown-manage-btn">⚙️ 管理所有文档…</button>
-            </div>
-          </div>
-        </div>
         <span id="summary" class="summary-text hidden">加载中…</span>
       </div>
       <div class="bookmarks-right">
@@ -587,12 +588,17 @@
             <button type="button" class="fl-tab active" data-tab="all" id="doc-tab-all">
               <span>全部</span> <span id="doc-count-all" class="fl-tab-count">0</span>
             </button>
-            <button type="button" class="fl-tab" data-tab="project" id="doc-tab-project">
-              <span>当前项目</span> <span id="doc-count-project" class="fl-tab-count">0</span>
-            </button>
             <button type="button" class="fl-tab" data-tab="global" id="doc-tab-global">
               <span>全局通用</span> <span id="doc-count-global" class="fl-tab-count">0</span>
             </button>
+            <button type="button" class="fl-tab" data-tab="project" id="doc-tab-project">
+              <span>项目专属</span> <span id="doc-count-project" class="fl-tab-count">0</span>
+            </button>
+          </div>
+          <div class="doc-table-filter-wrap">
+            <select id="doc-table-project-filter" class="doc-table-proj-select" title="按项目详细筛选">
+              <option value="">所有项目</option>
+            </select>
           </div>
         </div>
         <div class="fl-toolbar-right">
@@ -685,18 +691,6 @@
             <span>适用范围</span>
           </label>
           <div class="doc-scope-cards">
-            <label class="doc-card-option active" id="card-scope-project" for="doc-scope-project">
-              <input type="radio" name="doc-scope" value="project" id="doc-scope-project" checked>
-              <div class="doc-card-content">
-                <div class="doc-card-top">
-                  <span class="doc-card-icon">📌</span>
-                  <strong class="doc-card-title">当前项目专属</strong>
-                </div>
-                <div class="doc-card-desc">仅在 <span id="doc-scope-proj-name" class="doc-proj-highlight">当前项目</span> 中展示与跳转</div>
-              </div>
-              <div class="doc-card-check">✓</div>
-            </label>
-
             <label class="doc-card-option" id="card-scope-global" for="doc-scope-global">
               <input type="radio" name="doc-scope" value="global" id="doc-scope-global">
               <div class="doc-card-content">
@@ -704,10 +698,35 @@
                   <span class="doc-card-icon">🌐</span>
                   <strong class="doc-card-title">全局通用文档</strong>
                 </div>
-                <div class="doc-card-desc">跨项目随时查看，所有项目共享使用</div>
+                <div class="doc-card-desc">所有项目均可快速访问，跨项目共享</div>
               </div>
               <div class="doc-card-check">✓</div>
             </label>
+
+            <label class="doc-card-option active" id="card-scope-project" for="doc-scope-project">
+              <input type="radio" name="doc-scope" value="project" id="doc-scope-project" checked>
+              <div class="doc-card-content">
+                <div class="doc-card-top">
+                  <span class="doc-card-icon">📁</span>
+                  <strong class="doc-card-title">指定项目专属</strong>
+                </div>
+                <div class="doc-card-desc">归属于特定项目，随项目集中管理</div>
+              </div>
+              <div class="doc-card-check">✓</div>
+            </label>
+          </div>
+        </div>
+
+        <!-- 字段 3.5：所属项目选择器（当选中“指定项目专属”时显示，罗列所有可选项目） -->
+        <div class="doc-form-group" id="doc-project-picker-group">
+          <label class="doc-label" for="doc-select-project">
+            <span>选择所属项目</span>
+            <em class="doc-req-star">*</em>
+          </label>
+          <div class="doc-select-wrap">
+            <select id="doc-select-project" class="doc-text-input doc-select no-prefix">
+              <!-- 动态填入所有项目：MergeX11, BubbleWord3, Configs... -->
+            </select>
           </div>
         </div>
 

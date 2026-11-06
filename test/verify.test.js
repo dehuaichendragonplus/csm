@@ -38,6 +38,7 @@ test('verify-cache: clear-state 与 refresh 均清空 verify-cache，防止负�
 
   const { port, server } = await main({
     dataDir,
+    port: 0,
     openBrowser: false
   });
 

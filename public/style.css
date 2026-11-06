@@ -4191,76 +4191,98 @@ button.row-change-summary {
    Document Bookmarks Widget & Manager Modal (在线文档收藏与管理)
    ========================================================================== */
 
-/* Bookmarks Bar Widget (Row 3) */
+/* Bookmarks Bar Widget (Row 1 Tab Strip Global Entrance) */
 .bookmarks-widget {
   position: relative;
   display: inline-flex;
   align-items: center;
 }
 
-.chip-bookmarks {
-  background: var(--bg-surface);
-  border: 1px solid var(--border-default);
-  color: var(--text-primary);
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.15s ease;
-  user-select: none;
+.global-bookmarks-widget {
+  margin-right: 8px;
+  -webkit-app-region: no-drag;
 }
 
-.chip-bookmarks:hover {
-  background: var(--bg-hover);
-  border-color: var(--border-hover);
-}
-
-.chip-bookmarks.active {
-  background: var(--primary-subtle);
-  border-color: var(--primary);
-  color: var(--primary);
-  font-weight: 600;
-}
-
-.chip-bookmarks .chip-count {
-  font-size: 11px;
-  padding: 1px 6px;
-  border-radius: var(--radius-full);
-  background: rgba(0, 0, 0, 0.06);
-  font-weight: 600;
-}
-
-.chip-bookmarks.active .chip-count {
-  background: var(--primary);
-  color: #ffffff;
-}
-
-.chip-arrow {
-  font-size: 10px;
-  margin-left: 2px;
-  color: var(--text-tertiary);
-  transition: transform 0.15s ease;
-}
-
-.chip-bookmarks.active .chip-arrow {
-  transform: rotate(180deg);
-  color: var(--primary);
-}
-
-/* Dropdown Menu */
-.bookmarks-dropdown {
+.global-bookmarks-widget .bookmarks-dropdown {
   position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  min-width: 320px;
-  max-width: 400px;
+  top: calc(100% + 4px);
+  right: 0;
+  left: auto;
+  min-width: 360px;
+  max-width: 440px;
   background: #ffffff;
   border: 1px solid var(--border-default);
   border-radius: var(--radius-lg);
-  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.12), 0 8px 10px -6px rgba(0, 0, 0, 0.08);
-  z-index: 150;
+  box-shadow: 0 16px 36px -6px rgba(0, 0, 0, 0.16), 0 8px 16px -4px rgba(0, 0, 0, 0.08);
+  z-index: 200;
   overflow: hidden;
   display: flex;
   flex-direction: column;
   animation: bmFadeIn 0.15s ease;
+}
+
+.tab-strip-bookmarks-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 16px;
+  margin-bottom: 3px;
+  font-size: 11px;
+  font-weight: 500;
+  background: rgba(37, 99, 235, 0.08);
+  border: 1px solid rgba(37, 99, 235, 0.22);
+  color: var(--primary);
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  transition: all var(--transition-fast);
+}
+
+.tab-strip-bookmarks-btn:hover {
+  background: rgba(37, 99, 235, 0.16);
+  border-color: rgba(37, 99, 235, 0.38);
+  color: #1d4ed8;
+}
+
+.tab-strip-bookmarks-btn.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #ffffff;
+  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.25);
+}
+
+.tab-strip-bookmarks-btn.active .tab-strip-bm-badge {
+  background: rgba(255, 255, 255, 0.25);
+  color: #ffffff;
+}
+
+.tab-strip-bookmarks-btn.active .tab-strip-bm-arrow {
+  transform: rotate(180deg);
+  color: #ffffff;
+}
+
+.tab-strip-bm-icon {
+  font-size: 13px;
+}
+
+.tab-strip-bm-label {
+  font-weight: 600;
+}
+
+.tab-strip-bm-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: var(--primary);
+  color: #ffffff;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.tab-strip-bm-arrow {
+  font-size: 9px;
+  opacity: 0.7;
+  transition: transform 0.15s ease;
 }
 
 @keyframes bmFadeIn {
@@ -4979,4 +5001,47 @@ button.row-change-summary {
 .doc-btn-save:active {
   transform: translateY(0);
   box-shadow: 0 2px 6px rgba(37, 99, 235, 0.2) !important;
+}
+
+/* Project Selector & Table Filter for Global Documents */
+.doc-select-wrap {
+  position: relative;
+  width: 100%;
+}
+
+.doc-select {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+  padding-right: 36px !important;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.doc-table-filter-wrap {
+  margin-left: 10px;
+  display: flex;
+  align-items: center;
+}
+
+.doc-table-proj-select {
+  padding: 5px 28px 5px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.doc-table-proj-select:hover {
+  border-color: var(--primary);
+  background-color: var(--bg-hover);
 }
