@@ -27,6 +27,113 @@
   const api = p => `/api/p/${encodeURIComponent(currentId)}${p}`;
   const PROJECT_KEY = 'syncmanager.currentProject';
 
+  // ---------- 项目状态汇总与 Dock / Tab 角标 ----------
+  const projectSummaries = new Map(); // id -> { pending, updated, conflict, missing, neverSynced, total }
+
+  function updateDockBadge(count) {
+    const num = parseInt(count, 10) || 0;
+    // 1. Electron IPC 原生设置 Dock Badge
+    if (window.electronBridge && typeof window.electronBridge.setBadge === 'function') {
+      try { window.electronBridge.setBadge(num); } catch (_) {}
+    }
+    // 2. 本地服务 API 兜底
+    fetch('/api/badge', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ count: num })
+    }).catch(() => {});
+    // 3. 浏览器标签页标题同步更新角标
+    const baseTitle = 'CSM';
+    document.title = num > 0 ? `(${num > 99 ? '99+' : num}) ${baseTitle}` : baseTitle;
+  }
+
+  function updateTabBadges() {
+    let totalPending = 0;
+    projects.forEach(p => {
+      const summary = projectSummaries.get(p.id);
+      const badgeEl = document.getElementById(`tab-badge-${p.id}`);
+      const pending = summary ? (summary.pending || 0) : 0;
+      totalPending += pending;
+      if (!badgeEl) return;
+
+      if (pending > 0) {
+        badgeEl.textContent = pending > 99 ? '99+' : String(pending);
+        badgeEl.dataset.count = String(pending);
+        if (summary.conflict > 0) {
+          badgeEl.className = 'tab-badge tab-badge-conflict';
+          badgeEl.title = `${summary.conflict} 张冲突，共 ${pending} 张待处理`;
+        } else if (summary.updated > 0) {
+          badgeEl.className = 'tab-badge tab-badge-updated';
+          badgeEl.title = `${summary.updated} 张云端有更新，共 ${pending} 张待处理`;
+        } else {
+          badgeEl.className = 'tab-badge tab-badge-pending';
+          badgeEl.title = `${pending} 张待处理`;
+        }
+      } else {
+        badgeEl.textContent = '';
+        badgeEl.dataset.count = '0';
+        badgeEl.className = 'tab-badge';
+        badgeEl.removeAttribute('title');
+      }
+    });
+
+    updateDockBadge(totalPending);
+  }
+
+  async function refreshProjectBadges() {
+    try {
+      const resp = await fetch('/api/projects-summary');
+      if (!resp.ok) return;
+      const data = await resp.json();
+      if (data && Array.isArray(data.projects)) {
+        data.projects.forEach(p => {
+          // 当前活跃项目若已有实时数据，保持实时数据不被旧缓存覆盖
+          if (p.id === currentId && lastRows && lastRows.length > 0) return;
+          projectSummaries.set(p.id, {
+            pending: p.pending || 0,
+            updated: p.updated || 0,
+            conflict: p.conflict || 0,
+            missing: p.missing || 0,
+            neverSynced: p.neverSynced || 0,
+            total: p.total || 0
+          });
+        });
+        updateTabBadges();
+      }
+    } catch (_) {}
+  }
+
+  async function sendBannerNotification({ title, body }) {
+    // 1. Electron IPC 原生通知
+    if (window.electronBridge && typeof window.electronBridge.showNotification === 'function') {
+      try {
+        const ok = await window.electronBridge.showNotification({ title, body });
+        if (ok) return true;
+      } catch (_) {}
+    }
+    // 2. 本地服务 API 代理通知
+    try {
+      const resp = await fetch('/api/notify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title, body })
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data && data.shown) return true;
+      }
+    } catch (_) {}
+    // 3. 浏览器 HTML5 Notification 兜底
+    if ('Notification' in window && Notification.permission === 'granted') {
+      try {
+        const n = new Notification(title, { body, tag: `csm-${Date.now()}` });
+        n.onclick = () => { window.focus(); n.close(); };
+        return true;
+      } catch (_) {}
+    }
+    return false;
+  }
+
   // 正在下载/上传的表 path：对应行置灰且不可点击（render 重建 DOM 时据此还原）
   const busyPaths = new Map(); // path -> 状态文案（下载中 / 上传中）
   function setRowBusy(path, busy, label) {
@@ -407,6 +514,20 @@
     els.summary.textContent =
       `${rows.length} 个表 | ${counts.conflict ? `⚠ 冲突 ${counts.conflict} | ` : ''}有更新 ${counts.updated} | 未同步 ${counts.never_synced} | 本地缺失 ${counts.missing_local} | 本地变更 ${counts.local_changed} | 已同步 ${counts.synced} | 错误 ${counts.error}`
       + (searching ? ` ｜ 搜索命中 ${shown.length} 个` : '');
+
+    // 更新当前项目角标统计并同步 Dock Badge
+    if (currentId) {
+      const pendingCount = (counts.conflict || 0) + (counts.updated || 0) + (counts.missing_local || 0) + (counts.never_synced || 0);
+      projectSummaries.set(currentId, {
+        pending: pendingCount,
+        updated: counts.updated || 0,
+        conflict: counts.conflict || 0,
+        missing: counts.missing_local || 0,
+        neverSynced: counts.never_synced || 0,
+        total: rows.length
+      });
+      updateTabBadges();
+    }
 
     els.groups.innerHTML = '';
     let renderedCount = 0;
@@ -815,7 +936,7 @@
         return;
       }
       const data = await resp.json();
-      if (resp.ok) { render(data); markRefreshed(data, false); appendLog('✓ 刷新完成\n'); verifyUpdates(data); }
+      if (resp.ok) { render(data); markRefreshed(data, false); appendLog('✓ 刷新完成\n'); verifyUpdates(data); refreshProjectBadges(); }
       else appendLog(`! refresh error: ${data.error}\n`);
     } catch (err) {
       appendLog(`! ${err.message}\n`);
@@ -1074,13 +1195,12 @@
     const conflicts = fresh.filter(r => r.direction === 'conflict');
     const names = fresh.slice(0, 5).map(r => r.name).join('、') + (fresh.length > 5 ? ` 等 ${fresh.length} 张` : '');
     appendLog(`🔔 自动刷新发现 ${fresh.length} 张表云端有更新${conflicts.length ? `（其中 ${conflicts.length} 张冲突）` : ''}：${names}\n`);
-    if (els.prefNotify.checked && 'Notification' in window && Notification.permission === 'granted') {
+    if (els.prefNotify.checked) {
       const project = (projects.find(x => x.id === currentId) || {}).name || 'CSM';
-      const n = new Notification(`CSM · ${project}：${fresh.length} 张表云端有更新`, {
-        body: (conflicts.length ? `⚠ ${conflicts.length} 张冲突需人工处理\n` : '') + names,
-        tag: `csm-${currentId}`
+      sendBannerNotification({
+        title: `CSM · ${project}：${fresh.length} 张配置表有更新`,
+        body: (conflicts.length ? `⚠ ${conflicts.length} 张冲突需人工处理\n` : '') + names
       });
-      n.onclick = () => { window.focus(); n.close(); };
     }
   }
 
@@ -1095,6 +1215,7 @@
       const verified = await verifyUpdates(data);
       if (id !== currentId) return;
       markRefreshed(verified || data, true);
+      refreshProjectBadges();
     } catch (_) { /* 网络问题等下次 */ }
   }
 
@@ -1114,6 +1235,7 @@
       knownAlerts = null; // 以刷新后的结果为基准，不把启动前就有的更新当成新提醒
       markRefreshed(data, false);
       await verifyUpdates(data);
+      refreshProjectBadges();
     } catch (err) {
       if (id === currentId) els.lastRefresh.textContent = '后台刷新失败，显示的是上次的云端状态';
     }
@@ -1173,17 +1295,26 @@
   applyAutoRefresh();
   els.prefAutoRefresh.addEventListener('change', () => { lsSet(PREF_AUTO, els.prefAutoRefresh.value); applyAutoRefresh(); });
   els.prefNotify.addEventListener('change', async () => {
-    if (els.prefNotify.checked && 'Notification' in window && Notification.permission !== 'granted') {
-      const perm = await Notification.requestPermission().catch(() => 'denied');
-      if (perm !== 'granted') {
-        els.prefNotify.checked = false;
-        appendLog('! 系统未允许通知：请在「系统设置 → 通知」中允许 CSM（或浏览器）发送通知\n');
+    if (els.prefNotify.checked) {
+      if (!window.electronBridge && 'Notification' in window && Notification.permission !== 'granted') {
+        const perm = await Notification.requestPermission().catch(() => 'denied');
+        if (perm !== 'granted') {
+          els.prefNotify.checked = false;
+          appendLog('! 系统未允许通知：请在「系统设置 → 通知」中允许 CSM（或浏览器）发送通知\n');
+          showToast('系统未允许通知权限', 'error');
+        }
       }
+      if (els.prefNotify.checked) {
+        showToast('已开启有更新时横幅通知', 'success');
+      }
+    } else {
+      showToast('已关闭通知', 'info');
     }
     lsSet(PREF_NOTIFY, els.prefNotify.checked ? '1' : '');
   });
   els.prefAfterDownload.addEventListener('change', () => lsSet(afterKey(), els.prefAfterDownload.value));
   window.addEventListener('focus', () => {
+    refreshProjectBadges();
     if ((parseInt(els.prefAutoRefresh.value, 10) || 0) > 0 && Date.now() - lastRefreshAt > FOCUS_REFRESH_MS) silentRefresh();
   });
 
@@ -1235,17 +1366,23 @@
       label.className = 'tab-label';
       label.textContent = p.name;
 
+      const badge = document.createElement('span');
+      badge.className = 'tab-badge';
+      badge.id = `tab-badge-${p.id}`;
+
       const close = document.createElement('span');
       close.className = 'tab-close';
       close.innerHTML = window.CSMIcons ? window.CSMIcons.close : '✕';
       close.title = '从平台移除（不会删除任何文件）';
       close.addEventListener('click', e => { e.stopPropagation(); removeProject(p); });
 
-      tab.append(icon, label, close);
+      tab.append(icon, label, badge, close);
       tab.addEventListener('click', () => selectProject(p.id));
       tab.addEventListener('dblclick', () => renameProject(p));
       els.projectTabs.appendChild(tab);
     });
+
+    updateTabBadges();
 
     const btnPrev = document.getElementById('btn-nav-prev');
     const btnNext = document.getElementById('btn-nav-next');
@@ -1287,6 +1424,7 @@
       return;
     }
     await selectProject(pick);
+    refreshProjectBadges();
   }
 
   async function renameProject(p) {
@@ -1305,6 +1443,7 @@
     if (!confirm(`从平台移除项目「${p.name}」吗？\n\n只是不再管理它，项目目录里的文件不会被删除。`)) return;
     const resp = await fetch(`/api/projects/${encodeURIComponent(p.id)}`, { method: 'DELETE' });
     if (!resp.ok) { appendLog('! 移除失败\n'); return; }
+    projectSummaries.delete(p.id);
     if (p.id === currentId) currentId = null;
     await loadProjects();
   }
@@ -1695,6 +1834,26 @@
       e.preventDefault();
       els.search.focus();
       els.search.select();
+      return;
+    }
+
+    // 7. ⌘1 ~ ⌘9 / Ctrl+1 ~ Ctrl+9: 快速切换项目 Tab
+    if ((e.metaKey || e.ctrlKey) && /^[1-9]$/.test(e.key) && !anyModalOpen) {
+      const idx = parseInt(e.key, 10) - 1;
+      if (projects[idx]) {
+        e.preventDefault();
+        selectProject(projects[idx].id);
+        return;
+      }
+    }
+
+    // 8. ⌘[ / ⌘]: 切换上一个 / 下一个项目
+    if ((e.metaKey || e.ctrlKey) && (e.key === '[' || e.key === ']') && !anyModalOpen) {
+      e.preventDefault();
+      const idx = projects.findIndex(p => p.id === currentId);
+      if (e.key === '[' && idx > 0) selectProject(projects[idx - 1].id);
+      else if (e.key === ']' && idx >= 0 && idx < projects.length - 1) selectProject(projects[idx + 1].id);
+      return;
     }
   });
 

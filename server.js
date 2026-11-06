@@ -349,6 +349,70 @@ async function main(opts = {}) {
     res.json({ ok: true });
   });
 
+  // ---------- 所有项目状态汇总（用于 Tab 角标与 Dock Badge） ----------
+  function computeProjectSummary(id) {
+    const ctx = getCtx(id);
+    if (!ctx) return null;
+    loadDiskDriveCache(ctx);
+    const rows = tablesOf(ctx);
+    const updated = rows.filter(r => r.status === 'updated').length;
+    const conflict = rows.filter(r => r.status === 'conflict').length;
+    const missing = rows.filter(r => r.status === 'missing_local').length;
+    const neverSynced = rows.filter(r => r.status === 'never_synced').length;
+    const pending = rows.filter(r => r.direction === 'download' || r.direction === 'conflict' || r.status === 'never_synced').length;
+    return {
+      id,
+      name: ctx.project.name,
+      dir: ctx.project.dir,
+      total: rows.length,
+      pending,
+      updated,
+      conflict,
+      missing,
+      neverSynced
+    };
+  }
+
+  app.get('/api/projects-summary', (_req, res) => {
+    try {
+      const list = loadProjects(REGISTRY_PATH);
+      const projects = [];
+      let totalPending = 0;
+      for (const p of list) {
+        try {
+          const s = computeProjectSummary(p.id);
+          if (s) {
+            projects.push(s);
+            totalPending += (s.pending || 0);
+          }
+        } catch (e) {
+          projects.push({ id: p.id, name: p.name, dir: p.dir, total: 0, pending: 0, error: e.message });
+        }
+      }
+      res.json({ projects, totalPending });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ---------- 原生角标与通知转发接口 ----------
+  app.post('/api/badge', (req, res) => {
+    const count = parseInt(req.body && req.body.count, 10) || 0;
+    if (typeof opts.setBadge === 'function') {
+      try { opts.setBadge(count); } catch (_) {}
+    }
+    res.json({ ok: true, count });
+  });
+
+  app.post('/api/notify', (req, res) => {
+    const { title, body } = req.body || {};
+    let shown = false;
+    if (typeof opts.showNotification === 'function') {
+      try { shown = !!opts.showNotification({ title, body }); } catch (_) {}
+    }
+    res.json({ ok: true, shown });
+  });
+
   // 目录浏览（仅列子目录），供「添加项目」弹窗使用
   app.get('/api/fs/list', (req, res) => {
     try {

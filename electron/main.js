@@ -4,9 +4,11 @@
 // 数据目录、OAuth 凭证、Google 登录走系统浏览器、PATH 补全、原生选目录。
 const path = require('node:path');
 const fs = require('node:fs');
-const { app, BrowserWindow, dialog, shell } = require('electron');
+const { app, BrowserWindow, dialog, shell, ipcMain, Notification: ElectronNotification } = require('electron');
 const { fixProcessEnv } = require('../lib/shell-env');
 const oauth = require('../lib/oauth');
+
+if (app) app.setName('CSM');
 
 const ROOT = path.join(__dirname, '..');
 const ENV_DATA_DIR = process.env.CSM_DATA || process.env.SYNC_MANAGER_DATA; // 旧变量名继续兼容
@@ -98,6 +100,47 @@ function onAuthorized() {
   app.focus({ steal: true });
 }
 
+// ---------- macOS 原生角标与横幅通知 ----------
+function setAppBadge(count) {
+  if (process.platform === 'darwin' && app && app.dock) {
+    const num = parseInt(count, 10) || 0;
+    app.dock.setBadge(num > 0 ? (num > 99 ? '99+' : String(num)) : '');
+  }
+}
+
+function showBannerNotification({ title, body, silent = false }) {
+  if (!ElectronNotification.isSupported()) return false;
+  try {
+    const n = new ElectronNotification({
+      title: title || 'CSM',
+      body: body || '',
+      silent: !!silent
+    });
+    n.on('click', () => {
+      if (!mainWindow && serverInfo) {
+        createWindow();
+      } else if (mainWindow) {
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        mainWindow.show();
+        mainWindow.focus();
+      }
+    });
+    n.show();
+    return true;
+  } catch (err) {
+    console.error('[app] showBannerNotification error:', err);
+    return false;
+  }
+}
+
+ipcMain.on('set-badge', (_event, count) => {
+  setAppBadge(count);
+});
+
+ipcMain.handle('show-notification', (_event, payload) => {
+  return showBannerNotification(payload || {});
+});
+
 // ---------- 窗口 ----------
 function isAppUrl(url) {
   try { return new URL(url).origin === new URL(serverInfo.url).origin; } catch (_) { return false; }
@@ -117,7 +160,12 @@ function createWindow() {
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 12, y: 13 },
     show: false,
-    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true }
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+      preload: path.join(__dirname, 'preload.js')
+    }
   });
   mainWindow.once('ready-to-show', () => mainWindow.show());
   mainWindow.on('closed', () => { mainWindow = null; });
@@ -178,6 +226,8 @@ async function start() {
       if (fs.statSync(p).isFile()) shell.showItemInFolder(p);
       else { const err = await shell.openPath(p); if (err) throw new Error(err); }
     },
+    setBadge: setAppBadge,
+    showNotification: showBannerNotification,
     onAuthorized,
     authSuccessHtml: AUTH_SUCCESS_HTML
   });
