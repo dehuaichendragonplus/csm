@@ -1,0 +1,89 @@
+const { test } = require('node:test');
+const assert = require('node:assert');
+const fs = require('node:fs');
+const path = require('node:path');
+const os = require('node:os');
+const {
+  loadBookmarks,
+  saveBookmarks,
+  getBookmarks,
+  addBookmark,
+  updateBookmark,
+  deleteBookmark,
+  validateBookmarkInput
+} = require('../lib/bookmarks');
+
+function tmpFile() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'csm-bm-'));
+  return path.join(dir, 'bookmarks.json');
+}
+
+test('bookmarks: 文件不存在时返回空列表并支持正常保存', () => {
+  const file = tmpFile();
+  const res = getBookmarks(file, 'proj-1');
+  assert.deepStrictEqual(res.bookmarks, []);
+  assert.strictEqual(res.projectCount, 0);
+  assert.strictEqual(res.globalCount, 0);
+});
+
+test('bookmarks: 添加项目文档与全局文档，并按 projectId 正确筛选', () => {
+  const file = tmpFile();
+  const bm1 = addBookmark(file, {
+    title: '钉钉项目表',
+    url: 'https://alidocs.dingtalk.com/spreadsheetv2/Qvmjm92wFWkJQ3DD/edit',
+    scope: 'project',
+    projectId: 'proj-1',
+    description: '项目专用表'
+  });
+  assert.ok(bm1.id);
+  assert.strictEqual(bm1.scope, 'project');
+
+  const bm2 = addBookmark(file, {
+    title: '全局规范文档',
+    url: 'https://docs.google.com/spreadsheets/d/test',
+    scope: 'global',
+    description: '公共文档'
+  });
+  assert.strictEqual(bm2.scope, 'global');
+
+  // 查询 proj-1：包含 1 个项目文档 + 1 个全局文档
+  const resProj1 = getBookmarks(file, 'proj-1');
+  assert.strictEqual(resProj1.bookmarks.length, 2);
+  assert.strictEqual(resProj1.projectCount, 1);
+  assert.strictEqual(resProj1.globalCount, 1);
+
+  // 查询 proj-2：仅包含 1 个全局文档
+  const resProj2 = getBookmarks(file, 'proj-2');
+  assert.strictEqual(resProj2.bookmarks.length, 1);
+  assert.strictEqual(resProj2.bookmarks[0].id, bm2.id);
+  assert.strictEqual(resProj2.projectCount, 0);
+  assert.strictEqual(resProj2.globalCount, 1);
+});
+
+test('bookmarks: URL 与标题校验拦截', () => {
+  assert.strictEqual(validateBookmarkInput({ title: '', url: 'https://foo.com' }).valid, false);
+  assert.strictEqual(validateBookmarkInput({ title: '表', url: 'javascript:alert(1)' }).valid, false);
+  assert.strictEqual(validateBookmarkInput({ title: '表', url: 'ftp://foo.com' }).valid, false);
+  assert.strictEqual(validateBookmarkInput({ title: '表', url: 'https://foo.com' }).valid, true);
+  assert.strictEqual(validateBookmarkInput({ title: '表', url: 'http://foo.com' }).valid, true);
+});
+
+test('bookmarks: 修改与删除文档', () => {
+  const file = tmpFile();
+  const bm = addBookmark(file, { title: '初始标题', url: 'https://a.com' });
+  const updated = updateBookmark(file, bm.id, { title: '新标题', description: '新备注' });
+  assert.strictEqual(updated.title, '新标题');
+  assert.strictEqual(updated.description, '新备注');
+
+  const delOk = deleteBookmark(file, bm.id);
+  assert.strictEqual(delOk, true);
+  const after = getBookmarks(file);
+  assert.strictEqual(after.bookmarks.length, 0);
+});
+
+test('bookmarks: 损毁 JSON 安全降级', () => {
+  const file = tmpFile();
+  fs.writeFileSync(file, 'INVALID JSON!!!');
+  const res = getBookmarks(file);
+  assert.deepStrictEqual(res.bookmarks, []);
+});
