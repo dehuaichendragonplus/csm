@@ -228,6 +228,35 @@ html, body {
   white-space: nowrap;
 }
 
+/* Inline Rename for Project Tabs */
+.tab-rename-input {
+  height: 22px;
+  padding: 0 6px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: #ffffff;
+  border: 1.5px solid var(--primary);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2);
+  outline: none;
+  min-width: 60px;
+  max-width: 170px;
+  box-sizing: border-box;
+  margin: 0;
+  -webkit-app-region: no-drag;
+}
+
+.project-tab.renaming {
+  max-width: 260px !important;
+}
+
+.project-tab.renaming .tab-close,
+.project-tab.renaming .tab-badge {
+  display: none !important;
+}
+
 .project-tab .tab-badge {
   display: inline-flex;
   align-items: center;

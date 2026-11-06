@@ -227,6 +227,8 @@
     projectSettingsClose: document.getElementById('project-settings-close'),
     projectSettingsDone: document.getElementById('project-settings-done'),
     projectSettingsName: document.getElementById('project-settings-name'),
+    projectSettingsNameInput: document.getElementById('project-settings-name-input'),
+    projectBtnRename: document.getElementById('project-btn-rename'),
     projectSettingsDir: document.getElementById('project-settings-dir'),
     projectBtnReveal: document.getElementById('project-btn-reveal'),
     consoleDrawer: document.getElementById('console-drawer'),
@@ -1717,7 +1719,13 @@
 
       tab.append(icon, label, badge, close);
       tab.addEventListener('click', () => selectProject(p.id));
-      tab.addEventListener('dblclick', () => renameProject(p));
+      tab.addEventListener('dblclick', e => {
+        e.stopPropagation();
+        startTabRename(p, tab, label);
+      });
+      close.addEventListener('dblclick', e => {
+        e.stopPropagation();
+      });
       els.projectTabs.appendChild(tab);
     });
 
@@ -1795,16 +1803,110 @@
     refreshProjectBadges();
   }
 
-  async function renameProject(p) {
-    const name = prompt('项目名称', p.name);
-    if (name === null || !name.trim() || name.trim() === p.name) return;
-    const resp = await fetch(`/api/projects/${encodeURIComponent(p.id)}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name })
+  function startTabRename(p, tab, label) {
+    if (!tab || tab.classList.contains('renaming')) return;
+    // 如果已有其他 tab 在重命名，先提交它
+    const existingInput = document.querySelector('.tab-rename-input');
+    if (existingInput) existingInput.blur();
+
+    tab.classList.add('renaming');
+    const origTitle = tab.title;
+    tab.title = '';
+    label.style.display = 'none';
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'tab-rename-input';
+    input.value = p.name;
+    input.spellcheck = false;
+    input.autocomplete = 'off';
+    input.setAttribute('aria-label', '修改项目显示名称');
+    input.style.width = Math.max(75, Math.min(160, (p.name.length + 3) * 11)) + 'px';
+
+    ['mousedown', 'click', 'dblclick'].forEach(evt => {
+      input.addEventListener(evt, e => e.stopPropagation());
     });
-    if (!resp.ok) { appendLog(`! 重命名失败: ${(await resp.json()).error}\n`); return; }
-    await loadProjects(currentId);
+
+    label.after(input);
+
+    requestAnimationFrame(() => {
+      input.focus();
+      input.select();
+    });
+
+    let done = false;
+    const finish = async (save) => {
+      if (done) return;
+      done = true;
+      const newName = input.value.trim();
+      input.remove();
+      label.style.display = '';
+      tab.classList.remove('renaming');
+      tab.title = origTitle;
+
+      if (!save || !newName || newName === p.name) return;
+
+      const oldName = p.name;
+      // 乐观更新界面显示
+      p.name = newName;
+      label.textContent = newName;
+      tab.title = `${p.dir}\n双击重命名`;
+      if (p.id === currentId && els.projectName) {
+        els.projectName.textContent = newName;
+      }
+
+      try {
+        const resp = await fetch(`/api/projects/${encodeURIComponent(p.id)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: newName })
+        });
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({}));
+          throw new Error(err.error || `HTTP ${resp.status}`);
+        }
+        appendLog(`✏️ 已将项目「${oldName}」重命名为「${newName}」\n`);
+        await loadProjects(currentId);
+        document.dispatchEvent(new Event('csm-project-changed'));
+      } catch (err) {
+        p.name = oldName;
+        label.textContent = oldName;
+        if (p.id === currentId && els.projectName) {
+          els.projectName.textContent = oldName;
+        }
+        appendLog(`! 项目重命名失败: ${err.message}\n`);
+        alert(`项目重命名失败: ${err.message}`);
+      }
+    };
+
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        input.blur();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        finish(false);
+      }
+    });
+
+    input.addEventListener('blur', () => {
+      finish(true);
+    });
+  }
+
+  async function renameProject(p, tabEl, labelEl) {
+    if (!p) p = projects.find(x => x.id === currentId);
+    if (!p) return;
+    if (!tabEl || !labelEl) {
+      const idx = projects.findIndex(x => x.id === p.id);
+      if (idx >= 0 && els.projectTabs && els.projectTabs.children[idx]) {
+        tabEl = els.projectTabs.children[idx];
+        labelEl = tabEl.querySelector('.tab-label');
+      }
+    }
+    if (tabEl && labelEl) {
+      startTabRename(p, tabEl, labelEl);
+    }
   }
 
   async function removeProject(p) {
@@ -2092,10 +2194,57 @@
   function openProjectSettings() {
     const p = projects.find(x => x.id === currentId);
     if (els.projectSettingsName) els.projectSettingsName.textContent = p ? p.name : '';
+    if (els.projectSettingsNameInput) els.projectSettingsNameInput.value = p ? p.name : '';
     if (els.projectSettingsDir) els.projectSettingsDir.textContent = p ? p.dir : '未配置';
     if (els.projectSettingsModal) els.projectSettingsModal.classList.remove('hidden');
+    if (els.projectSettingsNameInput) {
+      setTimeout(() => els.projectSettingsNameInput.focus(), 50);
+    }
   }
   const closeProjectSettings = () => els.projectSettingsModal && els.projectSettingsModal.classList.add('hidden');
+
+  async function handleProjectSettingsRename() {
+    const p = projects.find(x => x.id === currentId);
+    if (!p || !els.projectSettingsNameInput) return;
+    const newName = els.projectSettingsNameInput.value.trim();
+    if (!newName) {
+      alert('项目名称不能为空');
+      return;
+    }
+    if (newName === p.name) return;
+    const oldName = p.name;
+    try {
+      const resp = await fetch(`/api/projects/${encodeURIComponent(p.id)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newName })
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err.error || `HTTP ${resp.status}`);
+      }
+      p.name = newName;
+      if (els.projectSettingsName) els.projectSettingsName.textContent = newName;
+      appendLog(`✏️ 已将项目「${oldName}」重命名为「${newName}」\n`);
+      await loadProjects(currentId);
+      document.dispatchEvent(new Event('csm-project-changed'));
+      showToast(`已重命名为「${newName}」`, 'info');
+    } catch (err) {
+      alert(`重命名失败: ${err.message}`);
+    }
+  }
+
+  if (els.projectBtnRename) {
+    els.projectBtnRename.addEventListener('click', handleProjectSettingsRename);
+  }
+  if (els.projectSettingsNameInput) {
+    els.projectSettingsNameInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        handleProjectSettingsRename();
+      }
+    });
+  }
 
   if (els.btnSettings) els.btnSettings.addEventListener('click', openProjectSettings);
   if (els.projectSettingsClose) els.projectSettingsClose.addEventListener('click', closeProjectSettings);
