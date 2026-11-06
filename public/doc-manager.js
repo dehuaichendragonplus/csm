@@ -57,15 +57,11 @@
   let searchTerm = '';
   let editingId = null; // null 为新增，string 为编辑项 ID
 
-  const api = (url, opts) => {
-    if (window.CSM && typeof window.CSM.api === 'function') {
-      return window.CSM.api(url, opts);
-    }
-    return fetch(url, opts).then(async r => {
-      const data = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
-      return data;
-    });
+  const api = async (url, opts) => {
+    const r = await fetch(url, opts);
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+    return data;
   };
 
   function getCurrentProjectId() {
@@ -136,10 +132,21 @@
 
   // ---------- 项目列表加载与选项填充 ----------
   async function loadProjectsList() {
+    // 1. 优先读取客户端已缓存的项目列表（零延迟）
+    if (window.CSM && typeof window.CSM.getProjects === 'function') {
+      const cached = window.CSM.getProjects();
+      if (Array.isArray(cached) && cached.length > 0) {
+        allProjects = cached;
+        renderProjectOptions();
+      }
+    }
+    // 2. 异步请求接口确保同步最新
     try {
       const list = await api('/api/projects');
-      allProjects = Array.isArray(list) ? list : [];
-      renderProjectOptions();
+      if (Array.isArray(list) && list.length > 0) {
+        allProjects = list;
+        renderProjectOptions();
+      }
     } catch (e) {
       console.warn('[bookmarks] load projects failed:', e);
     }
@@ -152,11 +159,16 @@
       if (allProjects.length === 0) {
         el.selectProject.innerHTML = '<option value="">暂无已添加的项目</option>';
       } else {
+        const curProjId = getCurrentProjectId();
         el.selectProject.innerHTML = allProjects.map(p =>
           `<option value="${escapeHtml(p.id)}">📁 ${escapeHtml(p.name)} (${escapeHtml(p.dir)})</option>`
         ).join('');
         if (curSelectVal && allProjects.some(p => p.id === curSelectVal)) {
           el.selectProject.value = curSelectVal;
+        } else if (curProjId && allProjects.some(p => p.id === curProjId)) {
+          el.selectProject.value = curProjId;
+        } else if (allProjects[0]) {
+          el.selectProject.value = allProjects[0].id;
         }
       }
     }
@@ -169,7 +181,7 @@
         opts += `<option value="${escapeHtml(p.id)}">📁 ${escapeHtml(p.name)}</option>`;
       });
       el.tableProjectFilter.innerHTML = opts;
-      if (curFilterVal) {
+      if (curFilterVal && allProjects.some(p => p.id === curFilterVal)) {
         el.tableProjectFilter.value = curFilterVal;
       }
     }

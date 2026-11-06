@@ -2129,6 +2129,7 @@
     allowUpload: () => appConfig.allowUpload !== false,
     tableRow: p => (lastRows || []).find(r => r.path === p) || null,
     currentId: () => currentId,
+    getProjects: () => (projects || []).slice(),
     reloadTables: () => loadTables(),
     appendLog,
     showAuthBanner: () => els.authBanner.classList.remove('hidden')
