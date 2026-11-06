@@ -246,10 +246,16 @@ html, body {
   box-sizing: border-box;
   margin: 0;
   -webkit-app-region: no-drag;
+  user-select: text !important;
+  -webkit-user-select: text !important;
+  cursor: text !important;
+  pointer-events: auto !important;
+  z-index: 10;
 }
 
 .project-tab.renaming {
   max-width: 260px !important;
+  cursor: default !important;
 }
 
 .project-tab.renaming .tab-close,

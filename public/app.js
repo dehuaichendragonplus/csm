@@ -1691,6 +1691,9 @@
     els.projectDir.title = p.dir;
   }
 
+  let lastTabClickTime = 0;
+  let lastTabClickId = null;
+
   function renderTabs() {
     renderProjectPanel();
     els.projectTabs.innerHTML = '';
@@ -1718,14 +1721,51 @@
       close.addEventListener('click', e => { e.stopPropagation(); removeProject(p); });
 
       tab.append(icon, label, badge, close);
-      tab.addEventListener('click', () => selectProject(p.id));
+
+      tab.addEventListener('click', e => {
+        if (tab.classList.contains('renaming')) return;
+        const now = Date.now();
+        if (lastTabClickId === p.id && (now - lastTabClickTime) < 450) {
+          // 450ms 内双击判定
+          lastTabClickTime = 0;
+          lastTabClickId = null;
+          e.stopPropagation();
+          startTabRename(p, tab, label);
+          return;
+        }
+        lastTabClickTime = now;
+        lastTabClickId = p.id;
+
+        if (p.id !== currentId) {
+          selectProject(p.id);
+        }
+      });
+
       tab.addEventListener('dblclick', e => {
         e.stopPropagation();
         startTabRename(p, tab, label);
       });
+
+      label.addEventListener('dblclick', e => {
+        e.stopPropagation();
+        startTabRename(p, tab, label);
+      });
+
+      close.addEventListener('click', e => {
+        e.stopPropagation();
+        removeProject(p);
+      });
+
       close.addEventListener('dblclick', e => {
         e.stopPropagation();
       });
+
+      tab.addEventListener('contextmenu', e => {
+        e.preventDefault();
+        e.stopPropagation();
+        startTabRename(p, tab, label);
+      });
+
       els.projectTabs.appendChild(tab);
     });
 
@@ -1743,6 +1783,9 @@
   async function selectProject(id) {
     if (downloadInProgress || els.batchConfirm.open) {
       if (id !== currentId) showToast('本批下载或导出进行中', 'info');
+      return;
+    }
+    if (currentId === id) {
       return;
     }
     const changed = currentId !== id;
