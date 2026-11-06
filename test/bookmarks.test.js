@@ -146,3 +146,23 @@ test('bookmarks API: GET, POST, PUT, DELETE 完整生命周期', async () => {
   }
 });
 
+test('bookmarks: 真实钉钉在线表格多参数长链接完整性测试', () => {
+  const file = tmpFile();
+  const dingUrl = 'https://alidocs.dingtalk.com/spreadsheetv2/Qvmjm92wFWkJQ3DD/edit?cid=433668443:636958280&type=s&docKey=pLdn55XPExK27no8&dentryKey=Qvmjm92wFWkJQ3DD&utm_source=im&utm_medium=im_card&dontjump=true&chInfo=im';
+  const bm = addBookmark(file, {
+    title: '数值关卡总表',
+    url: dingUrl,
+    scope: 'project',
+    projectId: 'configs-3dd5ea',
+    description: '核心关卡配置与掉落参数表'
+  });
+
+  assert.strictEqual(bm.url, dingUrl);
+  const res = getBookmarks(file, 'configs-3dd5ea');
+  assert.strictEqual(res.bookmarks.length, 1);
+  assert.strictEqual(res.bookmarks[0].url, dingUrl);
+  assert.strictEqual(res.bookmarks[0].title, '数值关卡总表');
+  assert.strictEqual(res.bookmarks[0].projectId, 'configs-3dd5ea');
+});
+
+
