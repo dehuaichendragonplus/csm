@@ -114,6 +114,7 @@ async function main(opts = {}) {
   // 内存里的云端时间是不是本次运行实际查询过的（false = 从磁盘读的上次结果，界面会在后台补刷）
   const driveCacheFresh = new Map(); // projectId -> boolean
   const driveCacheFetchedAt = new Map(); // projectId -> ISO 时间
+  const verifyCaches = new Map(); // projectId -> { [path]: key }（已确认内容不同的版本）
 
   function readJson(file, fallback) {
     try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (_) { return fallback; }
@@ -125,6 +126,14 @@ async function main(opts = {}) {
       fs.writeFileSync(tmp, JSON.stringify(data));
       fs.renameSync(tmp, file);
     } catch (err) { console.error('[csm] write cache failed:', err.message); }
+  }
+  function verifyCacheOf(id) {
+    if (!verifyCaches.has(id)) verifyCaches.set(id, readJson(verifyCachePathOf(id), {}) || {});
+    return verifyCaches.get(id);
+  }
+  function clearVerifyCache(id) {
+    verifyCaches.delete(id);
+    writeJson(verifyCachePathOf(id), {});
   }
   const TMP_DIR = path.join(DATA_DIR, 'tmp');
 
@@ -463,6 +472,7 @@ async function main(opts = {}) {
   projectRouter.post('/refresh', async (req, res) => {
     try {
       await refreshDriveCache(req.ctx);
+      clearVerifyCache(req.ctx.id);
       res.json(tablesOf(req.ctx));
     } catch (err) {
       if (err.message === 'OAUTH_REQUIRED') return res.status(401).json({ error: 'OAUTH_REQUIRED' });
@@ -505,6 +515,7 @@ async function main(opts = {}) {
       lastSyncedHash: hashFile(entry.savePath)
     });
     if (cfg.sidecarPath) updateSidecar(cfg.sidecarPath, entry.path, info.modifiedTime);
+    delete verifyCacheOf(id)[entry.path];
     driveCaches.get(id).set(entry.spreadsheetId, info);
     return { info, backup };
   }
@@ -610,6 +621,7 @@ async function main(opts = {}) {
         const st = fs.statSync(entry.savePath);
         updateEntry(cfg.statePath, entry.path, { lastSyncedModifiedTime: modifiedTime, lastSyncedSize: st.size, lastSyncedMtime: st.mtime.toISOString(), lastSyncedHash: hashFile(entry.savePath) });
         if (cfg.sidecarPath) updateSidecar(cfg.sidecarPath, entry.path, modifiedTime);
+        delete verifyCacheOf(id)[entry.path];
         driveCaches.get(id).set(entry.spreadsheetId, { modifiedTime, name: info.name, modifiedBy: currentUser && (currentUser.name || currentUser.email), error: null });
       };
       markSynced(info.modifiedTime);
@@ -1013,6 +1025,7 @@ async function main(opts = {}) {
   projectRouter.post('/clear-state', (req, res) => {
     try {
       saveState(req.ctx.cfg.statePath, {});
+      clearVerifyCache(req.ctx.id);
       res.json({ ok: true });
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -1078,18 +1091,12 @@ async function main(opts = {}) {
   // 不再出现在对应分组里。不一致的结果按「路径 + 云端时间 + 本地指纹」缓存，同一版本不重复导出。
   const VERIFY_STATUSES = new Set(['updated', 'conflict', 'local_changed']);
   const VERIFY_CONCURRENCY = 2;
-  const verifyCaches = new Map(); // projectId -> { [path]: key }（已确认内容不同的版本）
 
-  function verifyCacheOf(id) {
-    if (!verifyCaches.has(id)) verifyCaches.set(id, readJson(verifyCachePathOf(id), {}) || {});
-    return verifyCaches.get(id);
-  }
-
-  async function verifyTable(ctx, row, entry) {
+  async function verifyTable(ctx, row, entry, { force = false } = {}) {
     const cache = verifyCacheOf(ctx.id);
     const localHash = hashFile(entry.savePath);
     const key = `${row.cloudModifiedTime}|${localHash}`;
-    if (cache[entry.path] === key) return { path: entry.path, identical: false, cached: true };
+    if (!force && cache[entry.path] === key) return { path: entry.path, identical: false, cached: true };
     fs.mkdirSync(TMP_DIR, { recursive: true });
     const tmp = path.join(TMP_DIR, `verify-${ctx.id}-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.xlsx`);
     try {
@@ -1121,6 +1128,7 @@ async function main(opts = {}) {
   projectRouter.post('/verify', async (req, res) => {
     if (!hasToken) return res.status(401).json({ error: 'OAUTH_REQUIRED' });
     const ctx = req.ctx;
+    const force = !!(req.body && req.body.force);
     const want = Array.isArray(req.body && req.body.paths) ? new Set(req.body.paths) : null;
     try {
       const byPath = new Map(loadFilelist(ctx.cfg.filelistPath).map(e => [e.path, e]));
@@ -1130,7 +1138,7 @@ async function main(opts = {}) {
       async function worker() {
         while (queue.length) {
           const row = queue.shift();
-          try { results.push(await verifyTable(ctx, row, byPath.get(row.path))); }
+          try { results.push(await verifyTable(ctx, row, byPath.get(row.path), { force })); }
           catch (err) { results.push({ path: row.path, identical: false, error: err.message }); }
         }
       }

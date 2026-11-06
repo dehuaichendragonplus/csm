@@ -901,6 +901,7 @@
   }
 
   async function loadTables() {
+    const id = currentId;
     try {
       const resp = await fetch(api('/tables'));
       if (resp.status === 401) {
@@ -910,6 +911,7 @@
       }
       els.authBanner.classList.add('hidden');
       const data = await resp.json();
+      if (id !== currentId) return;
       if (resp.ok) {
         render(data);
         if (!knownAlerts) knownAlerts = new Set(alertRows(data).map(alertKey));
@@ -918,7 +920,14 @@
           // 启动时先显示上次的云端状态，后台刷新（批量查询，通常几秒内完成）
           els.lastRefresh.textContent = `显示的是 ${formatTime(stale) || '上次'} 的云端状态，正在后台刷新…`;
           backgroundRefresh();
-        } else verifyUpdates(data);
+        } else {
+          verifyUpdates(data).then(verified => {
+            if (verified && currentId === id) {
+              render(verified);
+              refreshProjectBadges();
+            }
+          });
+        }
       } else appendLog(`! /api/tables error: ${data.error}\n`);
     } catch (err) {
       appendLog(`! fetch error: ${err.message}\n`);
@@ -926,6 +935,7 @@
   }
 
   async function refresh() {
+    const id = currentId;
     setBusy(true);
     appendLog('→ 刷新所有云端 modifiedTime…\n');
     try {
@@ -936,12 +946,31 @@
         return;
       }
       const data = await resp.json();
-      if (resp.ok) { render(data); markRefreshed(data, false); appendLog('✓ 刷新完成\n'); verifyUpdates(data); refreshProjectBadges(); }
-      else appendLog(`! refresh error: ${data.error}\n`);
+      if (id !== currentId) return;
+      if (resp.ok) {
+        render(data);
+        markRefreshed(data, false);
+        const hasVerify = data.some(r => VERIFY_STATUSES.has(r.status));
+        let finalData = data;
+        if (hasVerify) {
+          appendLog('→ 正在核对云端与本地内容差异…\n');
+          const verified = await verifyUpdates(data, { force: true });
+          if (id !== currentId) return;
+          if (verified) {
+            finalData = verified;
+            render(verified);
+          }
+        }
+        appendLog('✓ 刷新完成\n');
+        markRefreshed(finalData, false);
+        refreshProjectBadges();
+      } else {
+        appendLog(`! refresh error: ${data.error}\n`);
+      }
     } catch (err) {
       appendLog(`! ${err.message}\n`);
     } finally {
-      setBusy(false);
+      if (id === currentId) setBusy(false);
     }
   }
 
@@ -1214,6 +1243,7 @@
       render(data);
       const verified = await verifyUpdates(data);
       if (id !== currentId) return;
+      if (verified) render(verified);
       markRefreshed(verified || data, true);
       refreshProjectBadges();
     } catch (_) { /* 网络问题等下次 */ }
@@ -1233,8 +1263,10 @@
       }
       render(data);
       knownAlerts = null; // 以刷新后的结果为基准，不把启动前就有的更新当成新提醒
-      markRefreshed(data, false);
-      await verifyUpdates(data);
+      const verified = await verifyUpdates(data);
+      if (id !== currentId) return;
+      if (verified) render(verified);
+      markRefreshed(verified || data, false);
       refreshProjectBadges();
     } catch (err) {
       if (id === currentId) els.lastRefresh.textContent = '后台刷新失败，显示的是上次的云端状态';
@@ -1244,7 +1276,7 @@
   // 「有更新 / 冲突 / 本地变更」的表：修改时间或文件字节变了不代表内容变了，导出云端与本地比较，内容一致的自动记为已同步
   const VERIFY_STATUSES = new Set(['updated', 'conflict', 'local_changed']);
   let verifyRun = null;
-  async function verifyUpdates(rows) {
+  async function verifyUpdates(rows, { force = false } = {}) {
     const id = currentId;
     const paths = (rows || []).filter(r => VERIFY_STATUSES.has(r.status)).map(r => r.path);
     if (!paths.length) return rows;
@@ -1253,11 +1285,15 @@
       paths.forEach(p => verifyingPaths.add(p));
       render();
       try {
-        const resp = await fetch(api('/verify'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ paths }) });
+        const resp = await fetch(api('/verify'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ paths, force })
+        });
         const data = await resp.json().catch(() => ({}));
         if (id !== currentId || !resp.ok) return rows;
-        const same = data.results.filter(r => r.identical);
-        const failed = data.results.filter(r => r.error);
+        const same = (data.results || []).filter(r => r.identical);
+        const failed = (data.results || []).filter(r => r.error);
         if (same.length) {
           const byPath = new Map((rows || []).map(r => [r.path, r]));
           const nameOf = r => (byPath.get(r.path) || {}).name || r.path;
@@ -1265,9 +1301,10 @@
           const cloud = same.filter(r => r.previousStatus !== 'local_changed');
           if (cloud.length) appendLog(`✓ 内容核对：${cloud.length} 张表云端只是修改时间变了，内容与本地一致，已标为已同步：${cloud.map(nameOf).join('、')}\n`);
           if (localOnly.length) appendLog(`✓ 内容核对：${localOnly.length} 张表本地文件被重新保存过但内容与云端一致，已标为已同步：${localOnly.map(nameOf).join('、')}\n`);
+          refreshProjectBadges();
         }
         failed.forEach(r => appendLog(`! 内容核对失败 ${r.path}：${r.error}\n`));
-        return data.tables;
+        return data.tables || rows;
       } catch (_) {
         return rows;
       } finally {
@@ -1276,7 +1313,7 @@
     })();
     try {
       const result = await verifyRun;
-      if (id === currentId) render(result && result !== rows ? result : undefined);
+      if (id === currentId && result && result !== rows) render(result);
       return result;
     } finally {
       verifyRun = null;
