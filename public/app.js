@@ -464,12 +464,9 @@
       const thead = document.createElement('div');
       thead.className = 'table-header-row';
       thead.innerHTML = `
-        <span class="th-col th-status" title="当前同步状态">状态</span>
-        <span class="th-col th-name" title="配置表名">配置表</span>
-        <span class="th-col th-path" title="本地相对文件路径">本地路径</span>
-        <span class="th-col th-cloud" title="关联的云端 Google Sheets 表格">关联云端表</span>
-        <span class="th-col th-cloud-time" title="Google Drive 云端最后修改时间与修改人">云端最后修改</span>
-        <span class="th-col th-local-time" title="本地 xlsx 文件修改/同步时间">本地文件状态</span>
+        <span class="th-col th-table" title="配置表名称与本地相对路径">配置表与本地路径</span>
+        <span class="th-col th-cloud" title="关联的 Google Sheets 云端表格及最后修改协作人">关联云端表 (Google Sheets)</span>
+        <span class="th-col th-status" title="双端同步一致性状态与本地记录">同步状态与记录</span>
         <span class="th-col th-actions" title="操作">操作</span>
       `;
       body.appendChild(thead);
@@ -518,14 +515,12 @@
     div.dataset.path = row.path;
     if (rowClickable) div.addEventListener('click', () => { if (!busyPaths.has(row.path)) syncOne(row.path); });
 
-    // 1. 状态图标
-    const iconCell = document.createElement('span');
-    iconCell.className = 'icon-cell icon';
-    iconCell.innerHTML = window.CSMIcons ? window.CSMIcons.status[row.status] : STATUS_LABELS[row.status].icon;
+    // 1. 配置表与本地路径 (Column 1)
+    const tableCol = document.createElement('div');
+    tableCol.className = 'table-cell col-table';
 
-    // 2. 配置表名（带收藏星标）
-    const nameCell = document.createElement('div');
-    nameCell.className = 'name-cell';
+    const tableMain = document.createElement('div');
+    tableMain.className = 'cell-main-line table-main-line';
 
     const isFav = isFavorite(row.path);
     const starBtn = document.createElement('button');
@@ -539,123 +534,144 @@
     });
 
     const nameDiv = document.createElement('span');
-    nameDiv.className = 'name';
+    nameDiv.className = 'table-name';
     setHighlighted(nameDiv, row.name);
     nameDiv.title = `${row.name}\n${row.path}`;
-    nameCell.append(starBtn, nameDiv);
 
-    // 3. 本地路径
-    const pathCell = document.createElement('div');
-    pathCell.className = 'path-cell';
+    tableMain.append(starBtn, nameDiv);
+
+    const tableSub = document.createElement('div');
+    tableSub.className = 'cell-sub-line table-sub-line';
+
     const pathSpan = document.createElement('span');
-    pathSpan.className = 'row-path';
+    pathSpan.className = 'table-path';
     setHighlighted(pathSpan, row.path);
-    pathSpan.title = row.path;
-    pathCell.appendChild(pathSpan);
+    pathSpan.title = `本地相对路径: ${row.path}\n点击可在访达中定位`;
+    pathSpan.addEventListener('click', e => {
+      e.stopPropagation();
+      revealLocal(row.path).then(res => {
+        if (res) showToast(`已在访达中定位: ${row.name || row.path}`, 'info');
+      });
+    });
 
-    // 4. 关联云端表
-    const cloudCell = document.createElement('div');
-    cloudCell.className = 'cloud-cell';
-    const label = row.cloudName || row.description || '';
-    if (row.spreadsheetId && label) {
+    tableSub.appendChild(pathSpan);
+    tableCol.append(tableMain, tableSub);
+
+    // 2. 关联云端表与最后修改人 (Column 2)
+    const cloudCol = document.createElement('div');
+    cloudCol.className = 'table-cell col-cloud';
+
+    const cloudMain = document.createElement('div');
+    cloudMain.className = 'cell-main-line cloud-main-line';
+
+    const cloudLabel = row.cloudName || row.description || row.name || '';
+    if (row.spreadsheetId && cloudLabel) {
       const link = document.createElement('a');
-      link.className = 'sheet-link';
+      link.className = 'cloud-sheet-link';
       link.href = `https://docs.google.com/spreadsheets/d/${encodeURIComponent(row.spreadsheetId)}/edit`;
       link.target = '_blank';
       link.rel = 'noopener noreferrer';
+
+      const icon = document.createElement('span');
+      icon.className = 'sheet-icon';
+      icon.innerHTML = window.CSMIcons ? window.CSMIcons.sheet : '📄';
+
       const textSpan = document.createElement('span');
-      setHighlighted(textSpan, label);
-      link.appendChild(textSpan);
-      if (window.CSMIcons) {
-        const extSpan = document.createElement('span');
-        extSpan.innerHTML = window.CSMIcons.external;
-        link.appendChild(extSpan);
-      }
-      link.title = '在新标签页打开云端配置表';
+      textSpan.className = 'sheet-name-text';
+      setHighlighted(textSpan, cloudLabel);
+
+      const ext = document.createElement('span');
+      ext.className = 'sheet-ext-icon';
+      ext.innerHTML = window.CSMIcons ? window.CSMIcons.external : '↗';
+
+      link.append(icon, textSpan, ext);
+      link.title = `在新标签页打开 Google 表格：\n${cloudLabel}`;
       link.addEventListener('click', e => e.stopPropagation());
-      cloudCell.appendChild(link);
-    } else if (label) {
-      setHighlighted(cloudCell, label);
+      cloudMain.appendChild(link);
+    } else if (cloudLabel) {
+      setHighlighted(cloudMain, cloudLabel);
     } else {
-      cloudCell.innerHTML = '<span class="cell-empty-text">—</span>';
+      cloudMain.innerHTML = '<span class="cell-empty-text">未关联云端表</span>';
     }
 
-    // 5. 云端修改时间与修改人
-    const cloudTimeCell = document.createElement('div');
-    cloudTimeCell.className = 'cloud-time-cell';
-    if (row.spreadsheetId) {
-      const pill = document.createElement('a');
-      pill.className = 'meta-pill cloud-pill';
-      pill.href = `https://docs.google.com/spreadsheets/d/${encodeURIComponent(row.spreadsheetId)}/edit`;
-      pill.target = '_blank';
-      pill.rel = 'noopener noreferrer';
-      const icon = document.createElement('span');
-      icon.className = 'meta-pill-icon';
-      icon.innerHTML = window.CSMIcons ? window.CSMIcons.cloud : '☁';
+    const cloudSub = document.createElement('div');
+    cloudSub.className = 'cell-sub-line cloud-sub-info';
+    if (row.cloudModifiedBy) {
+      const userTag = document.createElement('span');
+      userTag.className = 'user-tag';
+      userTag.textContent = `@${row.cloudModifiedBy}`;
+      userTag.title = `最后修改人：${row.cloudModifiedBy}`;
+      cloudSub.appendChild(userTag);
+
       const timeSpan = document.createElement('span');
-      timeSpan.className = 'meta-pill-time';
-      timeSpan.textContent = row.cloudModifiedTime ? formatTime(row.cloudModifiedTime) : '—';
-      pill.append(icon, timeSpan);
-      if (row.cloudModifiedBy) {
-        const userTag = document.createElement('span');
-        userTag.className = 'user-tag';
-        userTag.textContent = `@${row.cloudModifiedBy}`;
-        userTag.title = `最后修改人：${row.cloudModifiedBy}`;
-        pill.appendChild(userTag);
-      }
-      const actSpan = document.createElement('span');
-      actSpan.className = 'meta-pill-action';
-      actSpan.innerHTML = window.CSMIcons ? window.CSMIcons.external : '↗';
-      actSpan.title = '在新标签页打开 Google 表格';
-      pill.appendChild(actSpan);
-
-      pill.title = row.cloudModifiedBy ? `打开 Google 表格\n最后修改人：${row.cloudModifiedBy}\n时间：${formatTime(row.cloudModifiedTime)}` : '打开 Google 表格';
-      pill.addEventListener('click', e => e.stopPropagation());
-      cloudTimeCell.appendChild(pill);
+      timeSpan.className = 'time-text';
+      timeSpan.textContent = ` · ${formatTime(row.cloudModifiedTime)}`;
+      cloudSub.appendChild(timeSpan);
+    } else if (row.cloudModifiedTime) {
+      const timeSpan = document.createElement('span');
+      timeSpan.className = 'time-text';
+      timeSpan.textContent = `云端修改：${formatTime(row.cloudModifiedTime)}`;
+      cloudSub.appendChild(timeSpan);
     } else {
-      cloudTimeCell.innerHTML = '<span class="meta-pill meta-pill-empty">未关联云端表</span>';
+      cloudSub.innerHTML = '<span class="cell-empty-text">—</span>';
     }
 
-    // 6. 本地文件状态/时间
-    const localTimeCell = document.createElement('div');
-    localTimeCell.className = 'local-time-cell';
+    cloudCol.append(cloudMain, cloudSub);
+
+    // 3. 同步状态与本地记录 (Column 3)
+    const statusCol = document.createElement('div');
+    statusCol.className = 'table-cell col-status';
+
+    const statusMain = document.createElement('div');
+    statusMain.className = 'cell-main-line status-main-line';
+
+    const statusPill = document.createElement('span');
+    statusPill.className = `status-pill status-pill-${row.status}`;
+    const dot = document.createElement('span');
+    dot.className = 'status-dot';
+    const statusText = document.createElement('span');
+    statusText.textContent = STATUS_LABELS[row.status] ? STATUS_LABELS[row.status].label : row.status;
+    statusPill.append(dot, statusText);
+    statusPill.title = timesTip;
+    statusMain.appendChild(statusPill);
+
+    const statusSub = document.createElement('div');
+    statusSub.className = 'cell-sub-line status-sub-info';
     if (row.error) {
-      localTimeCell.innerHTML = `<span class="meta-pill local-pill-error" title="${row.error}">错误: ${row.error}</span>`;
-    } else {
-      const pill = document.createElement('a');
-      pill.className = `meta-pill local-pill ${row.localExists ? '' : 'local-missing'}`;
-      pill.href = '#';
-      const icon = document.createElement('span');
-      icon.className = 'meta-pill-icon';
-      icon.innerHTML = window.CSMIcons ? window.CSMIcons.laptop : '💻';
-      const timeSpan = document.createElement('span');
-      timeSpan.className = 'meta-pill-time';
-      timeSpan.textContent = row.lastSyncedModifiedTime ? formatTime(row.lastSyncedModifiedTime) : (row.localExists ? '未记录同步' : '本地缺失');
-      pill.append(icon, timeSpan);
-
-      const actSpan = document.createElement('span');
-      actSpan.className = 'meta-pill-action';
-      actSpan.innerHTML = window.CSMIcons ? window.CSMIcons.folder : '📁';
-      actSpan.title = row.localExists ? '在访达中显示' : '打开所在目录';
-      pill.appendChild(actSpan);
-
-      pill.title = row.localExists ? `本地文件：${row.path}\n在访达中显示` : '本地还没有这个文件，点击打开所在目录';
-      pill.addEventListener('click', e => {
+      statusSub.innerHTML = `<span class="status-error-text" title="${row.error}">错误: ${row.error}</span>`;
+    } else if (row.status === 'synced') {
+      const txt = document.createElement('span');
+      txt.textContent = '本地与云端一致 · ';
+      const locBtn = document.createElement('a');
+      locBtn.className = 'reveal-link';
+      locBtn.href = '#';
+      locBtn.innerHTML = '在访达定位 📁';
+      locBtn.title = `本地文件：${row.path}\n在访达中显示`;
+      locBtn.addEventListener('click', e => {
         e.preventDefault();
         e.stopPropagation();
         revealLocal(row.path).then(res => {
           if (res) showToast(`已在访达中定位: ${row.name || row.path}`, 'info');
         });
       });
-      localTimeCell.appendChild(pill);
+      statusSub.append(txt, locBtn);
+    } else if (row.status === 'updated') {
+      statusSub.textContent = '云端时间较新 · 可覆盖下载';
+    } else if (row.status === 'conflict') {
+      statusSub.textContent = '双端均被修改 · 请核对差异';
+    } else if (row.status === 'local_changed') {
+      statusSub.textContent = '本地文件有修改 · 可预览后回写';
+    } else if (row.status === 'missing_local') {
+      statusSub.textContent = '本地文件缺失 · 需从云端下载';
+    } else {
+      statusSub.textContent = row.localExists ? '本地文件存在' : '本地文件缺失';
     }
 
-    div.appendChild(iconCell);
-    div.appendChild(nameCell);
-    div.appendChild(pathCell);
-    div.appendChild(cloudCell);
-    div.appendChild(cloudTimeCell);
-    div.appendChild(localTimeCell);
+    statusCol.append(statusMain, statusSub);
+
+    div.appendChild(tableCol);
+    div.appendChild(cloudCol);
+    div.appendChild(statusCol);
 
     const actionCell = document.createElement('div');
     actionCell.className = 'action-cell';
@@ -1171,6 +1187,7 @@
       const b = document.createElement('button');
       b.type = 'button';
       b.innerHTML = `${window.CSMIcons ? window.CSMIcons.terminal : ''} <span>${action.label}</span>`;
+      b.title = action.description || (typeof action.command === 'string' ? `执行自定义动作：${action.label}\n脚本命令：${action.command}` : `执行自定义动作：${action.label}`);
       b.addEventListener('click', () => runAction(action));
       els.customActions.appendChild(b);
     });

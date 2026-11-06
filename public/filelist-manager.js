@@ -5,6 +5,7 @@
   const $ = id => document.getElementById(id);
   const el = {
     open: $('btn-filelist'),
+    manage: $('btn-manage-filelist'),
     // 列表
     modal: $('fl-modal'),
     close: $('fl-close'),
@@ -1112,7 +1113,8 @@
     syncCloudPaths(); // 只为还没记录云端路径的条目查询，并写回 filelist.json
   }
 
-  el.open.addEventListener('click', open);
+  if (el.open) el.open.addEventListener('click', open);
+  if (el.manage) el.manage.addEventListener('click', open);
   el.close.addEventListener('click', () => {
     if (batchRunning && !confirm('批量上传还在进行，关闭窗口不会中断上传。确定关闭？')) return;
     el.modal.classList.add('hidden');

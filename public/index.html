@@ -33,14 +33,14 @@
         <button id="btn-nav-next" type="button" class="btn-nav-circle" title="切换到下一个项目" disabled>
           <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M7.5 15l5-5-5-5"/></svg>
         </button>
-        <button id="btn-refresh" type="button" class="btn-nav-circle" title="刷新所有云端状态 (⌘R)">
+        <button id="btn-refresh" type="button" class="btn-nav-circle" title="刷新云端状态 (⌘R)：重新从 Google Drive 查询各表最新修改时间与修改人">
           <span class="btn-icon" id="refresh-icon"></span>
         </button>
       </div>
 
       <!-- 胶囊地址栏 (Omnibar) -->
       <div class="omnibar-wrap">
-        <button id="project-dir-badge" class="omnibar" type="button" title="点击在访达中显示此项目目录">
+        <button id="project-dir-badge" class="omnibar" type="button" title="项目配置表目录：点击在访达 (Finder) 中显示此文件夹">
           <span class="omnibar-icon" id="project-dir-icon"></span>
           <span id="project-name" class="omnibar-name"></span>
           <span class="omnibar-divider">/</span>
@@ -51,19 +51,23 @@
 
       <!-- 右侧行动按钮群 -->
       <div class="toolbar-actions">
-        <button id="btn-sync-all" type="button" class="btn-primary-action" title="一键同步所有云端较新或本地缺失的表">
+        <button id="btn-sync-all" type="button" class="btn-primary-action" title="一键下载所有更新：自动比对云端最新修改，下载所有云端较新或本地缺失的配置表">
           <span class="btn-icon" id="sync-all-icon"></span>
           <span class="btn-label" id="sync-all-label">下载所有更新</span>
           <span id="sync-all-badge" class="btn-badge hidden">0</span>
         </button>
+        <button id="btn-manage-filelist" type="button" class="btn-icon-action" title="管理配置表 (filelist.json)：新增配置表、绑定 Google Sheets、移除配置表或修改本地根目录">
+          <span class="btn-icon">📋</span>
+          <span>管理配置表</span>
+        </button>
         <div class="action-divider"></div>
         <span id="custom-actions" class="custom-actions"></span>
         <div class="action-divider"></div>
-        <button id="btn-history" type="button" class="btn-icon-action" title="本机操作历史记录">
+        <button id="btn-history" type="button" class="btn-icon-action" title="操作历史：查看本机每次下载、上传与修改的历史记录">
           <span class="btn-icon" id="history-icon"></span>
           <span>操作历史</span>
         </button>
-        <button id="btn-settings" type="button" class="btn-icon-action" title="项目与全局设置 (⌘,)">
+        <button id="btn-settings" type="button" class="btn-icon-action" title="项目与全局设置 (⌘,)：配置自动刷新周期、有更新通知与维护">
           <span class="btn-icon" id="settings-icon"></span>
           <span>设置</span>
         </button>
@@ -500,8 +504,8 @@
             <select id="pref-after-download"><option value="">不执行</option></select>
           </div>
           <div class="set-row">
-            <div class="set-label">配置表清单<p>预览与编辑 filelist.json：新增、关联、移除配置表，设置本地根目录</p></div>
-            <button id="btn-filelist" type="button">📋 打开清单</button>
+            <div class="set-label">管理配置表<p>预览与编辑 filelist.json：新增配置表、绑定 Google Sheets、移除配置表或设置本地根目录</p></div>
+            <button id="btn-filelist" type="button">📋 管理配置表</button>
           </div>
         </section>
         <section class="set-group">
