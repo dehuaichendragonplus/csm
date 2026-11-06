@@ -114,6 +114,28 @@
     if (els.syncAllIcon) els.syncAllIcon.innerHTML = window.CSMIcons.downloadAll;
   }
 
+  // Electron environment detection for macOS titlebar padding
+  if (navigator.userAgent.includes('Electron')) {
+    document.documentElement.classList.add('is-electron');
+    if (/Macintosh|Mac OS X/i.test(navigator.userAgent)) {
+      document.documentElement.classList.add('is-mac-electron');
+    }
+  }
+
+  // Navigation buttons for switching projects (< and >)
+  const btnPrev = document.getElementById('btn-nav-prev');
+  const btnNext = document.getElementById('btn-nav-next');
+  if (btnPrev && btnNext) {
+    btnPrev.addEventListener('click', () => {
+      const idx = projects.findIndex(p => p.id === currentId);
+      if (idx > 0) selectProject(projects[idx - 1].id);
+    });
+    btnNext.addEventListener('click', () => {
+      const idx = projects.findIndex(p => p.id === currentId);
+      if (idx >= 0 && idx < projects.length - 1) selectProject(projects[idx + 1].id);
+    });
+  }
+
   // 快捷浮动轻提示（Toast）
   function showToast(message, type = 'info', duration = 2400) {
     if (!els.toastContainer) return;
@@ -1156,9 +1178,10 @@
 
       const icon = document.createElement('span');
       icon.className = 'tab-icon';
-      icon.innerHTML = window.CSMIcons ? window.CSMIcons.folder : '📁';
+      icon.innerHTML = window.CSMIcons ? window.CSMIcons.sheet : '📄';
 
       const label = document.createElement('span');
+      label.className = 'tab-label';
       label.textContent = p.name;
 
       const close = document.createElement('span');
@@ -1172,6 +1195,14 @@
       tab.addEventListener('dblclick', () => renameProject(p));
       els.projectTabs.appendChild(tab);
     });
+
+    const btnPrev = document.getElementById('btn-nav-prev');
+    const btnNext = document.getElementById('btn-nav-next');
+    if (btnPrev && btnNext) {
+      const idx = projects.findIndex(p => p.id === currentId);
+      btnPrev.disabled = idx <= 0;
+      btnNext.disabled = idx < 0 || idx >= projects.length - 1;
+    }
   }
 
   async function selectProject(id) {
@@ -1503,7 +1534,12 @@
 
   // 还没有项目时也提示授权（桌面 App 不会像命令行那样启动即打开授权页）
   fetch('/api/auth-status').then(r => r.json()).then(s => {
-    if (!s.authorized) els.authBanner.classList.remove('hidden');
+    if (!s.authorized) {
+      els.authBanner.classList.remove('hidden');
+    } else {
+      const profile = document.getElementById('tab-strip-profile');
+      if (profile) profile.title = s.canUpload ? 'Google 账号已授权（支持下载与回写）' : 'Google 账号已授权（只读）';
+    }
   }).catch(() => {});
 
   loadProjects();

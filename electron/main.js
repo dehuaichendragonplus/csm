@@ -114,6 +114,8 @@ function createWindow() {
     minWidth: 900,
     minHeight: 600,
     title: 'CSM',
+    titleBarStyle: 'hiddenInset',
+    trafficLightPosition: { x: 12, y: 13 },
     show: false,
     webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true }
   });

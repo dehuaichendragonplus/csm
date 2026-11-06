@@ -8,15 +8,86 @@
   <link rel="icon" type="image/png" href="icons/favicon.png">
 </head>
 <body>
-  <!-- 顶部：项目切换与品牌 -->
-  <header class="topbar">
-    <div class="brand">
-      <div class="brand-logo" id="app-logo"></div>
-      <h1 id="app-title">CSM</h1>
-      <span class="brand-badge">Sync</span>
+  <!-- 顶部 Chrome 风格导航与控制栏 -->
+  <header class="chrome-header">
+    <!-- Row 1: Chrome 标签栏 (Tab Strip) -->
+    <div class="chrome-tab-strip">
+      <div class="mac-traffic-placeholder"></div>
+      <nav id="project-tabs" class="project-tabs"></nav>
+      <button id="btn-add-project" type="button" class="btn-chrome-new-tab" title="添加新项目">
+        <span class="chrome-plus-icon">+</span>
+      </button>
+      <div class="tab-strip-spacer"></div>
+      <div class="tab-strip-profile" id="tab-strip-profile" title="Google 账号与连接状态">
+        <span class="profile-brand">CSM Sync</span>
+        <span class="profile-avatar" id="header-user-avatar">👤</span>
+      </div>
     </div>
-    <nav id="project-tabs" class="project-tabs"></nav>
-    <button id="btn-add-project" type="button" class="add-project">＋ 添加项目</button>
+
+    <!-- Row 2: Chrome 工具与地址栏 (Toolbar & Omnibar) -->
+    <section id="project-panel" class="chrome-toolbar hidden">
+      <div class="toolbar-nav">
+        <button id="btn-nav-prev" type="button" class="btn-nav-circle" title="切换到上一个项目" disabled>
+          <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12.5 15l-5-5 5-5"/></svg>
+        </button>
+        <button id="btn-nav-next" type="button" class="btn-nav-circle" title="切换到下一个项目" disabled>
+          <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M7.5 15l5-5-5-5"/></svg>
+        </button>
+        <button id="btn-refresh" type="button" class="btn-nav-circle" title="刷新所有云端状态 (⌘R)">
+          <span class="btn-icon" id="refresh-icon"></span>
+        </button>
+      </div>
+
+      <!-- 胶囊地址栏 (Omnibar) -->
+      <div class="omnibar-wrap">
+        <button id="project-dir-badge" class="omnibar" type="button" title="点击在访达中显示此项目目录">
+          <span class="omnibar-icon" id="project-dir-icon"></span>
+          <span id="project-name" class="omnibar-name"></span>
+          <span class="omnibar-divider">/</span>
+          <span id="project-dir" class="omnibar-path"></span>
+          <span class="omnibar-hint">在访达中显示 ↗</span>
+        </button>
+      </div>
+
+      <!-- 右侧行动按钮群 -->
+      <div class="toolbar-actions">
+        <button id="btn-sync-all" type="button" class="btn-primary-action" title="一键同步所有云端较新或本地缺失的表">
+          <span class="btn-icon" id="sync-all-icon"></span>
+          <span class="btn-label" id="sync-all-label">下载所有更新</span>
+          <span id="sync-all-badge" class="btn-badge hidden">0</span>
+        </button>
+        <div class="action-divider"></div>
+        <span id="custom-actions" class="custom-actions"></span>
+        <div class="action-divider"></div>
+        <button id="btn-history" type="button" class="btn-icon-action" title="本机操作历史记录">
+          <span class="btn-icon" id="history-icon"></span>
+          <span>操作历史</span>
+        </button>
+        <button id="btn-settings" type="button" class="btn-icon-action" title="项目与全局设置 (⌘,)">
+          <span class="btn-icon" id="settings-icon"></span>
+          <span>设置</span>
+        </button>
+      </div>
+    </section>
+
+    <!-- Row 3: 书签/筛选栏 (Bookmarks Bar) -->
+    <section id="summary-bar" class="chrome-bookmarks-bar hidden">
+      <div class="bookmarks-left">
+        <div id="status-filters" class="status-filters"></div>
+        <span id="summary" class="summary-text hidden">加载中…</span>
+        <span id="last-refresh" class="dir-tip hidden"></span>
+      </div>
+      <div class="bookmarks-right">
+        <div class="search-box">
+          <div class="search-box-inner">
+            <span class="search-icon-left" id="search-icon"></span>
+            <input id="table-search" type="search" placeholder="搜索配置表 (⌘F)" autocomplete="off" spellcheck="false">
+            <kbd class="search-kbd">⌘F</kbd>
+            <button id="search-clear" type="button" class="search-clear" title="清空搜索">✕</button>
+          </div>
+        </div>
+      </div>
+    </section>
   </header>
 
   <!-- 新版本提示（配置了更新源且有新版本时显示） -->
@@ -28,61 +99,6 @@
 
   <!-- 主滚动区域 -->
   <div id="app-main-content">
-    <!-- 当前项目：项目信息与功能动作栏 -->
-    <section id="project-panel" class="project-panel hidden">
-      <div class="project-head-row">
-        <div class="project-identity">
-          <h2 id="project-name" class="project-name"></h2>
-          <button id="project-dir-badge" class="project-dir-badge" type="button" title="在访达中显示此项目目录">
-            <span class="badge-icon" id="project-dir-icon"></span>
-            <span id="project-dir" class="project-dir-text"></span>
-          </button>
-        </div>
-        <div class="actions">
-          <div class="action-group">
-            <button id="btn-sync-all" type="button" class="btn-primary-action" title="一键同步所有云端较新或本地缺失的表">
-              <span class="btn-icon" id="sync-all-icon"></span>
-              <span class="btn-label" id="sync-all-label">下载所有更新</span>
-              <span id="sync-all-badge" class="btn-badge hidden">0</span>
-            </button>
-            <button id="btn-refresh" type="button" class="btn-secondary-action" title="刷新所有云端状态">
-              <span class="btn-icon" id="refresh-icon"></span>
-              <span class="btn-label">刷新</span>
-            </button>
-          </div>
-          <div class="action-divider"></div>
-          <div class="action-group">
-            <span id="custom-actions" class="custom-actions"></span>
-          </div>
-          <div class="actions-spacer"></div>
-          <div class="action-group">
-            <button id="btn-history" type="button" class="btn-icon-action" title="本机操作历史记录">
-              <span class="btn-icon" id="history-icon"></span>
-              <span>操作历史</span>
-            </button>
-            <button id="btn-settings" type="button" class="btn-icon-action" title="项目与全局设置">
-              <span class="btn-icon" id="settings-icon"></span>
-              <span>设置</span>
-            </button>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- 智能状态筛选与搜索栏 -->
-    <section id="summary-bar" class="summary hidden">
-      <div id="status-filters" class="status-filters"></div>
-      <span id="summary" class="summary-text hidden">加载中…</span>
-      <span id="last-refresh" class="dir-tip hidden"></span>
-      <div class="search-box">
-        <div class="search-box-inner">
-          <span class="search-icon-left" id="search-icon"></span>
-          <input id="table-search" type="search" placeholder="搜索配置表 (⌘F)" autocomplete="off" spellcheck="false">
-          <kbd class="search-kbd">⌘F</kbd>
-          <button id="search-clear" type="button" class="search-clear" title="清空搜索">✕</button>
-        </div>
-      </div>
-    </section>
 
     <!-- 全同步健康状态看板 -->
     <div id="all-synced-banner" class="all-synced-banner hidden">

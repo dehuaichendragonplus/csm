@@ -107,104 +107,125 @@ html, body {
 /* ==========================================================================
    Topbar & Brand & Tabs
    ========================================================================== */
-.topbar {
+/* ==========================================================================
+   Chrome-Style Modern Browser Header Architecture
+   ========================================================================== */
+.chrome-header {
   display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 10px 20px;
+  flex-direction: column;
   background: var(--bg-surface);
+  flex-shrink: 0;
+  z-index: 50;
   border-bottom: 1px solid var(--border-default);
-  position: sticky;
-  top: 0;
-  z-index: 20;
-  flex-shrink: 0;
 }
 
-.brand {
+/* --------------------------------------------------------------------------
+   Row 1: Chrome Tab Strip (macOS Traffic Lights + Tabs + Add Button)
+   -------------------------------------------------------------------------- */
+.chrome-tab-strip {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  align-items: flex-end;
+  height: 40px;
+  background: #dfe6ee;
+  padding: 0 12px 0 12px;
+  -webkit-app-region: drag;
   user-select: none;
-  flex-shrink: 0;
+  box-sizing: border-box;
+  position: relative;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
 }
 
-.csm-logo-img {
-  width: 28px;
-  height: 28px;
-  border-radius: 7px;
-  display: block;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
-  transition: transform var(--transition-fast);
-}
-
-.csm-logo-img:hover {
-  transform: scale(1.08);
-}
-
-.brand h1 {
-  font-size: 16px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  margin: 0;
-  color: var(--text-primary);
-}
-
-.brand-badge {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--primary);
-  background: var(--primary-subtle);
-  padding: 2px 7px;
-  border-radius: var(--radius-full);
+/* Reserved space for macOS traffic lights in Electron window */
+.is-mac-electron .chrome-tab-strip {
+  padding-left: 78px;
 }
 
 .project-tabs {
   display: flex;
-  align-items: center;
-  gap: 6px;
-  flex: 1;
-  min-width: 0;
+  align-items: flex-end;
+  gap: 0;
   overflow-x: auto;
-  padding: 2px 0;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  max-width: calc(100% - 130px);
+  -webkit-app-region: no-drag;
 }
 
 .project-tabs::-webkit-scrollbar {
   display: none;
 }
 
+/* Chrome-Style Tab */
 .project-tab {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 14px;
-  background: var(--bg-muted);
-  border: 1px solid transparent;
-  border-radius: var(--radius-md);
-  color: var(--text-secondary);
-  font-size: 13px;
+  gap: 7px;
+  height: 33px;
+  padding: 0 12px;
+  background: transparent;
+  border-radius: 8px 8px 0 0;
+  color: #475569;
+  font-size: 12px;
   font-weight: 500;
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition: background var(--transition-fast), color var(--transition-fast);
   white-space: nowrap;
   user-select: none;
+  position: relative;
+  max-width: 220px;
+  box-sizing: border-box;
+  -webkit-app-region: no-drag;
 }
 
-.project-tab:hover {
-  background: var(--bg-hover);
+/* Divider line between inactive tabs */
+.project-tab:not(.active)::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 1px;
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.project-tab:hover:not(.active) {
+  background: rgba(255, 255, 255, 0.55);
   color: var(--text-primary);
 }
 
 .project-tab.active {
   background: var(--bg-surface);
-  color: var(--primary);
-  border-color: var(--primary-border);
-  box-shadow: var(--shadow-xs);
+  color: var(--text-primary);
   font-weight: 600;
+  box-shadow: 0 -1px 3px rgba(0, 0, 0, 0.04), 0 2px 6px rgba(0, 0, 0, 0.04);
+  z-index: 2;
+  margin-bottom: -1px;
+  height: 34px;
+}
+
+/* Hide divider next to active tab */
+.project-tab.active::after,
+.project-tab.active + .project-tab::after {
+  display: none;
 }
 
 .project-tab .tab-icon {
   display: inline-flex;
-  opacity: 0.7;
+  align-items: center;
+  color: #107c41; /* Emerald Sheets green */
+  flex-shrink: 0;
+}
+
+.project-tab .tab-icon svg {
+  width: 15px;
+  height: 15px;
+}
+
+.project-tab .tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .project-tab .tab-close {
@@ -213,113 +234,260 @@ html, body {
   justify-content: center;
   width: 16px;
   height: 16px;
-  border-radius: var(--radius-full);
-  font-size: 11px;
+  border-radius: 50%;
+  font-size: 10px;
   color: var(--text-tertiary);
-  opacity: 0.6;
+  opacity: 0.5;
   margin-left: 2px;
   transition: all var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.project-tab:not(.active) .tab-close {
+  opacity: 0;
+}
+
+.project-tab:hover .tab-close,
+.project-tab.active .tab-close {
+  opacity: 0.65;
 }
 
 .project-tab .tab-close:hover {
   opacity: 1;
-  background: rgba(0, 0, 0, 0.08);
+  background: rgba(0, 0, 0, 0.09);
   color: var(--danger);
 }
 
-.add-project {
-  flex-shrink: 0;
+/* Chrome New Tab (+) Button */
+.btn-chrome-new-tab {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  border: 1px dashed var(--primary-border);
-  background: var(--primary-subtle);
-  color: var(--primary-text);
-  border-radius: var(--radius-md);
-  font-size: 13px;
-  font-weight: 500;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: #5f6368;
   cursor: pointer;
-  transition: all var(--transition-fast);
-}
-
-.add-project:hover {
-  background: #dbeafe;
-  border-color: var(--primary);
-}
-
-/* ==========================================================================
-   Project Panel & Action Toolbar
-   ========================================================================== */
-.project-panel {
-  padding: 8px 20px;
-  background: var(--bg-surface);
-  border-bottom: 1px solid var(--border-default);
+  margin-left: 4px;
+  margin-bottom: 4px;
+  transition: background var(--transition-fast), color var(--transition-fast);
+  -webkit-app-region: no-drag;
   flex-shrink: 0;
 }
 
-.project-head-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: nowrap;
-  min-height: 32px;
+.btn-chrome-new-tab:hover {
+  background: rgba(0, 0, 0, 0.08);
+  color: var(--text-primary);
 }
 
-.project-identity {
+.chrome-plus-icon {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 20px;
+  font-weight: 300;
+  line-height: 1;
+  color: #5f6368;
+  margin-top: -1px;
+}
+
+.tab-strip-spacer {
+  flex: 1;
+  height: 100%;
+}
+
+.tab-strip-profile {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 8px;
+  border-radius: 14px;
+  margin-bottom: 3px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  -webkit-app-region: no-drag;
+}
+
+.profile-brand {
+  font-weight: 600;
+  font-size: 10px;
+  color: var(--primary);
+  background: rgba(37, 99, 235, 0.09);
+  padding: 2px 7px;
+  border-radius: 10px;
+}
+
+.profile-avatar {
+  font-size: 14px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* --------------------------------------------------------------------------
+   Row 2: Chrome Toolbar & Omnibar (Navigation, Address & Action Row)
+   -------------------------------------------------------------------------- */
+.chrome-toolbar {
   display: flex;
   align-items: center;
   gap: 10px;
-  min-width: 0;
-  flex-shrink: 1;
+  padding: 7px 16px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-subtle);
+  min-height: 46px;
+  box-sizing: border-box;
 }
 
-.project-name {
-  font-size: 15px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
+.toolbar-nav {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+.btn-nav-circle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  padding: 0;
+}
+
+.btn-nav-circle:hover:not(:disabled) {
+  background: var(--bg-hover);
   color: var(--text-primary);
-  margin: 0;
+}
+
+.btn-nav-circle:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+/* Omnibar (Address Capsule) */
+.omnibar-wrap {
+  flex: 1;
+  min-width: 0;
+  max-width: 620px;
+}
+
+.omnibar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 32px;
+  padding: 0 12px;
+  background: #f1f3f5;
+  border: 1px solid transparent;
+  border-radius: 16px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  box-sizing: border-box;
+  text-align: left;
+}
+
+.omnibar:hover {
+  background: #e9ecef;
+  border-color: #cbd5e1;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.omnibar:focus-visible {
+  outline: none;
+  background: #ffffff;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--primary-subtle);
+}
+
+.omnibar-icon {
+  font-size: 12px;
+  opacity: 0.65;
+  flex-shrink: 0;
+}
+
+.omnibar-name {
+  font-weight: 700;
+  color: var(--text-primary);
+  flex-shrink: 0;
+}
+
+.omnibar-divider {
+  color: var(--text-quaternary);
+  font-weight: 300;
+  flex-shrink: 0;
+}
+
+.omnibar-path {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.omnibar-hint {
+  font-size: 11px;
+  color: var(--primary);
+  opacity: 0;
+  transform: translateX(4px);
+  transition: all var(--transition-fast);
   white-space: nowrap;
   flex-shrink: 0;
 }
 
-.project-dir-badge {
-  display: inline-flex;
+.omnibar:hover .omnibar-hint {
+  opacity: 0.9;
+  transform: translateX(0);
+}
+
+.toolbar-actions {
+  display: flex;
   align-items: center;
-  gap: 5px;
-  padding: 3px 8px;
-  background: var(--bg-subtle);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-  max-width: 280px;
-  height: 26px;
+  gap: 6px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+/* --------------------------------------------------------------------------
+   Row 3: Chrome Bookmarks Bar (Status Filter Chips & Search)
+   -------------------------------------------------------------------------- */
+.chrome-bookmarks-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  height: 38px;
+  padding: 0 16px;
+  background: #ffffff;
+  border-bottom: 1px solid var(--border-default);
   box-sizing: border-box;
-  text-decoration: none;
-  flex-shrink: 1;
 }
 
-.project-dir-badge:hover {
-  background: var(--bg-muted);
-  border-color: var(--text-tertiary);
-  color: var(--text-primary);
+.bookmarks-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
 }
 
-.project-dir-badge .badge-icon {
-  display: inline-flex;
-  color: var(--text-tertiary);
-}
-
-.project-dir-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.bookmarks-right {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
 }
 
 /* Actions Toolbar */
