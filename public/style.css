@@ -938,6 +938,7 @@ button:disabled {
   transition: all var(--transition-fast);
   max-width: 100%;
   white-space: nowrap;
+  cursor: pointer;
 }
 
 .meta-pill:hover {
@@ -948,12 +949,37 @@ button:disabled {
 
 .meta-pill-icon {
   display: inline-flex;
+  align-items: center;
   opacity: 0.65;
 }
 
 .meta-pill-time {
   font-family: var(--font-mono);
   font-size: 11px;
+}
+
+.meta-pill-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.45;
+  margin-left: 2px;
+  line-height: 1;
+  transition: opacity var(--transition-fast), color var(--transition-fast), transform var(--transition-fast);
+}
+
+.meta-pill-action svg {
+  width: 11px;
+  height: 11px;
+}
+
+.meta-pill:hover .meta-pill-action {
+  opacity: 0.95;
+  color: var(--primary);
+}
+
+.cloud-pill:hover .meta-pill-action {
+  transform: translate(1px, -1px);
 }
 
 .user-tag {

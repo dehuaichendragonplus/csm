@@ -513,24 +513,6 @@
     setHighlighted(pathSpan, row.path);
     nameRow.append(starBtn, nameDiv, pathSpan);
 
-    // 云端最后修改人微胶囊（直显协作溯源）
-    if (row.cloudModifiedBy) {
-      const modTag = document.createElement('span');
-      modTag.className = 'modifier-tag';
-      if (row.status === 'updated' || row.status === 'conflict') {
-        modTag.classList.add('modifier-tag-active');
-      }
-      const modIcon = document.createElement('span');
-      modIcon.className = 'mod-icon';
-      modIcon.textContent = '👤';
-      const modName = document.createElement('span');
-      modName.className = 'mod-name';
-      modName.textContent = row.cloudModifiedBy;
-      modTag.append(modIcon, modName);
-      modTag.title = `云端最后修改人：${row.cloudModifiedBy}\n最后修改时间：${formatTime(row.cloudModifiedTime)}`;
-      nameRow.appendChild(modTag);
-    }
-
     // 备注行显示云端表名，并直接作为跳转云端表的入口
     const metaDiv = document.createElement('div');
     metaDiv.className = 'meta';
@@ -580,6 +562,12 @@
         userTag.title = `最后修改人：${row.cloudModifiedBy}`;
         pill.appendChild(userTag);
       }
+      const actSpan = document.createElement('span');
+      actSpan.className = 'meta-pill-action';
+      actSpan.innerHTML = window.CSMIcons ? window.CSMIcons.external : '↗';
+      actSpan.title = '在新标签页打开 Google 表格';
+      pill.appendChild(actSpan);
+
       pill.title = row.cloudModifiedBy ? `打开 Google 表格\n最后修改人：${row.cloudModifiedBy}\n时间：${formatTime(row.cloudModifiedTime)}` : '打开 Google 表格';
       pill.addEventListener('click', e => e.stopPropagation());
       cloudCell.appendChild(pill);
@@ -603,6 +591,13 @@
       timeSpan.className = 'meta-pill-time';
       timeSpan.textContent = row.lastSyncedModifiedTime ? formatTime(row.lastSyncedModifiedTime) : (row.localExists ? '未记录同步' : '本地缺失');
       pill.append(icon, timeSpan);
+
+      const actSpan = document.createElement('span');
+      actSpan.className = 'meta-pill-action';
+      actSpan.innerHTML = window.CSMIcons ? window.CSMIcons.folder : '📁';
+      actSpan.title = row.localExists ? '在访达中显示' : '打开所在目录';
+      pill.appendChild(actSpan);
+
       pill.title = row.localExists ? `本地文件：${row.path}\n在访达中显示` : '本地还没有这个文件，点击打开所在目录';
       pill.addEventListener('click', e => {
         e.preventDefault();
