@@ -459,6 +459,21 @@
 
       const body = document.createElement('div');
       body.className = 'group-body';
+
+      // 表格列头
+      const thead = document.createElement('div');
+      thead.className = 'table-header-row';
+      thead.innerHTML = `
+        <span class="th-col th-status" title="当前同步状态">状态</span>
+        <span class="th-col th-name" title="配置表名">配置表</span>
+        <span class="th-col th-path" title="本地相对文件路径">本地路径</span>
+        <span class="th-col th-cloud" title="关联的云端 Google Sheets 表格">关联云端表</span>
+        <span class="th-col th-cloud-time" title="Google Drive 云端最后修改时间与修改人">云端最后修改</span>
+        <span class="th-col th-local-time" title="本地 xlsx 文件修改/同步时间">本地文件状态</span>
+        <span class="th-col th-actions" title="操作">操作</span>
+      `;
+      body.appendChild(thead);
+
       list.forEach(row => body.appendChild(renderRow(row)));
       group.appendChild(body);
       els.groups.appendChild(group);
@@ -503,17 +518,15 @@
     div.dataset.path = row.path;
     if (rowClickable) div.addEventListener('click', () => { if (!busyPaths.has(row.path)) syncOne(row.path); });
 
+    // 1. 状态图标
     const iconCell = document.createElement('span');
-    iconCell.className = 'icon';
+    iconCell.className = 'icon-cell icon';
     iconCell.innerHTML = window.CSMIcons ? window.CSMIcons.status[row.status] : STATUS_LABELS[row.status].icon;
 
-    const nameCol = document.createElement('div');
-    nameCol.className = 'name-col';
+    // 2. 配置表名（带收藏星标）
+    const nameCell = document.createElement('div');
+    nameCell.className = 'name-cell';
 
-    const nameRow = document.createElement('div');
-    nameRow.className = 'name-row';
-
-    // 星标收藏按钮
     const isFav = isFavorite(row.path);
     const starBtn = document.createElement('button');
     starBtn.type = 'button';
@@ -528,16 +541,21 @@
     const nameDiv = document.createElement('span');
     nameDiv.className = 'name';
     setHighlighted(nameDiv, row.name);
-    nameDiv.title = row.path;
+    nameDiv.title = `${row.name}\n${row.path}`;
+    nameCell.append(starBtn, nameDiv);
 
+    // 3. 本地路径
+    const pathCell = document.createElement('div');
+    pathCell.className = 'path-cell';
     const pathSpan = document.createElement('span');
     pathSpan.className = 'row-path';
     setHighlighted(pathSpan, row.path);
-    nameRow.append(starBtn, nameDiv, pathSpan);
+    pathSpan.title = row.path;
+    pathCell.appendChild(pathSpan);
 
-    // 备注行显示云端表名，并直接作为跳转云端表的入口
-    const metaDiv = document.createElement('div');
-    metaDiv.className = 'meta';
+    // 4. 关联云端表
+    const cloudCell = document.createElement('div');
+    cloudCell.className = 'cloud-cell';
     const label = row.cloudName || row.description || '';
     if (row.spreadsheetId && label) {
       const link = document.createElement('a');
@@ -555,15 +573,16 @@
       }
       link.title = '在新标签页打开云端配置表';
       link.addEventListener('click', e => e.stopPropagation());
-      metaDiv.appendChild(link);
+      cloudCell.appendChild(link);
+    } else if (label) {
+      setHighlighted(cloudCell, label);
     } else {
-      setHighlighted(metaDiv, label);
+      cloudCell.innerHTML = '<span class="cell-empty-text">—</span>';
     }
-    nameCol.append(nameRow, metaDiv);
 
-    // 「云端」微胶囊：点击打开云端表
-    const cloudCell = document.createElement('div');
-    cloudCell.className = 'meta cloud-col';
+    // 5. 云端修改时间与修改人
+    const cloudTimeCell = document.createElement('div');
+    cloudTimeCell.className = 'cloud-time-cell';
     if (row.spreadsheetId) {
       const pill = document.createElement('a');
       pill.className = 'meta-pill cloud-pill';
@@ -592,16 +611,16 @@
 
       pill.title = row.cloudModifiedBy ? `打开 Google 表格\n最后修改人：${row.cloudModifiedBy}\n时间：${formatTime(row.cloudModifiedTime)}` : '打开 Google 表格';
       pill.addEventListener('click', e => e.stopPropagation());
-      cloudCell.appendChild(pill);
+      cloudTimeCell.appendChild(pill);
     } else {
-      cloudCell.innerHTML = '<span class="meta-pill meta-pill-empty">未关联云端表</span>';
+      cloudTimeCell.innerHTML = '<span class="meta-pill meta-pill-empty">未关联云端表</span>';
     }
 
-    // 「本地」微胶囊：点击在访达中定位本地文件
-    const localCell = document.createElement('div');
-    localCell.className = 'meta local-col';
+    // 6. 本地文件状态/时间
+    const localTimeCell = document.createElement('div');
+    localTimeCell.className = 'local-time-cell';
     if (row.error) {
-      localCell.innerHTML = `<span class="meta-pill local-pill-error" title="${row.error}">错误: ${row.error}</span>`;
+      localTimeCell.innerHTML = `<span class="meta-pill local-pill-error" title="${row.error}">错误: ${row.error}</span>`;
     } else {
       const pill = document.createElement('a');
       pill.className = `meta-pill local-pill ${row.localExists ? '' : 'local-missing'}`;
@@ -628,13 +647,15 @@
           if (res) showToast(`已在访达中定位: ${row.name || row.path}`, 'info');
         });
       });
-      localCell.appendChild(pill);
+      localTimeCell.appendChild(pill);
     }
 
     div.appendChild(iconCell);
-    div.appendChild(nameCol);
+    div.appendChild(nameCell);
+    div.appendChild(pathCell);
     div.appendChild(cloudCell);
-    div.appendChild(localCell);
+    div.appendChild(cloudTimeCell);
+    div.appendChild(localTimeCell);
 
     const actionCell = document.createElement('div');
     actionCell.className = 'action-cell';
@@ -1417,7 +1438,8 @@
   function openSettings() {
     const p = projects.find(x => x.id === currentId);
     els.settingsProject.textContent = p ? p.name : '';
-    els.settingsVersion.textContent = document.getElementById('app-title').title || '';
+    const titleEl = document.getElementById('app-title');
+    els.settingsVersion.textContent = (titleEl && titleEl.title) ? titleEl.title : 'CSM';
     els.settingsModal.classList.remove('hidden');
   }
   const closeSettings = () => els.settingsModal.classList.add('hidden');

@@ -760,7 +760,8 @@
   async function checkUpdate() {
     try {
       const r = await (await fetch('/api/update-check')).json();
-      if (r.current) $('app-title').title = `CSM v${r.current}`;
+      const titleEl = $('app-title');
+      if (r.current && titleEl) titleEl.title = `CSM v${r.current}`;
       if (!r.hasUpdate) return;
       let dismissed = null;
       try { dismissed = localStorage.getItem(DISMISS_KEY); } catch (_) {}
