@@ -3,7 +3,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const { addProject, removeProject, renameProject, loadProjects, findProject } = require('../lib/projects');
+const { addProject, removeProject, renameProject, loadProjects, findProject, moveProject } = require('../lib/projects');
 const { listDirs } = require('../lib/fs-browser');
 
 function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'sm-proj-')); }
@@ -90,4 +90,24 @@ test('添加时可自定义项目名，留空用配置 title；支持重命名',
   assert.strictEqual(findProject(reg, a.id).name, '新名');
   assert.throws(() => renameProject(reg, a.id, '  '), /不能为空/);
   assert.strictEqual(renameProject(reg, 'nope', 'x'), null);
+});
+
+test('移动项目会将新顺序写入注册表，保留项目数据', () => {
+  const dir = tmp();
+  const reg = path.join(dir, 'projects.json');
+  const [a, b, c] = ['Alpha', 'Bravo', 'Charlie'].map(id => ({ id, name: id, dir: path.join(dir, id) }));
+  fs.writeFileSync(reg, JSON.stringify([a, b, c]));
+
+  moveProject(reg, a.id, c.id, 'after');
+  assert.deepStrictEqual(loadProjects(reg), [b, c, a]);
+  moveProject(reg, a.id, b.id, 'before');
+  assert.deepStrictEqual(loadProjects(reg), [a, b, c]);
+});
+
+test('拖动目标已被移除时，拒绝移动并保留其他项目', () => {
+  const reg = path.join(tmp(), 'projects.json');
+  const projects = [{ id: 'alpha' }, { id: 'bravo' }];
+  fs.writeFileSync(reg, JSON.stringify(projects));
+  assert.strictEqual(moveProject(reg, 'alpha', 'removed', 'before'), null);
+  assert.deepStrictEqual(loadProjects(reg), projects);
 });

@@ -210,6 +210,25 @@ html, body {
   display: none;
 }
 
+.project-tab.dragging {
+  opacity: 0.48;
+}
+
+.project-tab.drop-before::before,
+.project-tab.drop-after::before {
+  content: '';
+  position: absolute;
+  top: 4px;
+  bottom: 3px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--primary);
+  pointer-events: none;
+}
+
+.project-tab.drop-before::before { left: 0; }
+.project-tab.drop-after::before { right: 0; }
+
 .project-tab .tab-icon {
   display: inline-flex;
   align-items: center;

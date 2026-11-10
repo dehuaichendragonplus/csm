@@ -1599,6 +1599,7 @@
 
   // 「有更新 / 冲突 / 本地变更 / 需核对」的表：修改时间或文件字节变了不代表内容变了，导出云端与本地比较，内容一致的自动记为已同步
   const VERIFY_STATUSES = new Set(['updated', 'conflict', 'local_changed', 'never_synced']);
+  const VERIFY_CONCURRENCY = 6;
   async function verifyUpdates(rows, { force = false } = {}) {
     const id = currentId;
     const paths = (rows || []).filter(r => VERIFY_STATUSES.has(r.status) && (force || !r.changeSummary)).map(r => r.path);
@@ -1615,21 +1616,48 @@
     const byPath = new Map((rows || []).map(row => [row.path, row]));
     paths.forEach(path => verifyFailures.delete(path));
     render();
-    const controller = new AbortController();
-    const timeoutTimer = setTimeout(() => controller.abort(), 60000);
+    // 逐表请求、并发核对：哪张核完就先刷新哪一行，不用等最慢的那张；单张超时也只影响它自己
     run.promise = (async () => {
+      const queue = [...paths];
+      const same = [];
+      const failed = [];
+      let latest = null;
+      let done = 0;
+      const verifyOne = async path => {
+        const controller = new AbortController();
+        const timeoutTimer = setTimeout(() => controller.abort(), 60000);
+        try {
+          const resp = await fetch(api('/verify', id), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ paths: [path], force }),
+            signal: controller.signal
+          });
+          const data = await resp.json().catch(() => ({}));
+          if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+          for (const r of data.results || []) {
+            if (r.identical) same.push(r);
+            else if (r.error) failed.push(r);
+          }
+          if (data.tables) latest = data.tables;
+        } catch (err) {
+          failed.push({ path, error: err.name === 'AbortError' ? '核对超时（60 秒）' : err.message });
+        } finally {
+          clearTimeout(timeoutTimer);
+          run.paths.delete(path);
+          done++;
+          if (id === currentId) {
+            if (run.paths.size && cloudStatus === 'checking') setCloudStatus('checking', `正在核对配置表内容（${done}/${paths.length}）…`);
+            render(latest || undefined);
+          }
+        }
+      };
+      const worker = async () => {
+        while (queue.length) await verifyOne(queue.shift());
+      };
       try {
-        const resp = await fetch(api('/verify', id), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ paths, force }),
-          signal: controller.signal
-        });
-        const data = await resp.json().catch(() => ({}));
+        await Promise.all(Array.from({ length: Math.min(VERIFY_CONCURRENCY, queue.length) }, worker));
         if (id !== currentId) return rows;
-        if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
-        const same = (data.results || []).filter(r => r.identical);
-        const failed = (data.results || []).filter(r => r.error);
         if (same.length) {
           const nameOf = r => (byPath.get(r.path) || {}).name || r.path;
           const localOnly = same.filter(r => r.previousStatus === 'local_changed');
@@ -1645,18 +1673,8 @@
           if (row) verifyFailures.set(row.path, { cloud: row.cloudModifiedTime, local: row.localVersion, error: failure.error });
           appendLog(`! 内容核对失败 ${failure.path}：${failure.error}\n`);
         }
-        return data.tables || rows;
-      } catch (err) {
-        if (id === currentId) {
-          for (const path of paths) {
-            const row = byPath.get(path);
-            verifyFailures.set(path, { cloud: row.cloudModifiedTime, local: row.localVersion, error: err.message });
-          }
-          appendLog(`! 核对配置表内容失败：${err.message}\n`);
-        }
-        return rows;
+        return latest || rows;
       } finally {
-        clearTimeout(timeoutTimer);
         verifyRuns.delete(id);
       }
     })();
@@ -1756,14 +1774,106 @@
 
   let lastTabClickTime = 0;
   let lastTabClickId = null;
+  let draggedTab = null;
+  let dropHint = null;
+  let savingTabOrder = false;
+
+  function clearTabDropHint() {
+    dropHint?.classList.remove('drop-before', 'drop-after');
+    dropHint = null;
+  }
+
+  function endTabDrag() {
+    draggedTab?.classList.remove('dragging');
+    draggedTab = null;
+    clearTabDropHint();
+  }
+
+  function tabDropPosition(event, tab) {
+    const rect = tab.getBoundingClientRect();
+    return event.clientX < rect.left + rect.width / 2 ? 'before' : 'after';
+  }
+
+  els.projectTabs.addEventListener('dragover', e => {
+    if (!draggedTab) return;
+    const target = e.target.closest('.project-tab');
+    if (!target || target === draggedTab) {
+      clearTabDropHint();
+      return;
+    }
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (dropHint !== target) clearTabDropHint();
+    dropHint = target;
+    const before = tabDropPosition(e, target) === 'before';
+    target.classList.toggle('drop-before', before);
+    target.classList.toggle('drop-after', !before);
+  });
+
+  els.projectTabs.addEventListener('dragleave', e => {
+    if (!els.projectTabs.contains(e.relatedTarget)) clearTabDropHint();
+  });
+
+  els.projectTabs.addEventListener('drop', async e => {
+    if (!draggedTab) return;
+    e.preventDefault();
+    const id = draggedTab.dataset.projectId;
+    const target = e.target.closest('.project-tab');
+    endTabDrag();
+    if (!target || target.dataset.projectId === id) return;
+
+    savingTabOrder = true;
+    try {
+      const resp = await fetch('/api/projects/reorder', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, targetId: target.dataset.projectId, position: tabDropPosition(e, target) })
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const { order } = await resp.json();
+      const rank = new Map(order.map((projectId, i) => [projectId, i]));
+      const positionOf = projectId => rank.get(projectId) ?? order.length;
+      projects.sort((a, b) => positionOf(a.id) - positionOf(b.id));
+      const tabs = new Map(Array.from(els.projectTabs.children, tab => [tab.dataset.projectId, tab]));
+      projects.forEach((project, i) => {
+        const tab = tabs.get(project.id);
+        const current = els.projectTabs.children[i];
+        if (tab && tab !== current) els.projectTabs.insertBefore(tab, current || null);
+      });
+      updateProjectNavigation();
+    } catch (err) {
+      appendLog(`! 保存项目标签顺序失败：${err.message}\n`);
+      showToast('保存项目标签顺序失败，请重试', 'error');
+    } finally {
+      savingTabOrder = false;
+    }
+  });
 
   function renderTabs() {
+    endTabDrag();
     renderProjectPanel();
     els.projectTabs.innerHTML = '';
     projects.forEach(p => {
       const tab = document.createElement('span');
       tab.className = `project-tab${p.id === currentId ? ' active' : ''}`;
-      tab.title = `${p.dir}\n双击重命名`;
+      tab.dataset.projectId = p.id;
+      tab.title = `${p.dir}\n拖动排序 · 双击重命名`;
+      tab.draggable = true;
+      tab.addEventListener('mousedown', e => {
+        tab.draggable = !e.target.closest('.tab-close, .tab-rename-input');
+      });
+      tab.addEventListener('dragstart', e => {
+        if (projects.length < 2 || savingTabOrder || tab.classList.contains('renaming')) {
+          e.preventDefault();
+          return;
+        }
+        draggedTab = tab;
+        lastTabClickId = null;
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', p.id);
+        tab.classList.add('dragging');
+      });
+      tab.addEventListener('dragend', endTabDrag);
 
       const icon = document.createElement('span');
       icon.className = 'tab-icon';
@@ -1781,7 +1891,6 @@
       close.className = 'tab-close';
       close.innerHTML = window.CSMIcons ? window.CSMIcons.close : '✕';
       close.title = '从平台移除（不会删除任何文件）';
-      close.addEventListener('click', e => { e.stopPropagation(); removeProject(p); });
 
       tab.append(icon, label, badge, close);
 
@@ -1833,9 +1942,10 @@
     });
 
     updateTabBadges();
+    updateProjectNavigation();
+  }
 
-    const btnPrev = document.getElementById('btn-nav-prev');
-    const btnNext = document.getElementById('btn-nav-next');
+  function updateProjectNavigation() {
     if (btnPrev && btnNext) {
       const idx = projects.findIndex(p => p.id === currentId);
       btnPrev.disabled = idx <= 0;
@@ -1907,7 +2017,8 @@
       els.summary.textContent = '';
       return;
     }
-    await selectProject(pick);
+    if (pick === currentId) renderTabs();
+    else await selectProject(pick);
     refreshProjectBadges();
   }
 
@@ -1958,7 +2069,7 @@
       // 乐观更新界面显示
       p.name = newName;
       label.textContent = newName;
-      tab.title = `${p.dir}\n双击重命名`;
+      tab.title = origTitle;
       if (p.id === currentId && els.projectName) {
         els.projectName.textContent = newName;
       }

@@ -155,3 +155,66 @@ test('verify: 忽略旧导出服务配置，使用 Drive 导出核对并自动�
     fs.rmSync(projDir, { recursive: true, force: true });
   }
 });
+
+test('verify: 逐表并发请求各自返回结果，差异预览复用内存中的云端数据', async () => {
+  const { makeXlsx } = require('./helpers/make-xlsx');
+  const { saveExportToCache } = require('../lib/cloud-export-cache');
+  const dataDir = tmpDir('csm-data-verify-par-');
+  const projDir = tmpDir('csm-proj-verify-par-');
+
+  const local = makeXlsx({ Main: [['id', 'name'], ['1', 'HeroA']] });
+  const cloudDiff = makeXlsx({ Main: [['id', 'name'], ['1', 'HeroB']] });
+  fs.mkdirSync(path.join(projDir, 'Datas'), { recursive: true });
+  fs.writeFileSync(path.join(projDir, 'Datas/Hero.xlsx'), local);
+  fs.writeFileSync(path.join(projDir, 'Datas/Item.xlsx'), local);
+  fs.writeFileSync(path.join(projDir, 'filelist.json'), JSON.stringify([
+    { path: 'Datas/Hero.xlsx', name: 'Hero', spreadsheetId: 'sheet-par-same' },
+    { path: 'Datas/Item.xlsx', name: 'Item', spreadsheetId: 'sheet-par-diff' }
+  ]));
+  fs.writeFileSync(path.join(projDir, 'syncmanager.config.json'), JSON.stringify({ title: 'VerifyPar', filelist: 'filelist.json' }));
+  fs.writeFileSync(path.join(dataDir, 'projects.json'), JSON.stringify([{ id: 'proj-verify-par', name: 'VerifyPar', dir: projDir }]));
+
+  const modTime = '2026-11-10T09:00:00.000Z';
+  const driveCachePath = path.join(dataDir, 'projects', 'proj-verify-par', 'drive-cache.json');
+  fs.mkdirSync(path.dirname(driveCachePath), { recursive: true });
+  fs.writeFileSync(driveCachePath, JSON.stringify({
+    fetchedAt: new Date().toISOString(),
+    items: {
+      'sheet-par-same': { modifiedTime: modTime, name: 'Hero', error: null },
+      'sheet-par-diff': { modifiedTime: modTime, name: 'Item', error: null }
+    }
+  }));
+  const exportCacheDir = path.join(dataDir, 'cache', 'cloud-exports');
+  for (const [id, buf] of [['sheet-par-same', local], ['sheet-par-diff', cloudDiff]]) {
+    const tmp = path.join(dataDir, `${id}.xlsx`);
+    fs.writeFileSync(tmp, buf);
+    saveExportToCache(exportCacheDir, id, modTime, tmp);
+  }
+  fs.mkdirSync(path.join(dataDir, '.tokens'), { recursive: true });
+  fs.writeFileSync(path.join(dataDir, '.tokens/token.json'), JSON.stringify({ access_token: 'fake' }));
+
+  const { port, server } = await main({ dataDir, port: 0, openBrowser: false });
+  const base = `http://127.0.0.1:${port}/api/p/proj-verify-par`;
+  try {
+    const tables = await (await fetch(`${base}/tables`)).json();
+    assert.deepStrictEqual(tables.map(t => t.status), ['never_synced', 'never_synced']);
+    const verify = async p => (await fetch(`${base}/verify`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ paths: [p] })
+    })).json();
+    const [a, b] = await Promise.all([verify('Datas/Hero.xlsx'), verify('Datas/Item.xlsx')]);
+    assert.deepStrictEqual(a.results.map(r => r.path), ['Datas/Hero.xlsx']);
+    assert.strictEqual(a.results[0].identical, true);
+    assert.deepStrictEqual(b.results.map(r => r.path), ['Datas/Item.xlsx']);
+    assert.strictEqual(b.results[0].identical, false);
+    assert.strictEqual(b.results[0].error, undefined);
+
+    // 导出缓存删掉后差异预览仍可打开：云端数据已在内存里
+    fs.rmSync(exportCacheDir, { recursive: true, force: true });
+    const diff = await (await fetch(`${base}/diff?path=${encodeURIComponent('Datas/Item.xlsx')}`)).json();
+    assert.strictEqual(diff.diff.identical, false);
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+    fs.rmSync(dataDir, { recursive: true, force: true });
+    fs.rmSync(projDir, { recursive: true, force: true });
+  }
+});

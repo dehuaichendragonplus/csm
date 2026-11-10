@@ -33,7 +33,7 @@ const driveTree = require('./lib/drive-tree');
 const { aggregateTables } = require('./lib/table-aggregator');
 const { CONFIG_FILENAME, loadConfig, publicConfig } = require('./lib/config');
 const { uploadConflict } = require('./lib/status');
-const { loadProjects, addProject, removeProject, renameProject, findProject } = require('./lib/projects');
+const { loadProjects, addProject, removeProject, renameProject, moveProject, findProject } = require('./lib/projects');
 const { listDirs } = require('./lib/fs-browser');
 const { pickFolder } = require('./lib/native-picker');
 const { sseSetup, sseEmit } = require('./lib/sse');
@@ -381,6 +381,17 @@ async function main(opts = {}) {
     } catch (err) {
       res.status(err.code === 'DUPLICATE' ? 409 : 400).json({ error: err.message });
     }
+  });
+
+  app.post('/api/projects/reorder', (req, res) => {
+    const { id, targetId, position } = req.body || {};
+    if (typeof id !== 'string' || typeof targetId !== 'string' || !id || !targetId ||
+        (position !== 'before' && position !== 'after')) {
+      return res.status(400).json({ error: '缺少有效的项目或插入位置' });
+    }
+    const ordered = moveProject(REGISTRY_PATH, id, targetId, position);
+    if (!ordered) return res.status(404).json({ error: '项目不存在' });
+    res.json({ order: ordered.map(p => p.id) });
   });
 
   app.patch('/api/projects/:id', (req, res) => {
@@ -1353,22 +1364,7 @@ async function main(opts = {}) {
           }
         }
 
-        if (!cloudWb) {
-          const cachedPath = await singleFlightExport(memKey, async () => {
-            fs.mkdirSync(TMP_DIR, { recursive: true });
-            const tmp = path.join(TMP_DIR, `diff-${req.ctx.id}-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.xlsx`);
-            try {
-              await downloadViaDrive(entry.spreadsheetId, tmp, oauth2Client);
-              return saveExportToCache(exportCacheDir, entry.spreadsheetId, info.modifiedTime, tmp);
-            } finally {
-              fs.rmSync(tmp, { force: true });
-            }
-          });
-          if (cachedPath) {
-            cloudWb = readWorkbook(cachedPath);
-            setMemoryWorkbook(memKey, cloudWb);
-          }
-        }
+        if (!cloudWb) cloudWb = await fetchCloudWorkbook(entry.spreadsheetId, info.modifiedTime, `diff-${req.ctx.id}`);
       } else {
         readLocal();
       }
@@ -1402,7 +1398,39 @@ async function main(opts = {}) {
   // 云端：有人打开又关闭、改了格式 / 批注等；本地：Excel 打开后重新保存、git 操作改写文件等（字节指纹变了，单元格没变）。
   // 对「有更新 / 冲突 / 本地变更」的表导出云端、与本地逐单元格比较；值完全一致就记为已同步（等同于下载了一份相同的内容），
   // 不再出现在对应分组里。不一致的结果按「路径 + 云端时间 + 本地指纹」缓存，同一版本不重复导出。
-  const VERIFY_CONCURRENCY = 2;
+  // 同一时刻最多核对几张表（跨请求共享）：前端逐表并发请求，这里兜底防止一次打出太多导出请求
+  const VERIFY_CONCURRENCY = 6;
+  let verifyActive = 0;
+  const verifyWaiters = [];
+  async function withVerifySlot(fn) {
+    if (verifyActive >= VERIFY_CONCURRENCY) await new Promise(resolve => verifyWaiters.push(resolve));
+    verifyActive++;
+    try { return await fn(); } finally {
+      verifyActive--;
+      const next = verifyWaiters.shift();
+      if (next) next();
+    }
+  }
+
+  // 导出云端某个版本并解析（不读缓存），同时落盘缓存供下载复用。同一版本并发请求只导出一次。
+  // 注：不改用 Sheets API 直接取值——公式单元格经 xlsx 导出只保留 10 位有效数字，直接取值是完整精度，
+  // 而本地文件通常就是导出下载的，两边会对不上，导致内容一致的表被误判为有差异；实测速度也没有明显优势。
+  function fetchCloudWorkbook(spreadsheetId, modifiedTime, tag) {
+    const memKey = cloudMemoryKey(spreadsheetId, modifiedTime);
+    return singleFlightExport(`wb:${memKey}`, async () => {
+      fs.mkdirSync(TMP_DIR, { recursive: true });
+      const tmp = path.join(TMP_DIR, `${tag}-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.xlsx`);
+      try {
+        await downloadViaDrive(spreadsheetId, tmp, oauth2Client);
+        saveExportToCache(exportCacheDir, spreadsheetId, modifiedTime, tmp);
+        const wb = readWorkbook(tmp);
+        setMemoryWorkbook(memKey, wb);
+        return wb;
+      } finally {
+        fs.rmSync(tmp, { force: true });
+      }
+    });
+  }
 
   async function verifyTable(ctx, row, entry, { force = false } = {}) {
     const cache = verifyCacheOf(ctx.id);
@@ -1410,53 +1438,44 @@ async function main(opts = {}) {
     const localHash = hashFile(entry.savePath);
     const key = verifyKey(entry, row, localHash);
     if (!force && cache[entry.path]?.key === key) return { path: entry.path, identical: false, cached: true };
-    fs.mkdirSync(TMP_DIR, { recursive: true });
-    const tmp = path.join(TMP_DIR, `verify-${ctx.id}-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.xlsx`);
-    try {
-      const cachedExport = !force && getCachedExportPath(exportCacheDir, entry.spreadsheetId, row.cloudModifiedTime);
-      if (cachedExport && fs.existsSync(cachedExport)) {
-        fs.copyFileSync(cachedExport, tmp);
-      } else {
-        await downloadViaDrive(entry.spreadsheetId, tmp, oauth2Client);
-        saveExportToCache(exportCacheDir, entry.spreadsheetId, row.cloudModifiedTime, tmp);
-      }
-      const cKey = cloudMemoryKey(entry.spreadsheetId, row.cloudModifiedTime);
-      let cloud = getMemoryWorkbook(cKey);
-      if (!cloud) {
-        cloud = readWorkbook(tmp);
+    const cKey = cloudMemoryKey(entry.spreadsheetId, row.cloudModifiedTime);
+    let cloud = getMemoryWorkbook(cKey);
+    if (!cloud && !force) {
+      const cachedExport = getCachedExportPath(exportCacheDir, entry.spreadsheetId, row.cloudModifiedTime);
+      if (cachedExport) {
+        cloud = readWorkbook(cachedExport);
         setMemoryWorkbook(cKey, cloud);
       }
-      const localStat = fs.statSync(entry.savePath);
-      const lKey = localMemoryKey(entry.savePath, localStat);
-      let local = getMemoryWorkbook(lKey);
-      if (!local) {
-        local = readWorkbook(entry.savePath);
-        setMemoryWorkbook(lKey, local);
-      }
-      const diff = diffWorkbooks(local, cloud, { keys: entry.diffKeys, maxChanges: 0, view: false });
-      // 核对期间本地被改过时，等下次刷新重新比较。
-      if (epoch !== authEpoch || verifyCacheOf(ctx.id) !== cache || hashFile(entry.savePath) !== localHash) {
-        return { path: entry.path, identical: false, changed: true };
-      }
-      if (!diff.identical) {
-        cache[entry.path] = { key, checkedAt: new Date().toISOString(), summary: summarizeDiff(diff) };
-        writeJson(verifyCachePathOf(ctx.id), cache);
-        return { path: entry.path, identical: false };
-      }
-      const stat = fs.statSync(entry.savePath);
-      updateEntry(ctx.cfg.statePath, entry.path, {
-        lastSyncedModifiedTime: row.cloudModifiedTime,
-        lastSyncedSize: stat.size,
-        lastSyncedMtime: stat.mtime.toISOString(),
-        lastSyncedHash: localHash
-      });
-      delete cache[entry.path];
-      writeJson(verifyCachePathOf(ctx.id), cache);
-      await logHistory(ctx, { op: 'verify', path: entry.path, name: entry.name, ok: true, cloudModifiedTime: row.cloudModifiedTime, cloudModifiedBy: row.cloudModifiedBy || null, previousStatus: row.status });
-      return { path: entry.path, identical: true, previousStatus: row.status };
-    } finally {
-      fs.rmSync(tmp, { force: true });
     }
+    if (!cloud) cloud = await fetchCloudWorkbook(entry.spreadsheetId, row.cloudModifiedTime, `verify-${ctx.id}`);
+    const localStat = fs.statSync(entry.savePath);
+    const lKey = localMemoryKey(entry.savePath, localStat);
+    let local = getMemoryWorkbook(lKey);
+    if (!local) {
+      local = readWorkbook(entry.savePath);
+      setMemoryWorkbook(lKey, local);
+    }
+    const diff = diffWorkbooks(local, cloud, { keys: entry.diffKeys, maxChanges: 0, view: false });
+    // 核对期间本地被改过时，等下次刷新重新比较。
+    if (epoch !== authEpoch || verifyCacheOf(ctx.id) !== cache || hashFile(entry.savePath) !== localHash) {
+      return { path: entry.path, identical: false, changed: true };
+    }
+    if (!diff.identical) {
+      cache[entry.path] = { key, checkedAt: new Date().toISOString(), summary: summarizeDiff(diff) };
+      writeJson(verifyCachePathOf(ctx.id), cache);
+      return { path: entry.path, identical: false };
+    }
+    const stat = fs.statSync(entry.savePath);
+    updateEntry(ctx.cfg.statePath, entry.path, {
+      lastSyncedModifiedTime: row.cloudModifiedTime,
+      lastSyncedSize: stat.size,
+      lastSyncedMtime: stat.mtime.toISOString(),
+      lastSyncedHash: localHash
+    });
+    delete cache[entry.path];
+    writeJson(verifyCachePathOf(ctx.id), cache);
+    await logHistory(ctx, { op: 'verify', path: entry.path, name: entry.name, ok: true, cloudModifiedTime: row.cloudModifiedTime, cloudModifiedBy: row.cloudModifiedBy || null, previousStatus: row.status });
+    return { path: entry.path, identical: true, previousStatus: row.status };
   }
 
   projectRouter.post('/verify', async (req, res) => {
@@ -1472,7 +1491,7 @@ async function main(opts = {}) {
       async function worker() {
         while (queue.length) {
           const row = queue.shift();
-          try { results.push(await verifyTable(ctx, row, byPath.get(row.path), { force })); }
+          try { results.push(await withVerifySlot(() => verifyTable(ctx, row, byPath.get(row.path), { force }))); }
           catch (err) { results.push({ path: row.path, identical: false, error: err.message }); }
         }
       }
