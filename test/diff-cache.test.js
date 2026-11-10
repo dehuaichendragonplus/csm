@@ -48,7 +48,7 @@ test('diff API: uses cloud export cache and avoids redundant downloads', async (
   const exportCacheDir = path.join(dataDir, 'cache', 'cloud-exports');
   const tmpSrc = path.join(tmpDir(), 'cloud.xlsx');
   fs.writeFileSync(tmpSrc, cloudXlsx);
-  saveExportToCache(exportCacheDir, 'sheet-hero-999', modTime, {}, tmpSrc);
+  saveExportToCache(exportCacheDir, 'sheet-hero-999', modTime, tmpSrc);
 
   // 假令牌使 hasToken 为真
   fs.mkdirSync(path.join(dataDir, '.tokens'), { recursive: true });

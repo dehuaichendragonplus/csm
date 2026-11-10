@@ -18,7 +18,6 @@ test('loadConfig 相对路径按配置文件目录解析，并带默认值', () 
   const cfg = loadConfig(p);
   assert.strictEqual(cfg.filelistPath, path.join(dir, 'a/filelist.json'));
   assert.strictEqual(cfg.statePath, path.join(dir, '.sync_state.json'));
-  assert.strictEqual(cfg.exportUrl, null);
   assert.strictEqual(cfg.allowUpload, true);
   assert.strictEqual(cfg.sidecarPath, null);
   assert.strictEqual(cfg.port, 7321);
@@ -37,6 +36,40 @@ test('actions 的 command 支持字符串与 {unix,win}', () => {
   const [a] = loadConfig(p).actions;
   assert.deepStrictEqual(a.steps[0].command, { unix: 'echo hi', win: 'echo hi' });
   assert.deepStrictEqual(a.steps[1].command, { unix: 'u', win: 'u' });
+});
+
+test('未配置 actions 时按顺序执行 Tools 下的标准 Luban 脚本', async (t) => {
+  const { dir, p } = writeCfg({ filelist: 'f' });
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const tools = path.join(dir, 'Tools');
+  fs.mkdirSync(tools);
+  for (const [name, output] of [['gen_localization', 'localization-ready'], ['gen_client', 'client-ready']]) {
+    fs.writeFileSync(path.join(tools, name + '.sh'), `echo ${output}\n`);
+    fs.writeFileSync(path.join(tools, name + '.bat'), `@echo ${output}\r\n`);
+  }
+
+  const cfg = loadConfig(p);
+  assert.deepStrictEqual(publicConfig(cfg).actions, [{ id: 'gen-client', label: 'Luban导出', hidden: false }]);
+  const logs = [];
+  await runSteps({ steps: cfg.actions[0].steps, onLog: line => logs.push(line) });
+  assert.match(logs.join(''), /localization-ready[\s\S]*client-ready/);
+});
+
+test('显式配置的 gen-client 优先于标准 Luban 脚本', (t) => {
+  const { dir, p } = writeCfg({
+    filelist: 'f',
+    actions: [{ id: 'gen-client', label: '项目导出', steps: [{ command: 'echo custom' }] }]
+  });
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const tools = path.join(dir, 'Tools');
+  fs.mkdirSync(tools);
+  fs.writeFileSync(path.join(tools, 'gen_client.sh'), '');
+  fs.writeFileSync(path.join(tools, 'gen_client.bat'), '');
+
+  const actions = loadConfig(p).actions;
+  assert.strictEqual(actions.length, 1);
+  assert.strictEqual(actions[0].label, '项目导出');
+  assert.strictEqual(actions[0].steps[0].command.unix, 'echo custom');
 });
 
 test('publicConfig 不暴露密码与绝对路径', () => {

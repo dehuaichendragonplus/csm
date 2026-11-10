@@ -4434,6 +4434,7 @@ button.row-change-summary {
 }
 
 .bm-group-title {
+  color: var(--primary-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

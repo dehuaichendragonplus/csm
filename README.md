@@ -1,6 +1,6 @@
 # CSM（Config Sync Manager）
 
-> 通用工具：项目相关的内容（表格清单、导出服务、生成命令）全部在 `syncmanager.config.json` 里，代码本身与项目无关，可直接复用到其他项目，见下文「复用到其他项目」。
+> 表格清单和生成命令在各项目的 `syncmanager.config.json` 里配置。CSM 使用当前授权的 Google 账号直接访问 Google Drive。
 
 图形化工具（桌面 App，或浏览器访问本地服务），用于检测配置文件里 `filelist` 所指的的 Google Sheets 表格哪些与本地 xlsx 文件存在差异，并支持下载到本地、或把本地 xlsx 上传覆盖云端。
 
@@ -91,12 +91,13 @@ App 启动后（之后每 6 小时）检查一次更新清单，有新版本时�
 
 路径一律相对该配置文件所在目录，样例见 `syncmanager.config.example.json`。
 
+CSM 通过 Google Drive API 导出 xlsx，单表导出上限为 10 MB。旧配置中的 `export` 段可直接删除，CSM 会忽略该段。
+
 | 字段 | 必填 | 说明 |
 |---|---|---|
-| `filelist` | 是 | 表格清单 JSON 路径，格式为数组，每项 `{ "path": "相对清单目录的 xlsx 路径", "spreadsheetId": "...", "name": "...", "description": "..." }`（可选 `mergeCells`，仅内部导出服务使用；`cloudDir` / `cloudFile` 为工具自动维护的云端位置） |
+| `filelist` | 是 | 表格清单 JSON 路径，格式为数组，每项 `{ "path": "相对清单目录的 xlsx 路径", "spreadsheetId": "...", "name": "...", "description": "..." }`（`cloudDir` / `cloudFile` 为工具自动维护的云端位置） |
 | `title` | 否 | 标签页上显示的项目名，默认目录名 |
 | `sidecar` | 否 | 入仓的版本记录文件，用于 `git pull` 后避免误判「有更新」；不填则不启用 |
-| `export.url` / `export.password` | 否 | 内部导出服务。**不填则直接用 Drive API 导出 xlsx**（单表 ≤10MB） |
 | `cloudRoot` | 否 | 云端目录映射 `{ "folderId": "云端根文件夹 ID", "local": "Datas" }`，新增配置表时按云端子目录放到本地对应目录；不填则自动推断，见「云端目录映射」 |
 | `allowUpload` | 否 | 是否显示每行的「上传」按钮，默认 true |
 | `actions` | 否 | 自定义动作列表，每项 `{ id, label, steps:[{ label, cwd, command }] }`，渲染成顶部按钮，点击后依次执行各步骤（任一步失败即中止），日志实时显示；`command` 可写字符串，或 `{ "unix": "...", "win": "..." }`，在 `cwd` 下经 shell 执行。默认只手动触发；每个人可在「⚙ 设置 → 下载后自动执行」里选一个动作，下载成功后自动执行（只对本机生效） |
@@ -259,7 +260,7 @@ App 启动后（之后每 6 小时）检查一次更新清单，有新版本时�
 - **每行只显示一个按钮**（规则同「配置表清单」的判定表）：云端较新显示 **下载**（也可点击整行），本地较新显示 **上传**，两边都改过显示 **解决冲突**，已同步不显示。右侧 **⇄** 看差异（只在两边有差异的行显示）、**🕘** 看本地备份。
 - **下载所有更新**：批量下载（同时 3 张）所有「云端较新 / 本地缺失」的表，下载前自动备份本地文件；本地较新的表不会被覆盖，冲突的表也不会自动处理，都会在日志里列出，需逐个处理。
 - **批次结果**：整项目、分组或勾选下载完成后，可查看各表的结果及原因、仅重试失败项，或复制本批变更摘要。覆盖前发现表格版本或绑定变化时会跳过该表。已启用自动导出时，整批同步成功且版本仍一致后才运行，并记录本次导出结果。
-- **顶部自定义按钮**（如 MergeX11 的「Luban导出」）：由项目配置的 `actions` 生成，手动点击执行。
+- **项目工具栏**：常驻「管理配置表」「Luban导出」「操作历史」「项目设置」。Luban 优先使用 `actions` 中的 `gen-client`，否则自动查找项目 `Tools` 目录中的 `gen_client.sh` 或 `gen_client.bat`。同平台的 `gen_localization` 脚本存在时先执行它。缺少客户端生成脚本时，按钮显示为不可用。其他可见的 `actions` 仍显示为自定义按钮。
 - **上传**：先看差异再用本地 xlsx 覆盖云端，见上文「上传覆盖云端」；上传后自动记为已同步。
 - **云端 / 本地入口**：每行的「云端: 时间」点击打开云端表，「本地: 时间」点击在访达中显示本地文件。
 
@@ -268,7 +269,7 @@ App 启动后（之后每 6 小时）检查一次更新清单，有新版本时�
 > 下面的 `.sync_state.json`、`.tokens/`、`sync-versions` 已按上文「数据放在哪」调整：状态与令牌在 `data/`，sidecar 在各项目目录里。
 
 - `server.js` — Express 服务，默认监听端口 7321（被占用时自动递增寻找可用端口）
-- `lib/` — 各功能模块（status、sync-state、drive-api、downloader、gen-client-runner、version-sidecar 等）
+- `lib/` — 各功能模块（status、sync-state、drive-api、gen-client-runner、version-sidecar 等）
 - `public/` — HTML / CSS / JS 前端
 - `lib/filelist-editor.js` — filelist.json 的增删改、链接解析、表名与路径推荐
 - `lib/drive-tree.js` — 云端目录链查询、云端根目录推断与本地路径对齐
@@ -311,4 +312,4 @@ App 启动后（之后每 6 小时）检查一次更新清单，有新版本时�
 npm test
 ```
 
-执行 `node --test 'test/**/*.test.js'`。覆盖纯逻辑层（状态判定与冲突检测、状态持久化与指纹缓存、filelist 解析、端口扫描、表格聚合、基于本地 mock server 的下载器、xlsx 读取与差异、备份、操作历史、Drive 限流重试与批量查询、更新检查）。OAuth 与 Drive API 实际调用部分通过手动方式验证。
+执行 `node --test 'test/**/*.test.js'`。覆盖状态判定与冲突检测、状态持久化与指纹缓存、filelist 解析、端口扫描、表格聚合、xlsx 读取与差异、备份、操作历史、Drive 限流重试与批量查询和更新检查。OAuth 与 Drive API 实际调用部分通过手动方式验证。

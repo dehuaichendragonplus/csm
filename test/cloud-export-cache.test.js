@@ -45,8 +45,8 @@ test('cloud-export-cache: keys and filenames', () => {
   const stat = { mtimeMs: 123456789, size: 500 };
   assert.strictEqual(localMemoryKey('/path/to/table.xlsx', stat), 'local:/path/to/table.xlsx:123456789:500');
 
-  const cmk = cloudMemoryKey('sheet-1', '2026-02-02T08:00:00.000Z', { exportUrl: '', mergeCells: false });
-  assert.strictEqual(cmk, 'cloud:sheet-1:2026-02-02T08:00:00.000Z:drive:0');
+  const cmk = cloudMemoryKey('sheet-1', '2026-02-02T08:00:00.000Z');
+  assert.strictEqual(cmk, 'cloud:sheet-1:2026-02-02T08:00:00.000Z');
 
   const fn1 = cloudExportFilename('sheet-1', '2026-02-02T08:00:00.000Z');
   const fn2 = cloudExportFilename('sheet-1', '2026-02-02T08:00:00.000Z');
@@ -64,7 +64,7 @@ test('cloud-export-cache: disk save, get, and prune', () => {
     const modTime = '2026-02-02T08:00:00.000Z';
     assert.strictEqual(getCachedExportPath(tmpDir, 'sheet-abc', modTime), null);
 
-    const saved = saveExportToCache(tmpDir, 'sheet-abc', modTime, {}, srcFile);
+    const saved = saveExportToCache(tmpDir, 'sheet-abc', modTime, srcFile);
     assert.ok(saved && fs.existsSync(saved));
     assert.strictEqual(fs.readFileSync(saved, 'utf8'), 'test xlsx content');
 

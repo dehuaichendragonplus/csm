@@ -27,6 +27,7 @@ test('只有 Input/filelist.json：自动生成最小配置', () => {
   assert.strictEqual(generated, true);
   const cfg = JSON.parse(fs.readFileSync(path.join(dir, 'syncmanager.config.json'), 'utf8'));
   assert.strictEqual(cfg.filelist, 'Input/filelist.json');
+  assert.strictEqual(Object.hasOwn(cfg, 'export'), false);
 });
 
 test('既无配置也无 filelist：报错且不入库', () => {

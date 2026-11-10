@@ -3,10 +3,6 @@
   "filelist": "./filelist.json",
   "sidecar": "./.sync-versions.json",
   "allowUpload": true,
-  "export": {
-    "url": "",
-    "password": ""
-  },
   "actions": [
     {
       "id": "build",

@@ -31,7 +31,6 @@ const reveal = require('./lib/reveal');
 const filelistEditor = require('./lib/filelist-editor');
 const driveTree = require('./lib/drive-tree');
 const { aggregateTables } = require('./lib/table-aggregator');
-const { downloadOne } = require('./lib/downloader');
 const { CONFIG_FILENAME, loadConfig, publicConfig } = require('./lib/config');
 const { uploadConflict } = require('./lib/status');
 const { loadProjects, addProject, removeProject, renameProject, findProject } = require('./lib/projects');
@@ -258,8 +257,8 @@ async function main(opts = {}) {
     return changed;
   }
 
-  function verifyKey(entry, row, localHash, cfg) {
-    return JSON.stringify([entry.spreadsheetId, row.cloudModifiedTime, localHash, entry.diffKeys, entry.mergeCells, cfg.exportUrl]);
+  function verifyKey(entry, row, localHash) {
+    return JSON.stringify([entry.spreadsheetId, row.cloudModifiedTime, localHash, entry.diffKeys]);
   }
 
   function tablesOf(ctx, { driveMap = driveCaches.get(ctx.id), persistState = true } = {}) {
@@ -273,7 +272,7 @@ async function main(opts = {}) {
       const saved = Object.hasOwn(cache, row.path) && cache[row.path];
       if (!saved?.summary || driveCacheFresh.get(ctx.id) !== true || !verifyStatuses.has(row.status)) return row;
       const entry = filelist[i];
-      if (saved.key !== verifyKey(entry, row, hashFile(entry.savePath), ctx.cfg)) return row;
+      if (saved.key !== verifyKey(entry, row, hashFile(entry.savePath))) return row;
       return { ...row, changeSummary: saved.summary, checkedAt: saved.checkedAt };
     });
   }
@@ -591,23 +590,6 @@ async function main(opts = {}) {
     }
   });
 
-  // 把云端表导出成 xlsx 写到 savePath（与「下载」同一种方式：配置了内部导出服务就用它，否则走 Drive 导出）
-  async function exportCloud(cfg, entry, savePath, { onProgress, onRetry } = {}) {
-    if (cfg.exportUrl) {
-      await downloadOne({
-        baseUrl: cfg.exportUrl,
-        spreadsheetId: entry.spreadsheetId,
-        password: cfg.exportPassword,
-        savePath,
-        mergeCells: !!entry.mergeCells,
-        onProgress,
-        onRetry
-      });
-    } else {
-      await downloadViaDrive(entry.spreadsheetId, savePath, oauth2Client);
-    }
-  }
-
   function skipDownload(message) {
     return Object.assign(new Error(message), { code: 'SYNC_SKIPPED' });
   }
@@ -617,10 +599,8 @@ async function main(opts = {}) {
       const cfg = loadConfig(path.join(ctx.project.dir, CONFIG_FILENAME), { statePath: ctx.cfg.statePath });
       const latest = loadFilelist(cfg.filelistPath).find(row => row.path === entry.path);
       if (latest?.spreadsheetId === entry.spreadsheetId && latest.savePath === entry.savePath
-          && !!latest.mergeCells === !!entry.mergeCells
           && JSON.stringify(latest.diffKeys) === JSON.stringify(entry.diffKeys)
-          && cfg.filelistPath === ctx.cfg.filelistPath && cfg.exportUrl === ctx.cfg.exportUrl
-          && cfg.exportPassword === ctx.cfg.exportPassword && cfg.sidecarPath === ctx.cfg.sidecarPath) return;
+          && cfg.filelistPath === ctx.cfg.filelistPath && cfg.sidecarPath === ctx.cfg.sidecarPath) return;
     } catch (_) { /* 项目配置或表清单已无法读取 */ }
     throw skipDownload('配置表绑定或导出设置已变化，请刷新后重新选择');
   }
@@ -630,9 +610,6 @@ async function main(opts = {}) {
     const { cfg, id } = ctx;
     const epoch = authEpoch;
     const info = await getCloudInfo(entry.spreadsheetId, oauth2Client);
-    const options = {
-      onRetry: ({ attempt, waitMs, error }) => log(`  ↳ 重试 ${attempt}/3（${waitMs / 1000} 秒后）：${error.message}\n`)
-    };
     let tmp;
     let summary = null;
     let backup;
@@ -662,15 +639,14 @@ async function main(opts = {}) {
         if (row.localExists && !localHash) throw new Error('无法读取本地表格');
         // 暂存文件与目标在同一目录，替换时可原子重命名。
         tmp = `${entry.savePath}.csm-${randomUUID()}.tmp`;
-        const exportOptions = { exportUrl: cfg.exportUrl, mergeCells: !!entry.mergeCells };
-        const cachedExport = getCachedExportPath(exportCacheDir, entry.spreadsheetId, info.modifiedTime, exportOptions);
+        const cachedExport = getCachedExportPath(exportCacheDir, entry.spreadsheetId, info.modifiedTime);
         if (cachedExport && fs.existsSync(cachedExport)) {
           fs.copyFileSync(cachedExport, tmp);
         } else {
-          await exportCloud(cfg, entry, tmp, options);
-          saveExportToCache(exportCacheDir, entry.spreadsheetId, info.modifiedTime, exportOptions, tmp);
+          await downloadViaDrive(entry.spreadsheetId, tmp, oauth2Client);
+          saveExportToCache(exportCacheDir, entry.spreadsheetId, info.modifiedTime, tmp);
         }
-        const cKey = cloudMemoryKey(entry.spreadsheetId, info.modifiedTime, exportOptions);
+        const cKey = cloudMemoryKey(entry.spreadsheetId, info.modifiedTime);
         let cloud = getMemoryWorkbook(cKey);
         if (!cloud) {
           cloud = readWorkbook(tmp);
@@ -701,7 +677,7 @@ async function main(opts = {}) {
       backup = backups.backupFile(backupRootOf(id), entry.path, entry.savePath, { reason: '下载前自动备份' });
       if (backup && !backup.deduped) log(`  ↳ 已备份本地文件（${backup.id}）\n`);
       if (tmp) fs.renameSync(tmp, entry.savePath);
-      else await exportCloud(cfg, entry, entry.savePath, options);
+      else await downloadViaDrive(entry.spreadsheetId, entry.savePath, oauth2Client);
       const stat = fs.statSync(entry.savePath);
       updateEntry(cfg.statePath, entry.path, {
         lastSyncedModifiedTime: info.modifiedTime,
@@ -1312,7 +1288,6 @@ async function main(opts = {}) {
 
     const force = req.query.force === '1';
     const epoch = authEpoch;
-    const exportOptions = { exportUrl: cfg.exportUrl, mergeCells: !!entry.mergeCells };
 
     let localStat = null;
     let localWb = [];
@@ -1338,10 +1313,10 @@ async function main(opts = {}) {
     let cloudWb = null;
 
     if (cachedDriveInfo?.modifiedTime) {
-      const memKey = cloudMemoryKey(entry.spreadsheetId, cachedDriveInfo.modifiedTime, exportOptions);
+      const memKey = cloudMemoryKey(entry.spreadsheetId, cachedDriveInfo.modifiedTime);
       cloudWb = getMemoryWorkbook(memKey);
       if (!cloudWb) {
-        const cachedPath = getCachedExportPath(exportCacheDir, entry.spreadsheetId, cachedDriveInfo.modifiedTime, exportOptions);
+        const cachedPath = getCachedExportPath(exportCacheDir, entry.spreadsheetId, cachedDriveInfo.modifiedTime);
         if (cachedPath) {
           cloudWb = readWorkbook(cachedPath);
           setMemoryWorkbook(memKey, cloudWb);
@@ -1366,11 +1341,11 @@ async function main(opts = {}) {
         }
         driveCaches.get(req.ctx.id).set(entry.spreadsheetId, info);
 
-        const memKey = cloudMemoryKey(entry.spreadsheetId, info.modifiedTime, exportOptions);
+        const memKey = cloudMemoryKey(entry.spreadsheetId, info.modifiedTime);
         if (!force) {
           cloudWb = getMemoryWorkbook(memKey);
           if (!cloudWb) {
-            const cachedPath = getCachedExportPath(exportCacheDir, entry.spreadsheetId, info.modifiedTime, exportOptions);
+            const cachedPath = getCachedExportPath(exportCacheDir, entry.spreadsheetId, info.modifiedTime);
             if (cachedPath) {
               cloudWb = readWorkbook(cachedPath);
               setMemoryWorkbook(memKey, cloudWb);
@@ -1383,8 +1358,8 @@ async function main(opts = {}) {
             fs.mkdirSync(TMP_DIR, { recursive: true });
             const tmp = path.join(TMP_DIR, `diff-${req.ctx.id}-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.xlsx`);
             try {
-              await exportCloud(cfg, entry, tmp);
-              return saveExportToCache(exportCacheDir, entry.spreadsheetId, info.modifiedTime, exportOptions, tmp);
+              await downloadViaDrive(entry.spreadsheetId, tmp, oauth2Client);
+              return saveExportToCache(exportCacheDir, entry.spreadsheetId, info.modifiedTime, tmp);
             } finally {
               fs.rmSync(tmp, { force: true });
             }
@@ -1433,20 +1408,19 @@ async function main(opts = {}) {
     const cache = verifyCacheOf(ctx.id);
     const epoch = authEpoch;
     const localHash = hashFile(entry.savePath);
-    const key = verifyKey(entry, row, localHash, ctx.cfg);
+    const key = verifyKey(entry, row, localHash);
     if (!force && cache[entry.path]?.key === key) return { path: entry.path, identical: false, cached: true };
     fs.mkdirSync(TMP_DIR, { recursive: true });
     const tmp = path.join(TMP_DIR, `verify-${ctx.id}-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.xlsx`);
     try {
-      const exportOptions = { exportUrl: ctx.cfg.exportUrl, mergeCells: !!entry.mergeCells };
-      const cachedExport = !force && getCachedExportPath(exportCacheDir, entry.spreadsheetId, row.cloudModifiedTime, exportOptions);
+      const cachedExport = !force && getCachedExportPath(exportCacheDir, entry.spreadsheetId, row.cloudModifiedTime);
       if (cachedExport && fs.existsSync(cachedExport)) {
         fs.copyFileSync(cachedExport, tmp);
       } else {
-        await exportCloud(ctx.cfg, entry, tmp);
-        saveExportToCache(exportCacheDir, entry.spreadsheetId, row.cloudModifiedTime, exportOptions, tmp);
+        await downloadViaDrive(entry.spreadsheetId, tmp, oauth2Client);
+        saveExportToCache(exportCacheDir, entry.spreadsheetId, row.cloudModifiedTime, tmp);
       }
-      const cKey = cloudMemoryKey(entry.spreadsheetId, row.cloudModifiedTime, exportOptions);
+      const cKey = cloudMemoryKey(entry.spreadsheetId, row.cloudModifiedTime);
       let cloud = getMemoryWorkbook(cKey);
       if (!cloud) {
         cloud = readWorkbook(tmp);

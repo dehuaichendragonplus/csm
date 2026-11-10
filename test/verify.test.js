@@ -75,7 +75,7 @@ test('verify-cache: clear-state 与 refresh 均清空 verify-cache，防止负�
   }
 });
 
-test('verify: never_synced 表在内容一致时自动标记为 synced', async () => {
+test('verify: 忽略旧导出服务配置，使用 Drive 导出核对并自动标记为 synced', async () => {
   const { makeXlsx } = require('./helpers/make-xlsx');
   const { saveExportToCache } = require('../lib/cloud-export-cache');
   const dataDir = tmpDir('csm-data-verify-ns-');
@@ -89,7 +89,11 @@ test('verify: never_synced 表在内容一致时自动标记为 synced', async (
   ]));
   fs.writeFileSync(
     path.join(projDir, 'syncmanager.config.json'),
-    JSON.stringify({ title: 'VerifyNeverSynced', filelist: 'filelist.json' })
+    JSON.stringify({
+      title: 'VerifyNeverSynced',
+      filelist: 'filelist.json',
+      export: { url: 'http://127.0.0.1:1/legacy-export', password: 'unused' }
+    })
   );
 
   fs.writeFileSync(path.join(dataDir, 'projects.json'), JSON.stringify([
@@ -107,9 +111,9 @@ test('verify: never_synced 表在内容一致时自动标记为 synced', async (
   }));
 
   const exportCacheDir = path.join(dataDir, 'cache', 'cloud-exports');
-  const tmpCloud = path.join(tmpDir(), 'cloud.xlsx');
+  const tmpCloud = path.join(dataDir, 'cloud.xlsx');
   fs.writeFileSync(tmpCloud, content);
-  saveExportToCache(exportCacheDir, 'sheet-hero-same', modTime, {}, tmpCloud);
+  saveExportToCache(exportCacheDir, 'sheet-hero-same', modTime, tmpCloud);
 
   fs.mkdirSync(path.join(dataDir, '.tokens'), { recursive: true });
   fs.writeFileSync(path.join(dataDir, '.tokens/token.json'), JSON.stringify({ access_token: 'fake' }));
@@ -133,6 +137,7 @@ test('verify: never_synced 表在内容一致时自动标记为 synced', async (
       body: JSON.stringify({ paths: ['Datas/Hero.xlsx'] })
     });
     const verifyData = await resVerify.json();
+    assert.strictEqual(verifyData.results[0].error, undefined);
     assert.strictEqual(verifyData.results[0].identical, true);
     assert.strictEqual(verifyData.results[0].previousStatus, 'never_synced');
 

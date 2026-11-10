@@ -186,11 +186,13 @@
     syncAllIcon: document.getElementById('sync-all-icon'),
     refreshIcon: document.getElementById('refresh-icon'),
     historyIcon: document.getElementById('history-icon'),
+    lubanIcon: document.getElementById('luban-icon'),
     settingsIcon: document.getElementById('settings-icon'),
     searchIcon: document.getElementById('search-icon'),
     projectDirIcon: document.getElementById('project-dir-icon'),
     projectDirBadge: document.getElementById('project-dir-badge'),
     customActions: document.getElementById('custom-actions'),
+    btnLuban: document.getElementById('btn-luban'),
     btnClearState: document.getElementById('btn-clear-state'),
     btnClearLog: document.getElementById('btn-clear-log'),
     btnCopyLog: document.getElementById('btn-copy-log'),
@@ -255,6 +257,7 @@
     if (els.appLogo) els.appLogo.innerHTML = window.CSMIcons.logo;
     if (els.refreshIcon) els.refreshIcon.innerHTML = window.CSMIcons.refresh;
     if (els.historyIcon) els.historyIcon.innerHTML = window.CSMIcons.history;
+    if (els.lubanIcon) els.lubanIcon.innerHTML = window.CSMIcons.terminal;
     if (els.settingsIcon) els.settingsIcon.innerHTML = window.CSMIcons.settings;
     if (els.searchIcon) els.searchIcon.innerHTML = window.CSMIcons.search;
     if (els.projectDirIcon) els.projectDirIcon.innerHTML = window.CSMIcons.folder;
@@ -438,7 +441,8 @@
   function setBusy(on) {
     busyCount = Math.max(0, busyCount + (on ? 1 : -1));
     const busy = busyCount > 0;
-    [els.btnRefresh, els.retryRefresh, els.btnClearState, ...els.customActions.querySelectorAll('button')].forEach(b => { b.disabled = busy; });
+    [els.btnRefresh, els.retryRefresh, els.btnClearState, ...els.customActions.querySelectorAll('button:not(#btn-luban)')].forEach(b => { b.disabled = busy; });
+    updateLubanButton();
     els.btnSyncAll.disabled = busy || !(lastRows || []).some(row => row.direction === 'download');
     if (els.consoleIndicator) els.consoleIndicator.classList.toggle('busy', busy);
     renderSelection();
@@ -1696,18 +1700,39 @@
     if ((parseInt(els.prefAutoRefresh.value, 10) || 0) > 0 && Date.now() - lastRefreshAt > FOCUS_REFRESH_MS) silentRefresh();
   });
 
+  function lubanAction() {
+    return appConfig.actions.find(action => action.id === 'gen-client');
+  }
+
+  function updateLubanButton() {
+    const action = lubanAction();
+    els.btnLuban.disabled = busyCount > 0 || !action;
+    els.btnLuban.title = action ? `执行 ${action.label}` : '缺少 Tools 目录下的 Luban 客户端生成脚本';
+  }
+
+  els.btnLuban.addEventListener('click', () => {
+    const action = lubanAction();
+    if (action && !busyCount) runAction(action);
+  });
+
   async function loadConfig() {
+    const id = currentId;
     appConfig = { allowUpload: true, actions: [] };
+    els.customActions.replaceChildren(els.btnLuban);
+    updateLubanButton();
     try {
-      const resp = await fetch(api('/config'));
+      const resp = await fetch(api('/config', id));
       const data = await resp.json();
+      if (id !== currentId) return;
       if (resp.ok) appConfig = data;
       else appendLog(`! 项目配置错误: ${data.error}\n`);
     } catch (_) { /* 用默认值 */ }
-    els.customActions.innerHTML = '';
-    (appConfig.actions || []).filter(a => !a.hidden && a.id !== 'gen-localization').forEach(action => {
+    if (id !== currentId) return;
+    updateLubanButton();
+    (appConfig.actions || []).filter(a => !a.hidden && a.id !== 'gen-localization' && a.id !== 'gen-client').forEach(action => {
       const b = document.createElement('button');
       b.type = 'button';
+      b.disabled = busyCount > 0;
       b.innerHTML = `${window.CSMIcons ? window.CSMIcons.terminal : ''} <span>${action.label}</span>`;
       b.title = action.description || (typeof action.command === 'string' ? `执行自定义动作：${action.label}\n脚本命令：${action.command}` : `执行自定义动作：${action.label}`);
       b.addEventListener('click', () => runAction(action));
@@ -1875,7 +1900,9 @@
       renderBatch();
       lastRows = null;
       renderTabs();
-      els.customActions.innerHTML = '';
+      appConfig = { allowUpload: true, actions: [] };
+      els.customActions.replaceChildren(els.btnLuban);
+      updateLubanButton();
       els.groups.replaceChildren();
       els.summary.textContent = '';
       return;
