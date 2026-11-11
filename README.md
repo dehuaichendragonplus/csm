@@ -39,7 +39,7 @@ npm run dist       # 一次打 macOS + Windows
 ```
 
 - 版本号取 `package.json` 的 `version`，发新版前先改这里。
-- 构建前把 `credentials.json` 放在工具目录，就会打进安装包（`Contents/Resources/credentials.json`）。不要把安装包发到团队以外。
+- 安装包**不内置** `credentials.json`（安装包发布在公开的 GitHub Release 上）。首次启动时 App 会让使用者选择一次 credentials.json，保存到本机数据目录，之后不再询问；凭证文件从团队 wiki 或维护者处获取。
 - 目前**不签名**（`build.mac.identity: null`、`build.win.verifyUpdateCodeSignature: false`）。有公司 Apple Developer ID 后，删掉这一项并配置签名和公证，用户就不用再「右键打开」。
 
 ### 应用内更新（维护者）
