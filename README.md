@@ -33,7 +33,7 @@ App 与命令行版的区别：
 ```bash
 npm install
 npm run app        # 开发模式直接运行（不打包）
-npm run dist:mac   # dist/ 下输出 arm64 与 x64 两个 dmg：CSM-<版本>-mac-<arch>.dmg
+npm run dist:mac   # dist/ 下输出 Apple 芯片（arm64）dmg：CSM-<版本>-mac-arm64.dmg（不出 Intel 包）
 npm run dist:win   # dist/ 下输出 Windows x64 NSIS 安装包 CSM-Setup-<版本>-x64.exe 和 latest.yml
 npm run dist       # 一次打 macOS + Windows
 ```
@@ -47,14 +47,14 @@ npm run dist       # 一次打 macOS + Windows
 更新源默认是 GitHub Releases（`dehuaichendragonplus/csm`，见 `package.json` 的 `build.publish`）。App 启动 3 秒后、之后每 6 小时检查一次；有新版本时顶栏「文档收藏」左侧出现**更新按钮**，顶栏「全局偏好设置」入口带红点。「全局偏好设置 → 关于 CSM」里可以手动「检查更新」、查看更新说明和下载进度。
 
 - **Windows**：点更新按钮在应用内下载安装包（electron-updater），完成后「重启并覆盖安装」。
-- **macOS**：安装包未签名，App 不能替换自己；点更新按钮把对应架构（arm64 / x64）的 dmg 下载到「下载」目录，完成后「打开安装包」拖入「应用程序」覆盖。
+- **macOS**：安装包未签名，App 不能替换自己；点更新按钮把 Apple 芯片（arm64）的 dmg 下载到「下载」目录，完成后「打开安装包」拖入「应用程序」覆盖。
 
 每次发版：
 
 1. 改 `package.json` 的 `version`，`npm run dist`。
 2. 在 GitHub 新建 Release，tag 用 `v<版本号>`（如 `v1.2.0`），正文写更新说明（会显示在 App 的更新面板里）。
 3. 上传 `dist/` 下的这些文件，**文件名保持原样**（不能有空格，否则和 `latest.yml` 对不上）：
-   - `CSM-<版本>-mac-arm64.dmg`、`CSM-<版本>-mac-x64.dmg`
+   - `CSM-<版本>-mac-arm64.dmg`
    - `CSM-Setup-<版本>-x64.exe`、`CSM-Setup-<版本>-x64.exe.blockmap`、`latest.yml`（缺 `latest.yml` 时 Windows 端会提示「安装包未就绪」）
 4. 发布（不要留 Draft / Pre-release，`releases/latest` 只返回正式版）。
 
