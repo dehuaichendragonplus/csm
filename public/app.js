@@ -643,7 +643,7 @@
       const thead = document.createElement('div');
       thead.className = 'table-header-row';
       thead.innerHTML = `
-        <span class="th-col th-table" title="配置表名称与业务备注（悬停表名可查看本地路径）">配置表与业务备注</span>
+        <span class="th-col th-table" title="配置表文件名与业务备注（悬停文件名可查看本地路径）">配置表与业务备注</span>
         <span class="th-col th-cloud" title="关联的 Google Sheets 云端表格及最后修改协作人">关联云端表 (Google Sheets)</span>
         <span class="th-col th-status" title="双端同步一致性状态与本地记录">同步状态与记录</span>
         <span class="th-col th-actions" title="操作">操作</span>
@@ -736,10 +736,14 @@
       toggleFavorite(row.path);
     });
 
+    const fileName = row.path ? String(row.path).split(/[\\/]/).pop() : (row.name || '');
     const nameDiv = document.createElement('span');
     nameDiv.className = 'table-name';
-    if (row.path) nameDiv.title = row.path;
-    setHighlighted(nameDiv, row.name);
+    const titleParts = [];
+    if (row.name && row.name !== fileName) titleParts.push(row.name);
+    if (row.path) titleParts.push(row.path);
+    if (titleParts.length) nameDiv.title = titleParts.join('\n');
+    setHighlighted(nameDiv, fileName);
 
     if (canSelect) {
       const select = document.createElement('input');
@@ -747,7 +751,7 @@
       select.className = 'row-select';
       select.checked = selectedDownloads.has(row.path);
       select.disabled = busyCount > 0;
-      select.setAttribute('aria-label', `选择下载 ${row.name || row.path}`);
+      select.setAttribute('aria-label', `选择下载 ${fileName || row.path}`);
       select.addEventListener('click', e => e.stopPropagation());
       select.addEventListener('change', () => {
         if (select.checked) selectedDownloads.add(row.path);
@@ -761,12 +765,13 @@
     const tableSub = document.createElement('div');
     tableSub.className = 'cell-sub-line table-sub-line';
 
-    // 业务备注（description）；本地路径通过悬停表名 tips 查看
-    if (row.description) {
+    // 业务备注（description）；无备注时若配置表名与文件名不同则显示配置表名
+    const subText = row.description || (row.name && row.name !== fileName ? row.name : '');
+    if (subText) {
       const noteSpan = document.createElement('span');
       noteSpan.className = 'table-biz-note';
-      noteSpan.title = row.description;
-      setHighlighted(noteSpan, row.description);
+      noteSpan.title = subText;
+      setHighlighted(noteSpan, subText);
       tableSub.appendChild(noteSpan);
     } else {
       tableSub.innerHTML = '<span class="cell-empty-text">—</span>';

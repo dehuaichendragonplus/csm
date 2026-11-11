@@ -511,6 +511,12 @@
     const cols = visibleCols(sheet, rows);
     const widths = colWidths(sheet, rows, cols);
     st.rows = rows;
+    let scrollTimer = 0;
+    const markScrolling = () => {
+      panes.forEach(q => q.classList.add('is-scrolling'));
+      clearTimeout(scrollTimer);
+      scrollTimer = setTimeout(() => panes.forEach(q => q.classList.remove('is-scrolling')), 900);
+    };
     if (prefs.mode === 'split') {
       const wrap = el('div', 'diff-split');
       for (const side of ['old', 'new']) {
@@ -526,6 +532,7 @@
       d.view.appendChild(wrap);
       let lock = false;
       panes.forEach(p => p.addEventListener('scroll', () => {
+        markScrolling();
         if (lock) return;
         lock = true;
         for (const q of panes) if (q !== p) { q.scrollTop = p.scrollTop; q.scrollLeft = p.scrollLeft; }
@@ -537,7 +544,10 @@
       scroller.innerHTML = unifiedHtml(sheet, rows, cols, widths);
       d.view.appendChild(scroller);
       panes.push(scroller);
-      scroller.addEventListener('scroll', drawViewport);
+      scroller.addEventListener('scroll', () => {
+        markScrolling();
+        drawViewport();
+      });
     }
     for (const p of panes) p.addEventListener('click', onViewClick);
     const notes = [];
