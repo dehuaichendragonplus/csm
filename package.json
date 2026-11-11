@@ -9,6 +9,8 @@
     "start": "node server.js",
     "app": "electron .",
     "dist:mac": "electron-builder --mac",
+    "dist:win": "electron-builder --win",
+    "dist": "electron-builder -m -w",
     "test": "node --test 'test/**/*.test.js'",
     "release:manifest": "node scripts/make-update-manifest.js"
   },
@@ -16,6 +18,7 @@
     "node": ">=18.0.0"
   },
   "dependencies": {
+    "electron-updater": "^6.8.11",
     "express": "^4.19.2",
     "googleapis": "^144.0.0",
     "open": "^8.4.2"
@@ -54,13 +57,19 @@
       }
     ],
     "asar": true,
+    "publish": {
+      "provider": "github",
+      "owner": "dehuaichendragonplus",
+      "repo": "csm"
+    },
     "mac": {
       "category": "public.app-category.developer-tools",
       "target": [
         {
           "target": "dmg",
           "arch": [
-            "arm64"
+            "arm64",
+            "x64"
           ]
         }
       ],
@@ -70,6 +79,23 @@
     "electronLanguages": [
       "zh_CN",
       "en"
-    ]
+    ],
+    "win": {
+      "verifyUpdateCodeSignature": false,
+      "icon": "build/icon.png",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "CSM-Setup-${version}-${arch}.${ext}"
+    }
   }
 }

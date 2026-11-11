@@ -2385,8 +2385,9 @@
   function openGlobalSettings() {
     updateAuthStatusUI();
     const titleEl = document.getElementById('app-title');
-    if (els.globalSettingsVersion) {
-      els.globalSettingsVersion.textContent = (titleEl && titleEl.title) ? titleEl.title : 'CSM v1.1.3';
+    // 版本号由 updater-ui.js 写入 #app-title 的 title（形如 "CSM v1.2.0"），这里只做同步
+    if (els.globalSettingsVersion && titleEl && /^CSM v/.test(titleEl.title || '')) {
+      els.globalSettingsVersion.textContent = titleEl.title;
     }
     if (els.globalSettingsModal) els.globalSettingsModal.classList.remove('hidden');
   }

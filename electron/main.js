@@ -4,9 +4,10 @@
 // 数据目录、OAuth 凭证、Google 登录走系统浏览器、PATH 补全、原生选目录。
 const path = require('node:path');
 const fs = require('node:fs');
-const { app, BrowserWindow, dialog, shell, ipcMain, Notification: ElectronNotification } = require('electron');
+const { app, BrowserWindow, dialog, shell, ipcMain, net, Notification: ElectronNotification } = require('electron');
 const { fixProcessEnv } = require('../lib/shell-env');
 const oauth = require('../lib/oauth');
+const { createAppUpdater } = require('./updater');
 
 if (app) app.setName('CSM');
 
@@ -19,6 +20,7 @@ const USER_CREDENTIALS = path.join(DATA_DIR, 'credentials.json');
 
 let mainWindow = null;
 let serverInfo = null;
+let appUpdater = null;
 
 // ---------- 日志：打包后没有终端，写一份到数据目录便于排查 ----------
 function setupFileLog() {
@@ -141,6 +143,49 @@ ipcMain.handle('show-notification', (_event, payload) => {
   return showBannerNotification(payload || {});
 });
 
+// ---------- 应用内更新：Windows 自动下载安装，macOS 下载 .dmg ----------
+const UPDATE_FIRST_CHECK_DELAY_MS = 3000;
+const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
+
+// 关闭本机 Express 服务（含 SSE 长连接），保证退出/覆盖安装时进程能干净结束
+function closeServer() {
+  const srv = serverInfo && serverInfo.server;
+  if (!srv) return;
+  try {
+    if (typeof srv.closeAllConnections === 'function') srv.closeAllConnections();
+    srv.close();
+  } catch (err) {
+    console.warn('[app] close server failed:', err && err.message);
+  }
+  serverInfo = { ...serverInfo, server: null };
+}
+
+function setupUpdater() {
+  appUpdater = createAppUpdater({
+    app,
+    net,
+    shell,
+    log: (...args) => console.log(...args),
+    onBeforeInstall: closeServer
+  });
+  appUpdater.onStateChange(state => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('updater:state', state);
+  });
+  const handlers = {
+    'updater:get-state': () => appUpdater.getState(),
+    'updater:check': () => appUpdater.checkForUpdates(),
+    'updater:download': () => appUpdater.downloadUpdate(),
+    'updater:install': () => appUpdater.installUpdate(),
+    'updater:open-downloaded': () => appUpdater.openDownloaded(),
+    'updater:reveal-downloaded': () => appUpdater.revealDownloaded(),
+    'updater:open-release': () => appUpdater.openRelease()
+  };
+  for (const [channel, fn] of Object.entries(handlers)) ipcMain.handle(channel, () => fn());
+
+  setTimeout(() => appUpdater.checkForUpdates(), UPDATE_FIRST_CHECK_DELAY_MS);
+  setInterval(() => appUpdater.checkForUpdates(), UPDATE_CHECK_INTERVAL_MS);
+}
+
 // ---------- 窗口 ----------
 function isAppUrl(url) {
   try { return new URL(url).origin === new URL(serverInfo.url).origin; } catch (_) { return false; }
@@ -231,6 +276,7 @@ async function start() {
     onAuthorized,
     authSuccessHtml: AUTH_SUCCESS_HTML
   });
+  setupUpdater();
   createWindow();
 }
 
@@ -257,4 +303,5 @@ if (!app.requestSingleInstanceLock()) {
   app.on('activate', () => {
     if (!mainWindow && serverInfo) createWindow();
   });
+  app.on('before-quit', closeServer);
 }

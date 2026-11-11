@@ -18,6 +18,12 @@
         <span class="chrome-plus-icon">+</span>
       </button>
       <div class="tab-strip-spacer"></div>
+      <!-- 新版本更新入口（public/updater-ui.js 驱动，有新版本时显示） -->
+      <button id="btn-app-update" type="button" class="tab-strip-update-btn hidden" title="发现新版本">
+        <span class="update-red-dot" aria-hidden="true"></span>
+        <span class="tab-strip-update-icon">⬇</span>
+        <span id="btn-app-update-label">更新</span>
+      </button>
       <!-- 全局文档收藏入口 -->
       <div class="bookmarks-widget global-bookmarks-widget" id="bookmarks-widget">
         <button id="btn-bookmarks-dropdown" type="button" class="tab-strip-bookmarks-btn" title="在线文档收藏：查看、跳转与管理所有项目和全局文档">
@@ -42,6 +48,7 @@
       <button class="tab-strip-profile" id="tab-strip-profile" type="button" title="全局偏好设置 (⌘,)：Google 账号状态、自动刷新周期、通知与快捷键">
         <span class="profile-brand" id="app-title" title="CSM">CSM Sync</span>
         <span class="profile-avatar" id="header-user-avatar">👤</span>
+        <span id="profile-update-dot" class="profile-update-dot hidden" aria-label="有新版本"></span>
       </button>
     </div>
 
@@ -122,13 +129,6 @@
       </div>
     </section>
   </header>
-
-  <!-- 新版本提示（配置了更新源且有新版本时显示） -->
-  <section id="update-banner" class="update-banner hidden">
-    <span id="update-text"></span>
-    <a id="update-link" href="#" target="_blank" rel="noopener noreferrer" class="update-link">下载新版本</a>
-    <button id="update-dismiss" type="button" title="本版本不再提示">✕</button>
-  </section>
 
   <!-- 主滚动区域 -->
   <div id="app-main-content">
@@ -838,12 +838,19 @@
           </div>
         </section>
 
-        <section class="set-group">
+        <section class="set-group" id="settings-about-group">
           <h3>关于 CSM</h3>
           <div class="set-row">
             <div class="set-label">软件版本<p id="global-version-detail">Google Sheets 配置表与本地 xlsx 双向同步工具</p></div>
-            <span id="global-settings-version" class="version-tag">CSM v1.1.3</span>
+            <div class="about-version-actions">
+              <span id="global-settings-version" class="version-tag">CSM v1.1.3</span>
+              <button id="btn-check-update" type="button" class="btn-text-action btn-check-update" title="从 GitHub Releases 检查新版本">
+                <span id="btn-check-update-label">检查更新</span>
+                <span id="check-update-dot" class="update-red-dot hidden" aria-hidden="true"></span>
+              </button>
+            </div>
           </div>
+          <div id="global-update-panel" class="update-panel hidden" aria-live="polite"></div>
         </section>
       </div>
       <footer class="modal-foot">
@@ -1002,6 +1009,7 @@
   <script src="sync-batch.js"></script>
   <script src="app.js"></script>
   <script src="panels.js"></script>
+  <script src="updater-ui.js"></script>
   <script src="filelist-manager.js"></script>
   <script src="doc-manager.js"></script>
 </body>

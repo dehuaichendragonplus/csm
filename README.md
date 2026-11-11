@@ -33,26 +33,34 @@ App 与命令行版的区别：
 ```bash
 npm install
 npm run app        # 开发模式直接运行（不打包）
-npm run dist:mac   # 输出 dist/ 下的 arm64 dmg（仅 Apple 芯片，不再出 Intel 包）
+npm run dist:mac   # dist/ 下输出 arm64 与 x64 两个 dmg：CSM-<版本>-mac-<arch>.dmg
+npm run dist:win   # dist/ 下输出 Windows x64 NSIS 安装包 CSM-Setup-<版本>-x64.exe 和 latest.yml
+npm run dist       # 一次打 macOS + Windows
 ```
 
 - 版本号取 `package.json` 的 `version`，发新版前先改这里。
 - 构建前把 `credentials.json` 放在工具目录，就会打进安装包（`Contents/Resources/credentials.json`）。不要把安装包发到团队以外。
-- 目前**不签名**（`build.mac.identity: null`）。有公司 Apple Developer ID 后，删掉这一项并配置签名和公证，用户就不用再「右键打开」。
+- 目前**不签名**（`build.mac.identity: null`、`build.win.verifyUpdateCodeSignature: false`）。有公司 Apple Developer ID 后，删掉这一项并配置签名和公证，用户就不用再「右键打开」。
 
-### 版本更新提示（维护者）
+### 应用内更新（维护者）
 
-App 启动后（之后每 6 小时）检查一次更新清单，有新版本时在页面顶部显示提示和下载链接。因为安装包没有签名，macOS 不允许 App 自己替换自己，所以只提示、由用户下载 dmg 手动安装。
+更新源默认是 GitHub Releases（`dehuaichendragonplus/csm`，见 `package.json` 的 `build.publish`）。App 启动 3 秒后、之后每 6 小时检查一次；有新版本时顶栏「文档收藏」左侧出现**更新按钮**，顶栏「全局偏好设置」入口带红点。「全局偏好设置 → 关于 CSM」里可以手动「检查更新」、查看更新说明和下载进度。
 
-1. 选一个更新源，填到 `package.json` 的 `csm.updateUrl`（构建时打进安装包；也可用环境变量 `CSM_UPDATE_URL` 覆盖）：
-   - 任意 http(s) 地址，指向 `latest.json`；或
-   - **Google Drive 文件链接 / `drive:<文件ID>`**：用使用者自己的 Google 授权读取，放在团队共享盘里即可，不用另搭服务器（需要使用者对该文件有读取权限）
-2. 每次发版：改 `version` → `npm run dist:mac` → 把 arm64 dmg 传到可下载的位置 → 生成清单并上传覆盖旧的 `latest.json`：
-   ```bash
-   npm run release:manifest -- --notes "本次更新内容" --arm64 <arm64 dmg 链接>
-   ```
-   输出 `dist/latest.json`。
-3. `csm.updateUrl` 留空时不检查更新。用户点提示条右侧 ✕ 后，同一版本不再提示。
+- **Windows**：点更新按钮在应用内下载安装包（electron-updater），完成后「重启并覆盖安装」。
+- **macOS**：安装包未签名，App 不能替换自己；点更新按钮把对应架构（arm64 / x64）的 dmg 下载到「下载」目录，完成后「打开安装包」拖入「应用程序」覆盖。
+
+每次发版：
+
+1. 改 `package.json` 的 `version`，`npm run dist`。
+2. 在 GitHub 新建 Release，tag 用 `v<版本号>`（如 `v1.2.0`），正文写更新说明（会显示在 App 的更新面板里）。
+3. 上传 `dist/` 下的这些文件，**文件名保持原样**（不能有空格，否则和 `latest.yml` 对不上）：
+   - `CSM-<版本>-mac-arm64.dmg`、`CSM-<版本>-mac-x64.dmg`
+   - `CSM-Setup-<版本>-x64.exe`、`CSM-Setup-<版本>-x64.exe.blockmap`、`latest.yml`（缺 `latest.yml` 时 Windows 端会提示「安装包未就绪」）
+4. 发布（不要留 Draft / Pre-release，`releases/latest` 只返回正式版）。
+
+检测走 GitHub API，未认证每小时 60 次；被限流时自动降级读 `releases.atom`。本机开发时如设置了 `GITHUB_TOKEN` / `GH_TOKEN` 或登录了 `gh`，会带上 token。
+
+旧的自定义更新清单（`latest.json`）仍兼容：设置了 `csm.updateUrl` 或环境变量 `CSM_UPDATE_URL` 时，浏览器模式的 `/api/update-check` 改读该清单（支持 http(s) 地址或 Google Drive 文件链接 / `drive:<文件ID>`，清单用 `npm run release:manifest` 生成）。
 
 ## 环境要求（命令行 / 浏览器方式）
 
@@ -280,7 +288,8 @@ CSM 通过 Google Drive API 导出 xlsx，单表导出上限为 10 MB。旧配�
 - `lib/xlsx-diff.js` — 工作簿差异：行对齐（LCS）+ 单元格比较
 - `lib/backups.js` — 本地 xlsx 备份 / 恢复 / 清理
 - `lib/history.js` — 操作历史（JSON Lines）
-- `lib/update-check.js` — 版本更新检查；`scripts/make-update-manifest.js` 生成更新清单
+- `lib/github-update.js` — GitHub Releases 新版本检测与安装包匹配；`electron/updater.js` — 桌面端检测/下载/安装状态机；`public/updater-ui.js` — 更新按钮与设置页更新面板
+- `lib/update-check.js` — 旧版自定义更新清单检查；`scripts/make-update-manifest.js` 生成更新清单
 - `public/panels.js` — 差异预览、本地备份、操作历史弹窗与新版本提示
 - `electron/main.js` — 桌面 App 外壳（启动 server.js、窗口、系统浏览器授权、原生选目录）
 - `build/icon.png` — App 图标（electron-builder 自动转换为 icns / ico）

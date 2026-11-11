@@ -3773,17 +3773,6 @@ kbd {
   justify-content: space-between;
 }
 
-.update-banner {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 20px;
-  background: #eff6ff;
-  border-bottom: 1px solid #bfdbfe;
-  color: #1e40af;
-  font-size: 13px;
-}
-
 .hidden {
   display: none !important;
 }
@@ -5310,4 +5299,281 @@ button.row-change-summary {
 .doc-table-proj-select:hover {
   border-color: var(--primary);
   background-color: var(--bg-hover);
+}
+
+/* ==========================================================================
+   应用内更新：顶栏更新按钮、红点、全局偏好设置「关于 CSM」更新面板（updater-ui.js）
+   ========================================================================== */
+.tab-strip-update-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: auto;
+  padding: 3px 10px 3px 9px;
+  margin: 0 6px 3px 0;
+  border-radius: 16px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #b91c1c;
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.28);
+  -webkit-app-region: no-drag;
+}
+
+.tab-strip-update-btn:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: rgba(239, 68, 68, 0.45);
+}
+
+.tab-strip-update-btn .update-red-dot {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+}
+
+.tab-strip-update-icon {
+  font-size: 12px;
+  line-height: 1;
+}
+
+.tab-strip-update-btn.is-downloading {
+  color: var(--primary-text);
+  background: var(--primary-subtle);
+  border-color: var(--primary-border);
+  font-variant-numeric: tabular-nums;
+}
+
+.tab-strip-update-btn.is-downloading .update-red-dot {
+  display: none;
+}
+
+.tab-strip-update-btn.is-ready {
+  color: #ffffff;
+  background: var(--synced);
+  border-color: var(--synced);
+  box-shadow: 0 2px 6px rgba(5, 150, 105, 0.25);
+}
+
+.tab-strip-update-btn.is-ready:hover:not(:disabled) {
+  background: #047857;
+  border-color: #047857;
+}
+
+.tab-strip-update-btn.is-ready .update-red-dot {
+  background: #34d399;
+  box-shadow: 0 0 0 2px #ffffff;
+  animation: none;
+}
+
+.update-red-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #ef4444;
+  box-shadow: 0 0 0 2px #ffffff;
+  animation: updateDotPulse 2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+@keyframes updateDotPulse {
+  0%, 100% { box-shadow: 0 0 0 2px #ffffff, 0 0 0 2px rgba(239, 68, 68, 0.45); }
+  50% { box-shadow: 0 0 0 2px #ffffff, 0 0 0 5px rgba(239, 68, 68, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .update-red-dot { animation: none; }
+}
+
+.tab-strip-profile {
+  position: relative;
+}
+
+.profile-update-dot {
+  position: absolute;
+  top: 0;
+  right: 4px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #ef4444;
+  box-shadow: 0 0 0 2px var(--bg-app);
+}
+
+.about-version-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-check-update {
+  position: relative;
+  height: auto;
+}
+
+.btn-check-update .update-red-dot {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+}
+
+.btn-check-update:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.update-panel {
+  margin-top: 4px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--primary-border);
+  background: var(--primary-subtle);
+  font-size: 12.5px;
+  color: var(--text-primary);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.update-panel[data-status="up-to-date"] {
+  border-color: var(--synced-border);
+  background: var(--synced-bg);
+}
+
+.update-panel[data-status="downloaded"] {
+  border-color: var(--synced-border);
+  background: var(--synced-bg);
+}
+
+.update-panel[data-status="error"] {
+  border-color: var(--error-border);
+  background: var(--error-bg);
+}
+
+.update-panel-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+
+.update-panel-head strong {
+  font-size: 13px;
+}
+
+.update-panel-date {
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+}
+
+.update-panel-link {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--primary);
+  text-decoration: none;
+}
+
+.update-panel-link:hover {
+  text-decoration: underline;
+}
+
+.update-notes {
+  max-height: 160px;
+  overflow-y: auto;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.6;
+  user-select: text;
+}
+
+.update-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.update-action-primary {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.update-action-primary:hover:not(:disabled) {
+  background: var(--primary-hover);
+  border-color: var(--primary-hover);
+}
+
+.update-panel[data-status="downloaded"] .update-action-primary {
+  background: var(--synced);
+  border-color: var(--synced);
+}
+
+.update-panel[data-status="downloaded"] .update-action-primary:hover:not(:disabled) {
+  background: #047857;
+  border-color: #047857;
+}
+
+.update-hint {
+  font-size: 12px;
+  color: var(--text-secondary);
+  word-break: break-all;
+  user-select: text;
+}
+
+.update-ok {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  color: var(--synced-text);
+  font-weight: 500;
+}
+
+.update-progress {
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: rgba(37, 99, 235, 0.15);
+  overflow: hidden;
+}
+
+.update-progress-bar {
+  height: 100%;
+  width: 0;
+  border-radius: inherit;
+  background: var(--primary);
+  transition: width 0.2s linear;
+}
+
+.update-progress-text {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.update-error {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--error-text);
+}
+
+.update-error-msg {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  word-break: break-all;
+  user-select: text;
+}
+
+.update-error-hint {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.6;
 }

@@ -25,6 +25,7 @@ const {
   pruneOldExports
 } = require('./lib/cloud-export-cache');
 const updateCheck = require('./lib/update-check');
+const githubUpdate = require('./lib/github-update');
 const PKG = require('./package.json');
 const localTables = require('./lib/local-tables');
 const reveal = require('./lib/reveal');
@@ -348,8 +349,13 @@ async function main(opts = {}) {
   const UPDATE_TTL_MS = 60 * 60 * 1000;
   app.get('/api/update-check', async (req, res) => {
     const source = updateSource();
-    if (!source) return res.json({ configured: false, current: PKG.version, hasUpdate: false });
     if (updateCache && req.query.force !== '1' && Date.now() - updateCache.at < UPDATE_TTL_MS) return res.json(updateCache.result);
+    // 未显式配置自定义更新源：默认检测 GitHub Releases（dehuaichendragonplus/csm）
+    if (!source) {
+      const result = await githubUpdate.checkGitHubUpdate({ current: PKG.version, log: msg => console.log(msg) });
+      if (!result.error) updateCache = { at: Date.now(), result };
+      return res.json(result);
+    }
     try {
       const result = await updateCheck.checkForUpdate({
         source,

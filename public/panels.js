@@ -943,31 +943,7 @@
     else if (!h.modal.classList.contains('hidden')) h.modal.classList.add('hidden');
   });
 
-  // ======================= 新版本提示 =======================
-  const u = { banner: $('update-banner'), text: $('update-text'), link: $('update-link'), dismiss: $('update-dismiss') };
-  const DISMISS_KEY = 'csm.updateDismissed';
-  async function checkUpdate() {
-    try {
-      const r = await (await fetch('/api/update-check')).json();
-      const titleEl = $('app-title');
-      if (r.current && titleEl) titleEl.title = `CSM v${r.current}`;
-      if (!r.hasUpdate) return;
-      let dismissed = null;
-      try { dismissed = localStorage.getItem(DISMISS_KEY); } catch (_) {}
-      if (dismissed === r.latest) return;
-      u.text.textContent = `发现新版本 v${r.latest}（当前 v${r.current}）${r.notes ? `：${r.notes}` : ''}`;
-      const href = r.download || r.url;
-      u.link.classList.toggle('hidden', !href);
-      if (href) u.link.href = href;
-      u.banner.classList.remove('hidden');
-      u.dismiss.onclick = () => {
-        try { localStorage.setItem(DISMISS_KEY, r.latest); } catch (_) {}
-        u.banner.classList.add('hidden');
-      };
-    } catch (_) { /* 检查失败不打扰 */ }
-  }
-  checkUpdate();
-  setInterval(checkUpdate, 6 * 60 * 60 * 1000);
+  // 新版本检测与提示统一由 updater-ui.js 驱动（顶栏更新按钮 + 全局偏好设置「关于 CSM」）
 
   window.CSMPanels = { openDiff, openBackups, openHistory };
 })();
