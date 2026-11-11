@@ -39,7 +39,9 @@ npm run dist       # 一次打 macOS + Windows
 ```
 
 - 版本号取 `package.json` 的 `version`，发新版前先改这里。
-- 安装包**不内置** `credentials.json`（安装包发布在公开的 GitHub Release 上）。首次启动时 App 会让使用者选择一次 credentials.json，保存到本机数据目录，之后不再询问；凭证文件从团队 wiki 或维护者处获取。
+- 构建前把 `credentials.json` 放在工具目录，就会打进安装包，首次启动直接跳转浏览器做 Google 授权。凭证本身不进 git（见 `.gitignore`）。
+  - 安装包发布在**公开**的 GitHub Release 上，`client_secret` 会随包公开。这是 Google「桌面应用」类型的 OAuth 客户端，Google 官方说明这类 secret 本就无法保密；请保持 OAuth 同意屏幕为「内部」，只允许公司 Google 账号授权。
+  - 没有内置凭证时（例如开发者本地打包没放 credentials.json），首次启动会让使用者手动选择一次。
 - 目前**不签名**（`build.mac.identity: null`、`build.win.verifyUpdateCodeSignature: false`）。有公司 Apple Developer ID 后，删掉这一项并配置签名和公证，用户就不用再「右键打开」。
 
 ### 应用内更新（维护者）
