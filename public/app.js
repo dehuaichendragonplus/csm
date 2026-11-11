@@ -643,7 +643,7 @@
       const thead = document.createElement('div');
       thead.className = 'table-header-row';
       thead.innerHTML = `
-        <span class="th-col th-table" title="配置表名称与本地相对路径">配置表与本地路径</span>
+        <span class="th-col th-table" title="配置表名称与业务备注（悬停表名可查看本地路径）">配置表与业务备注</span>
         <span class="th-col th-cloud" title="关联的 Google Sheets 云端表格及最后修改协作人">关联云端表 (Google Sheets)</span>
         <span class="th-col th-status" title="双端同步一致性状态与本地记录">同步状态与记录</span>
         <span class="th-col th-actions" title="操作">操作</span>
@@ -718,7 +718,7 @@
       checkbox.dispatchEvent(new Event('change'));
     });
 
-    // 1. 配置表与本地路径 (Column 1)
+    // 1. 配置表与业务备注 (Column 1)
     const tableCol = document.createElement('div');
     tableCol.className = 'table-cell col-table';
 
@@ -738,6 +738,7 @@
 
     const nameDiv = document.createElement('span');
     nameDiv.className = 'table-name';
+    if (row.path) nameDiv.title = row.path;
     setHighlighted(nameDiv, row.name);
 
     if (canSelect) {
@@ -760,11 +761,17 @@
     const tableSub = document.createElement('div');
     tableSub.className = 'cell-sub-line table-sub-line';
 
-    const pathSpan = document.createElement('span');
-    pathSpan.className = 'table-path';
-    setHighlighted(pathSpan, row.path);
+    // 业务备注（description）；本地路径通过悬停表名 tips 查看
+    if (row.description) {
+      const noteSpan = document.createElement('span');
+      noteSpan.className = 'table-biz-note';
+      noteSpan.title = row.description;
+      setHighlighted(noteSpan, row.description);
+      tableSub.appendChild(noteSpan);
+    } else {
+      tableSub.innerHTML = '<span class="cell-empty-text">—</span>';
+    }
 
-    tableSub.appendChild(pathSpan);
     tableCol.append(tableMain, tableSub);
     if (row.changeSummary || VERIFY_STATUSES.has(row.status)) appendChangeSummary(tableCol, row);
 

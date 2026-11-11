@@ -1206,8 +1206,8 @@ button:disabled {
   text-overflow: ellipsis;
 }
 
-.table-path {
-  font-family: var(--font-mono);
+/* 业务备注（原本地路径位，路径移至表名悬停提示） */
+.table-biz-note {
   font-size: 11px;
   color: var(--text-tertiary);
   white-space: nowrap;
