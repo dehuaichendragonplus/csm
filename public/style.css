@@ -3812,7 +3812,12 @@ kbd {
 .diff-split { flex: 1; min-height: 0; display: flex; }
 .diff-pane { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .diff-pane.old { border-right: 1px solid var(--border-default); }
-.diff-pane-label { padding: 4px 12px; font-size: 11px; font-weight: 600; color: var(--text-secondary); background: var(--bg-muted); border-bottom: 1px solid var(--border-default); }
+.diff-pane-label { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 12px; font-size: 11px; font-weight: 600; color: var(--text-secondary); background: var(--bg-muted); border-bottom: 1px solid var(--border-default); }
+.diff-pane-title { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
+.diff-pane-jump { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 5px; border: 1px solid var(--border-default); background: var(--bg-surface); color: var(--text-secondary); font-family: inherit; font-size: 11px; font-weight: 500; text-decoration: none; cursor: pointer; line-height: 1.4; transition: background 0.15s, color 0.15s, border-color 0.15s; }
+.diff-pane-jump:hover { background: var(--primary-subtle); color: var(--primary); border-color: var(--primary-border); }
+.diff-pane-jump-icon { display: inline-flex; align-items: center; }
+.diff-pane-jump-icon svg { width: 12px; height: 12px; }
 .diff-pane.old .diff-pane-label b { color: #dc2626; }
 .diff-pane.new .diff-pane-label b { color: #16a34a; }
 .diff-note { padding: 6px 14px; font-size: 11px; color: var(--text-tertiary); border-top: 1px solid var(--border-default); background: var(--bg-subtle); }

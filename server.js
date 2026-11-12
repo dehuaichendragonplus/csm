@@ -1392,7 +1392,7 @@ async function main(opts = {}) {
           reviewed: true
         },
         local: localStat ? { exists: true, size: localStat.size, mtime: localStat.mtime.toISOString() } : { exists: false },
-        cloud: { modifiedTime: info.modifiedTime, modifiedBy: info.modifiedBy, name: info.name },
+        cloud: { spreadsheetId: entry.spreadsheetId, modifiedTime: info.modifiedTime, modifiedBy: info.modifiedBy, name: info.name },
         diff: diffWorkbooks(localWb, cloudWb, { keys: entry.diffKeys })
       });
     } catch (err) {

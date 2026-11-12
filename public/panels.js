@@ -488,6 +488,35 @@
     return `${h}</tbody></table>`;
   }
 
+  function paneJumpControl(actualSide, st) {
+    if (actualSide === 'local') {
+      const btn = el('button', 'diff-pane-jump');
+      btn.type = 'button';
+      const exists = st.data?.local?.exists !== false;
+      btn.title = exists ? '在访达中显示本地文件' : '本地还没有该文件，点击打开所在目录';
+      const icon = el('span', 'diff-pane-jump-icon');
+      icon.innerHTML = window.CSMIcons?.folder || '📁';
+      btn.append(icon, el('span', null, exists ? '在访达中显示' : '打开所在目录'));
+      btn.addEventListener('click', async () => {
+        const res = await CSM().revealLocal(st.path);
+        if (!res) setMsg(d.msg, '打开本地位置失败，请查看底部日志。', 'error');
+        else if (!res.exact) setMsg(d.msg, `本地还没有 ${st.path}，已打开所在目录`);
+      });
+      return btn;
+    }
+    const spreadsheetId = st.data?.cloud?.spreadsheetId || CSM().tableRow(st.path)?.spreadsheetId;
+    if (!spreadsheetId) return null;
+    const link = el('a', 'diff-pane-jump');
+    link.href = `https://docs.google.com/spreadsheets/d/${encodeURIComponent(spreadsheetId)}/edit`;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.title = '在新标签页打开云端 Google 表格';
+    const icon = el('span', 'diff-pane-jump-icon');
+    icon.innerHTML = window.CSMIcons?.external || '↗';
+    link.append(icon, el('span', null, '打开云端表'));
+    return link;
+  }
+
   let panes = [];
   function renderSheet() {
     const st = diffState;
@@ -520,9 +549,14 @@
     if (prefs.mode === 'split') {
       const wrap = el('div', 'diff-split');
       for (const side of ['old', 'new']) {
+        const actualSide = side === 'old' ? st.oldSide : st.newSide;
         const pane = el('div', `diff-pane ${side}`);
         const label = el('div', 'diff-pane-label');
-        label.append(el('b', null, side === 'old' ? '−' : '+'), ` ${SIDE_NAME[side === 'old' ? st.oldSide : st.newSide]}`);
+        const title = el('span', 'diff-pane-title');
+        title.append(el('b', null, side === 'old' ? '−' : '+'), ` ${SIDE_NAME[actualSide]}`);
+        label.append(title);
+        const jump = paneJumpControl(actualSide, st);
+        if (jump) label.append(jump);
         const scroller = el('div', 'diff-scroll');
         scroller.innerHTML = splitHtml(sheet, rows, cols, widths, side);
         pane.append(label, scroller);
