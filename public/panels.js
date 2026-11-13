@@ -183,7 +183,7 @@
     const { data, mode, oldSide, newSide } = diffState;
     const sideText = side => side === 'local'
       ? (data.local.exists ? `修改于 ${fmt(data.local.mtime)} · ${fmtSize(data.local.size)}` : '本地还没有这个文件')
-      : `修改于 ${fmt(data.cloud.modifiedTime)}${data.cloud.modifiedBy ? ` · ${data.cloud.modifiedBy}` : ''}${data.cloud.name ? ` · ${data.cloud.name}` : ''}`;
+      : `修改于 ${fmt(data.cloud.modifiedTime)}${data.cloud.changedVia ? `（源表「${data.cloud.changedVia.name || data.cloud.changedVia.id}」）` : ''}${data.cloud.modifiedBy ? ` · ${data.cloud.modifiedBy}` : ''}${data.cloud.name ? ` · ${data.cloud.name}` : ''}${data.cloud.sourceWarning ? ` · ⚠ ${data.cloud.sourceWarning}` : ''}`;
     d.meta.innerHTML = '';
     const sides = el('div', 'dm-sides');
     const chip = (cls, sign, side) => { const c = el('span', `dm-chip ${cls}`); c.append(el('b', null, sign), ` ${SIDE_NAME[side]}`); return c; };
@@ -205,6 +205,16 @@
       const reordered = diff.sheets.filter(sheet => sheet.orderChanged).length;
       if (reordered) summary.appendChild(el('span', 'dm-n mod', `${reordered} 个工作表行序变化`));
       if (t.del) summary.appendChild(el('span', 'dm-n del', `−${t.del} 行`));
+      let colAdd = 0;
+      let colDel = 0;
+      for (const s of diff.sheets) {
+        const only = s.onlyCols;
+        if (!only) continue;
+        colAdd += only[oldSide === 'local' ? 'cloud' : 'local'].length;
+        colDel += only[oldSide].length;
+      }
+      if (colAdd) summary.appendChild(el('span', 'dm-n add', `+${colAdd} 列`));
+      if (colDel) summary.appendChild(el('span', 'dm-n del', `−${colDel} 列`));
       summary.appendChild(el('span', 'dir-tip', `　当前视图中的「+」为${SIDE_NAME[newSide]}内容。`));
     }
     d.meta.appendChild(summary);
@@ -373,9 +383,26 @@
     if (!prefs.onlyCols) return all;
     const set = new Set();
     rows.forEach(r => { if (r.t === 'mod') r.d.forEach(c => set.add(c)); });
+    const only = sheet.onlyCols;
+    if (only) [...only.local, ...only.cloud].forEach(c => { if (c < sheet.view.cols) set.add(c); });
     if (!set.size) return all;
     set.add(keyCol(sheet.header));
     return all.filter(c => set.has(c));
+  }
+
+  // 只在一侧有内容的列：按当前方向换算成「旧侧缺（= 新增列）/ 新侧缺（= 删除列）」
+  function missingCols(sheet) {
+    const only = sheet.onlyCols || { local: [], cloud: [] };
+    const oldSide = diffState.oldSide;
+    const newSide = oldSide === 'local' ? 'cloud' : 'local';
+    return { old: new Set(only[newSide]), new: new Set(only[oldSide]) };
+  }
+
+  function headHtml(sheet, c, miss) {
+    const label = esc(headLabel(sheet, c));
+    if (miss.old.has(c)) return `${label}<span class="col-tag add">新增列</span>`;
+    if (miss.new.has(c)) return `${label}<span class="col-tag del">删除列</span>`;
+    return label;
   }
 
   function headLabel(sheet, c) {
@@ -385,8 +412,9 @@
 
   const textWidth = s => { let w = 0; for (const ch of String(s)) { w += ch.charCodeAt(0) > 0x2e80 ? 13 : 7; if (w > 400) break; } return w; };
   function colWidths(sheet, rows, cols) {
+    const only = sheet.onlyCols || { local: [], cloud: [] };
     return cols.map(c => {
-      let w = textWidth(headLabel(sheet, c));
+      let w = textWidth(headLabel(sheet, c)) + (only.local.includes(c) || only.cloud.includes(c) ? 50 : 0);   // 留出「新增列 / 删除列」标签
       for (const r of rows) {
         for (const v of [r.v, r.ov, r.nv]) if (v && v[c]) w = Math.max(w, textWidth(v[c]));
         if (w >= 260) break;
@@ -413,9 +441,10 @@
     return `${escCell(a.slice(0, p))}<mark>${escMark(a.slice(p, a.length - s))}</mark>${escCell(a.slice(a.length - s))}`;
   }
 
-  function cellsHtml(vals, cols, hl, other, side) {
+  function cellsHtml(vals, cols, hl, other, side, miss) {
     let h = '';
     for (const c of cols) {
+      if (miss && miss.has(c)) { h += '<td class="nocol" title="这一侧没有这一列（整列为空）"></td>'; continue; }
       const v = vals ? vals[c] ?? '' : '';
       const isHl = hl && hl.has(c);
       const o = other ? other[c] ?? '' : '';
@@ -449,16 +478,17 @@
     let h = `<table class="dg" style="width:${total}px"><colgroup><col style="width:44px"><col style="width:44px"><col style="width:22px">`;
     widths.forEach(w => { h += `<col style="width:${w}px">`; });
     h += '</colgroup><thead><tr><th class="gut g1">−</th><th class="gut g2">+</th><th class="sign s3"></th>';
-    cols.forEach(c => { h += `<th title="${esc(headLabel(sheet, c))}">${esc(headLabel(sheet, c))}</th>`; });
+    const miss = missingCols(sheet);
+    cols.forEach(c => { h += `<th title="${esc(headLabel(sheet, c))}">${headHtml(sheet, c, miss)}</th>`; });
     h += '</tr></thead><tbody>';
     rows.forEach((r, x) => {
       const g = r.g >= 0 ? ` data-g="${r.g}"` : '';
       if (r.t === 'ctx') h += `<tr><td class="gut g1">${r.o ?? ''}</td><td class="gut g2">${r.n ?? ''}</td><td class="sign s3"></td>${cellsHtml(r.v, cols)}</tr>`;
-      else if (r.t === 'del') h += `<tr class="del"${g}><td class="gut g1">${r.o}</td><td class="gut g2"></td><td class="sign s3">−</td>${cellsHtml(r.v, cols)}</tr>`;
-      else if (r.t === 'add') h += `<tr class="add"${g}><td class="gut g1"></td><td class="gut g2">${r.n}</td><td class="sign s3">+</td>${cellsHtml(r.v, cols)}</tr>`;
+      else if (r.t === 'del') h += `<tr class="del"${g}><td class="gut g1">${r.o}</td><td class="gut g2"></td><td class="sign s3">−</td>${cellsHtml(r.v, cols, null, null, 'old', miss.old)}</tr>`;
+      else if (r.t === 'add') h += `<tr class="add"${g}><td class="gut g1"></td><td class="gut g2">${r.n}</td><td class="sign s3">+</td>${cellsHtml(r.v, cols, null, null, 'new', miss.new)}</tr>`;
       else if (r.t === 'mod') {
-        h += `<tr class="del"${g}><td class="gut g1">${r.o}</td><td class="gut g2"></td><td class="sign s3">−</td>${cellsHtml(r.ov, cols, r.d, r.nv, 'old')}</tr>`;
-        h += `<tr class="add"${g}><td class="gut g1"></td><td class="gut g2">${r.n}</td><td class="sign s3">+</td>${cellsHtml(r.nv, cols, r.d, r.ov, 'new')}</tr>`;
+        h += `<tr class="del"${g}><td class="gut g1">${r.o}</td><td class="gut g2"></td><td class="sign s3">−</td>${cellsHtml(r.ov, cols, r.d, r.nv, 'old', miss.old)}</tr>`;
+        h += `<tr class="add"${g}><td class="gut g1"></td><td class="gut g2">${r.n}</td><td class="sign s3">+</td>${cellsHtml(r.nv, cols, r.d, r.ov, 'new', miss.new)}</tr>`;
       } else h += `<tr class="gap${r.fixed ? ' fixed' : ''}" data-x="${x}"><td class="gut g1">⋯</td><td class="gut g2">⋯</td><td class="sign s3"></td><td colspan="${cols.length}"><span class="gap-text">${gapText(r)}</span></td></tr>`;
     });
     return `${h}</tbody></table>`;
@@ -470,19 +500,21 @@
     let h = `<table class="dg" style="width:${total}px"><colgroup><col style="width:44px"><col style="width:22px">`;
     widths.forEach(w => { h += `<col style="width:${w}px">`; });
     h += `</colgroup><thead><tr><th class="gut g1">${side === 'old' ? '−' : '+'}</th><th class="sign s2"></th>`;
-    cols.forEach(c => { h += `<th title="${esc(headLabel(sheet, c))}">${esc(headLabel(sheet, c))}</th>`; });
+    const miss = missingCols(sheet);
+    const sideMiss = miss[side];
+    cols.forEach(c => { h += `<th title="${esc(headLabel(sheet, c))}">${headHtml(sheet, c, miss)}</th>`; });
     h += '</tr></thead><tbody>';
     const fill = g => `<tr class="fill"${g}><td class="gut g1"></td><td class="sign s2"></td><td colspan="${cols.length}"></td></tr>`;
     rows.forEach((r, x) => {
       const g = r.g >= 0 ? ` data-g="${r.g}"` : '';
       const no = side === 'old' ? r.o : r.n;
-      if (r.t === 'ctx') h += no == null ? fill(g) : `<tr><td class="gut g1">${no}</td><td class="sign s2"></td>${cellsHtml(r.v, cols)}</tr>`;
-      else if (r.t === 'del') h += side === 'old' ? `<tr class="del"${g}><td class="gut g1">${no}</td><td class="sign s2">−</td>${cellsHtml(r.v, cols)}</tr>` : fill(g);
-      else if (r.t === 'add') h += side === 'new' ? `<tr class="add"${g}><td class="gut g1">${no}</td><td class="sign s2">+</td>${cellsHtml(r.v, cols)}</tr>` : fill(g);
+      if (r.t === 'ctx') h += no == null ? fill(g) : `<tr><td class="gut g1">${no}</td><td class="sign s2"></td>${cellsHtml(r.v, cols, null, null, side, sideMiss)}</tr>`;
+      else if (r.t === 'del') h += side === 'old' ? `<tr class="del"${g}><td class="gut g1">${no}</td><td class="sign s2">−</td>${cellsHtml(r.v, cols, null, null, side, sideMiss)}</tr>` : fill(g);
+      else if (r.t === 'add') h += side === 'new' ? `<tr class="add"${g}><td class="gut g1">${no}</td><td class="sign s2">+</td>${cellsHtml(r.v, cols, null, null, side, sideMiss)}</tr>` : fill(g);
       else if (r.t === 'mod') {
         h += side === 'old'
-          ? `<tr class="del"${g}><td class="gut g1">${no}</td><td class="sign s2">−</td>${cellsHtml(r.ov, cols, r.d, r.nv, 'old')}</tr>`
-          : `<tr class="add"${g}><td class="gut g1">${no}</td><td class="sign s2">+</td>${cellsHtml(r.nv, cols, r.d, r.ov, 'new')}</tr>`;
+          ? `<tr class="del"${g}><td class="gut g1">${no}</td><td class="sign s2">−</td>${cellsHtml(r.ov, cols, r.d, r.nv, 'old', sideMiss)}</tr>`
+          : `<tr class="add"${g}><td class="gut g1">${no}</td><td class="sign s2">+</td>${cellsHtml(r.nv, cols, r.d, r.ov, 'new', sideMiss)}</tr>`;
       } else h += `<tr class="gap${r.fixed ? ' fixed' : ''}" data-x="${x}"><td class="gut g1">⋯</td><td class="sign s2"></td><td colspan="${cols.length}"><span class="gap-text">${gapText(r)}</span></td></tr>`;
     });
     return `${h}</tbody></table>`;
@@ -590,6 +622,14 @@
     if (st.recordSheets && sheet.matches > sheet.view.rows.length) notes.push(`当前显示前 ${sheet.view.rows.length} 条匹配。`);
     if (sheet.view.truncated) notes.push('改动太多，只显示前 2000 处；完整内容请直接打开两边文件比较。');
     if (!sheet.view.full) notes.push('表很大，相同的行只保留改动前后几行，无法展开。');
+    const colNote = (list, what) => {
+      if (!list.length) return;
+      const blank = list.filter(c => !String(sheet.header?.[c] ?? '').trim());
+      notes.push(`${what} ${list.length} 列：${list.map(colLetter).join('、')}${blank.length ? `（其中 ${blank.map(colLetter).join('、')} 的表头为空）` : ''}。`);
+    };
+    const miss = missingCols(sheet);
+    colNote([...miss.old], `${SIDE_NAME[diffState.newSide]}新增`);
+    colNote([...miss.new], `${SIDE_NAME[diffState.newSide]}删除`);
     if (prefs.onlyCols && cols.length < sheet.view.cols) notes.push(`已隐藏 ${sheet.view.cols - cols.length} 个没有改动的列。`);
     if (notes.length) d.view.appendChild(el('div', 'diff-note', notes.join(' ')));
     st.groups = Array.from({ length: groupCount }, (_, g) => g);

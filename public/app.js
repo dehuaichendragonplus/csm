@@ -708,7 +708,9 @@
     const div = document.createElement('div');
     // 按钮与配置表清单同一套规则：已同步不显示；云端较新（或本地缺失）显示「下载」，本地较新显示「上传」
     const canSelect = row.direction === 'download';
-    const timesTip = `云端修改：${formatTime(row.cloudModifiedTime)}\n本地文件修改：${row.localMtime ? formatTime(row.localMtime) : '本地没有文件'}`;
+    const viaTip = row.cloudChangedVia ? `（源表「${row.cloudChangedVia.name || row.cloudChangedVia.id}」）` : '';
+    const ownTip = row.cloudOwnModifiedTime && row.cloudOwnModifiedTime !== row.cloudModifiedTime ? `\n镜像表自身修改：${formatTime(row.cloudOwnModifiedTime)}` : '';
+    const timesTip = `云端修改：${formatTime(row.cloudModifiedTime)}${viaTip}${ownTip}\n本地文件修改：${row.localMtime ? formatTime(row.localMtime) : '本地没有文件'}${row.sourceWarning ? `\n⚠ ${row.sourceWarning}` : ''}`;
     div.className = `row status-${row.status}${canSelect ? ' clickable' : ''}`;
     div.dataset.path = row.path;
     if (canSelect) div.addEventListener('click', e => {
@@ -836,6 +838,21 @@
       cloudSub.appendChild(timeSpan);
     } else {
       cloudSub.innerHTML = '<span class="cell-empty-text">—</span>';
+    }
+    // IMPORTRANGE 镜像表：最新改动来自源表时标出来；源表查不到时提示（此时只按镜像表自身时间判断）
+    if (row.cloudChangedVia) {
+      const via = document.createElement('span');
+      via.className = 'source-tag';
+      via.textContent = '源表更新';
+      via.title = `这是 IMPORTRANGE 镜像表，最新改动来自源表「${row.cloudChangedVia.name || row.cloudChangedVia.id}」${row.cloudOwnModifiedTime ? `\n镜像表自身修改：${formatTime(row.cloudOwnModifiedTime)}` : ''}`;
+      cloudSub.appendChild(via);
+    }
+    if (row.sourceWarning) {
+      const warn = document.createElement('span');
+      warn.className = 'source-warn';
+      warn.textContent = '⚠ 无法检查源表更新';
+      warn.title = `${row.sourceWarning}\n此时只按镜像表自身的修改时间判断，别人改了源表这里可能看不出来`;
+      cloudSub.appendChild(warn);
     }
 
     cloudCol.append(cloudMain, cloudSub);

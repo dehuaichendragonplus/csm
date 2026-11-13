@@ -1382,6 +1382,20 @@ button:disabled {
   text-overflow: ellipsis;
 }
 
+/* IMPORTRANGE 镜像表：源表更新标记 / 无法检查源表更新提示 */
+.cloud-sub-info .source-tag,
+.cloud-sub-info .source-warn {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin-left: 6px;
+  flex-shrink: 0;
+  white-space: nowrap;
+  cursor: help;
+}
+.cloud-sub-info .source-tag { background: #ecfdf5; color: #047857; }
+.cloud-sub-info .source-warn { background: #fffbeb; color: #b45309; }
+
 /* Column 3: Sync Status & Local Hint */
 .status-pill {
   display: inline-flex;
@@ -3911,6 +3925,10 @@ kbd {
 .dg i.ws { font-style: normal; color: #94a3b8; }
 .dg td.hl mark i.ws { color: inherit; }
 .dg tr.fill td { background: repeating-linear-gradient(-45deg, #f8fafc, #f8fafc 4px, #f1f5f9 4px, #f1f5f9 8px); }
+.dg td.nocol, .dg tr.del td.nocol, .dg tr.add td.nocol { background: repeating-linear-gradient(-45deg, #f8fafc, #f8fafc 4px, #e2e8f0 4px, #e2e8f0 8px); }
+.dg th .col-tag { display: inline-block; margin-left: 6px; padding: 0 5px; border-radius: 4px; font-size: 11px; line-height: 16px; font-weight: 600; vertical-align: 1px; }
+.dg th .col-tag.add { background: #dcfce7; color: #15803d; }
+.dg th .col-tag.del { background: #fee2e2; color: #b91c1c; }
 .dg tr.gap td { background: #f1f5f9; color: #64748b; cursor: pointer; font-family: var(--font-sans); }
 .dg tr.gap .gut, .dg tr.gap .sign { background: #e2e8f0; text-align: center; }
 .dg tr.gap:hover td { background: #e2e8f0; }

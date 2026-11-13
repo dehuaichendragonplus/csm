@@ -9,7 +9,8 @@ const oauth = require('./lib/oauth');
 const { loadFilelist } = require('./lib/filelist-loader');
 const { loadState, saveState, updateEntry, hashFile, fileVersion } = require('./lib/sync-state');
 const { google } = require('googleapis');
-const { getModifiedTimes, getCloudInfo, getCurrentUser, withRetry, uploadXlsxToSheet, uploadXlsxPreservingFormulas, downloadViaDrive, getFileInfo, resolveFolderPath, findSheetInFolder, createSheetFromXlsx } = require('./lib/drive-api');
+const { getModifiedTimes, probeFormulas, getCurrentUser, withRetry, uploadXlsxToSheet, uploadXlsxPreservingFormulas, downloadViaDrive, getFileInfo, resolveFolderPath, findSheetInFolder, createSheetFromXlsx } = require('./lib/drive-api');
+const mirrorSources = require('./lib/mirror-sources');
 const backups = require('./lib/backups');
 const { appendHistory, readHistory } = require('./lib/history');
 const { readWorkbook } = require('./lib/xlsx-reader');
@@ -128,6 +129,8 @@ async function main(opts = {}) {
   const verifyCachePathOf = id => path.join(DATA_DIR, 'projects', id, 'verify-cache.json');
   const exportCacheDir = path.join(DATA_DIR, 'cache', 'cloud-exports');
   pruneOldExports(exportCacheDir);
+  // IMPORTRANGE 镜像表的源表（按表 id 记录，跨项目共用；镜像表自身修改时间变了才重新探测公式）
+  const sourceStore = mirrorSources.createSourceStore(path.join(DATA_DIR, 'cache', 'mirror-sources.json'));
   const faviconCacheDir = path.join(DATA_DIR, 'cache', 'favicons');
   // 内存里的云端时间是不是本次运行实际查询过的（false = 从磁盘读的上次结果，界面会在后台补刷）
   const driveCacheFresh = new Map(); // projectId -> boolean
@@ -183,11 +186,34 @@ async function main(opts = {}) {
     return { project, cfg, id };
   }
 
+  // 查询云端版本：镜像表（IMPORTRANGE）返回有效版本 = max(自身, 各源表) 修改时间，源表和镜像表放在同一批查询里。
+  // budgetMs：等公式探测的上限（首次刷新要探测所有表，不能拖住刷新；没等到的在后台继续，下次刷新生效）
+  const REFRESH_PROBE_BUDGET_MS = 12000;
+  const SINGLE_PROBE_BUDGET_MS = 15000;
+  function resolveCloudInfos(ids, { budgetMs = REFRESH_PROBE_BUDGET_MS } = {}) {
+    return mirrorSources.resolveCloudInfos(ids, {
+      getTimes: list => getModifiedTimes(list, oauth2Client),
+      probe: sid => probeFormulas(sid, oauth2Client),
+      store: sourceStore,
+      budgetMs
+    });
+  }
+  const CLOUD_ERROR_TEXT = { forbidden: '当前 Google 账号没有这个表格的访问权限', not_found: '找不到这个表格（已删除，或当前账号没有权限）', rate_limited: '查询过于频繁，请稍后重试' };
+  // 单张表的云端版本（下载 / 上传 / 差异预览前用）；查询失败抛错
+  async function cloudInfoOf(spreadsheetId) {
+    const info = (await resolveCloudInfos([spreadsheetId], { budgetMs: SINGLE_PROBE_BUDGET_MS })).get(spreadsheetId);
+    if (!info || info.error || !info.modifiedTime) {
+      const reason = info && info.error;
+      throw new Error(CLOUD_ERROR_TEXT[reason] || reason || '无法取得云端表格信息');
+    }
+    return info;
+  }
+
   async function refreshDriveCache(ctx) {
     if (!hasToken) throw new Error('OAUTH_REQUIRED');
     const filelist = loadFilelist(ctx.cfg.filelistPath);
     const ids = filelist.filter(e => e.spreadsheetId).map(e => e.spreadsheetId);
-    const map = await getModifiedTimes(ids, oauth2Client);
+    const map = await resolveCloudInfos(ids);
     if (map.size && [...map.values()].every(v => v.error && !['forbidden', 'not_found'].includes(v.error))) {
       throw new Error('本次无法查询云端表格，请检查网络或 Google 授权后重试');
     }
@@ -627,7 +653,7 @@ async function main(opts = {}) {
   async function downloadTable(ctx, entry, log, version) {
     const { cfg, id } = ctx;
     const epoch = authEpoch;
-    const info = await getCloudInfo(entry.spreadsheetId, oauth2Client);
+    const info = await cloudInfoOf(entry.spreadsheetId);
     let tmp;
     let summary = null;
     let backup;
@@ -685,7 +711,7 @@ async function main(opts = {}) {
         } catch (err) {
           log(`  ↳ 无法生成差异摘要：${err.message}\n`);
         }
-        const latest = await getCloudInfo(entry.spreadsheetId, oauth2Client);
+        const latest = await cloudInfoOf(entry.spreadsheetId);
         if (epoch !== authEpoch) throw skipDownload('Google 账号已变更，请重新选择');
         checkDownloadBinding(ctx, entry);
         if (latest.modifiedTime !== info.modifiedTime || hashFile(entry.savePath) !== localHash) {
@@ -788,7 +814,7 @@ async function main(opts = {}) {
     // 冲突检测：上传前重新查一次云端。用户确认上传时看到的云端时间（expect）或上次同步的时间之后云端又被改过，
     // 直接覆盖会把别人的改动冲掉 —— 返回 409，由用户看过差异后决定是否强制覆盖（force=1）
     let before;
-    try { before = await getCloudInfo(entry.spreadsheetId, oauth2Client); } catch (err) {
+    try { before = await cloudInfoOf(entry.spreadsheetId); } catch (err) {
       return res.status(502).json({ error: `查询云端状态失败：${err.message}` });
     }
     const stateRow = loadState(cfg.statePath)[entry.path] || null;
@@ -801,9 +827,10 @@ async function main(opts = {}) {
       force: req.query.force === '1'
     });
     if (conflict) {
+      const where = before.changedVia ? `源表「${before.changedVia.name || before.changedVia.id}」` : '云端';
       return res.status(409).json({
         error: 'CLOUD_CHANGED',
-        message: `云端在 ${before.modifiedTime} 被${before.modifiedBy ? `「${before.modifiedBy}」` : '其他人'}修改过，晚于你确认时看到的版本`,
+        message: `${where}在 ${before.modifiedTime} 被${before.modifiedBy ? `「${before.modifiedBy}」` : '其他人'}修改过，晚于你确认时看到的版本`,
         cloudModifiedTime: before.modifiedTime,
         cloudModifiedBy: before.modifiedBy,
         baseline: conflict.baseline
@@ -830,16 +857,22 @@ async function main(opts = {}) {
       // 还有写不进去的差异（源表有公式 / 源表刚被改过 / 超出公式范围 / 冲突）：云端与本地不一致，不记为「已同步」
       const partial = !!(info.formulaProtected && (info.blockedCount > 0 || (info.localOnlySheets || []).length > 0));
       // 云端内容已与本地一致：记为已同步（并等 Drive 转换后修改时间稳定再记一次），避免上传后显示「有更新」
-      const markSynced = modifiedTime => {
+      const markSynced = cloudInfo => {
         const st = fs.statSync(entry.savePath);
+        const modifiedTime = cloudInfo.modifiedTime;
         updateEntry(cfg.statePath, entry.path, { lastSyncedModifiedTime: modifiedTime, lastSyncedSize: st.size, lastSyncedMtime: st.mtime.toISOString(), lastSyncedHash: hashFile(entry.savePath) });
         if (cfg.sidecarPath) updateSidecar(cfg.sidecarPath, entry.path, modifiedTime);
         delete verifyCacheOf(id)[entry.path];
-        driveCaches.get(id).set(entry.spreadsheetId, { modifiedTime, name: info.name, modifiedBy: currentUser && (currentUser.name || currentUser.email), error: null });
+        driveCaches.get(id).set(entry.spreadsheetId, cloudInfo);
       };
+      // 镜像表的有效版本含源表时间：写回源表后源表时间变了，要按有效版本记同步基准，否则上传完立刻显示「有更新」
+      let synced = { modifiedTime: info.modifiedTime, name: info.name, modifiedBy: currentUser && (currentUser.name || currentUser.email), error: null };
+      if (!partial && (info.sourceWriteCount > 0 || (sourceStore.get(entry.spreadsheetId)?.sources || []).length)) {
+        try { synced = await cloudInfoOf(entry.spreadsheetId); } catch (_) { /* 退回只用自身时间 */ }
+      }
       if (!partial) {
-        markSynced(info.modifiedTime);
-        settleModifiedTime(entry.spreadsheetId, info.modifiedTime).then(t => { if (t !== info.modifiedTime) markSynced(t); }).catch(() => {});
+        markSynced(synced);
+        settleModifiedTime(entry.spreadsheetId, synced.modifiedTime).then(t => { if (t && t.modifiedTime !== synced.modifiedTime) markSynced(t); }).catch(() => {});
       }
       await logHistory(req.ctx, {
         op: 'upload', path: entry.path, name: entry.name, ok: true, forced: req.query.force === '1',
@@ -849,7 +882,7 @@ async function main(opts = {}) {
           sources: (info.sources || []).map(x => ({ sourceId: x.sourceId, name: x.name, count: x.sheets.reduce((n, t) => n + t.count, 0) }))
         } : {})
       });
-      res.json({ ok: true, modifiedTime: info.modifiedTime, size: buf.length, ...(info.formulaProtected ? { ...extra, partial } : {}) });
+      res.json({ ok: true, modifiedTime: synced.modifiedTime, size: buf.length, ...(info.formulaProtected ? { ...extra, partial } : {}) });
     } catch (err) {
       await logHistory(req.ctx, { op: 'upload', path: entry.path, name: entry.name, ok: false, error: err.message });
       res.status(500).json({ error: err.message });
@@ -936,8 +969,8 @@ async function main(opts = {}) {
   async function refreshOneInCache(ctx, spreadsheetId) {
     if (!hasToken || !spreadsheetId) return;
     try {
-      const m = await getModifiedTimes([spreadsheetId], oauth2Client);
-      driveCaches.get(ctx.id).set(spreadsheetId, m.get(spreadsheetId));
+      const m = await resolveCloudInfos([spreadsheetId]);
+      if (m.has(spreadsheetId)) driveCaches.get(ctx.id).set(spreadsheetId, m.get(spreadsheetId));
     } catch (_) { /* 下次刷新时再查 */ }
   }
 
@@ -951,7 +984,7 @@ async function main(opts = {}) {
       if (hasToken) {
         try {
           const driveMap = loadDiskDriveCache(req.ctx) ? driveCaches.get(req.ctx.id) :
-            await getModifiedTimes(entries.map(e => e.spreadsheetId), oauth2Client);
+            await resolveCloudInfos(entries.map(e => e.spreadsheetId));
           for (const t of tablesOf(req.ctx, { driveMap, persistState: false })) syncByPath.set(t.path, t);
         } catch (_) { /* 查不到云端时只是不显示同步按钮 */ }
       }
@@ -1104,7 +1137,8 @@ async function main(opts = {}) {
       });
 
       // 新建的云端表内容就是本地文件，记为已同步；关联已有表时内容可能不同，不记状态，让列表按实际情况显示
-      const markSynced = modifiedTime => {
+      const markSynced = cloudInfo => {
+        const modifiedTime = cloudInfo.modifiedTime;
         const st = fs.statSync(abs);
         updateEntry(cfg.statePath, entry.path, {
           lastSyncedModifiedTime: modifiedTime,
@@ -1113,13 +1147,16 @@ async function main(opts = {}) {
           lastSyncedHash: hashFile(abs)
         });
         if (cfg.sidecarPath) updateSidecar(cfg.sidecarPath, entry.path, modifiedTime);
-        driveCaches.get(id).set(cloud.id, { modifiedTime, name: cloud.name, error: null });
+        driveCaches.get(id).set(cloud.id, { ...cloudInfo, name: cloudInfo.name || cloud.name });
       };
-      if (linked) driveCaches.get(id).set(cloud.id, { modifiedTime: cloud.modifiedTime, name: cloud.name, error: null });
-      else {
-        markSynced(cloud.modifiedTime);
+      if (linked) {
+        // 关联的已有表可能是 IMPORTRANGE 镜像表：按有效版本记
+        driveCaches.get(id).set(cloud.id, { modifiedTime: cloud.modifiedTime, name: cloud.name, error: null });
+        await refreshOneInCache(req.ctx, cloud.id);
+      } else {
+        markSynced({ modifiedTime: cloud.modifiedTime, name: cloud.name, error: null });
         // Drive 把 xlsx 转成表格后约 1 秒还会再改一次修改时间；后台等它稳定后再记一次，避免刚上传就显示「有更新」
-        settleModifiedTime(cloud.id, cloud.modifiedTime).then(t => { if (t !== cloud.modifiedTime) markSynced(t); }).catch(() => {});
+        settleModifiedTime(cloud.id, cloud.modifiedTime).then(t => { if (t && t.modifiedTime !== cloud.modifiedTime) markSynced(t); }).catch(() => {});
       }
       await logHistory(req.ctx, { op: linked ? 'link' : 'create', path: entry.path, name: entry.name, ok: true, cloudModifiedTime: cloud.modifiedTime, cloudDir });
       res.json({ entry, cloud, cloudDir, createdFolders, linked });
@@ -1128,16 +1165,19 @@ async function main(opts = {}) {
     }
   });
 
+  // 等云端版本稳定（Drive 转换 xlsx 后还会再改一次修改时间）；返回最后一次查到的云端信息，查不到返回 null
   async function settleModifiedTime(fileId, initial) {
     let prev = initial;
+    let last = null;
     for (let i = 0; i < 5; i++) {
       await new Promise(r => setTimeout(r, 2500));
-      const info = (await getModifiedTimes([fileId], oauth2Client)).get(fileId);
-      if (!info || !info.modifiedTime) return prev;
-      if (info.modifiedTime === prev) return prev;
+      const info = (await resolveCloudInfos([fileId])).get(fileId);
+      if (!info || !info.modifiedTime) return last;
+      last = info;
+      if (info.modifiedTime === prev) return last;
       prev = info.modifiedTime;
     }
-    return prev;
+    return last;
   }
 
   function cloudPathScope(ctx) {
@@ -1373,13 +1413,13 @@ async function main(opts = {}) {
       if (!cloudWb) {
         // 并行拉取云端元数据与本地文件解析
         const [infoResult] = await Promise.all([
-          getCloudInfo(entry.spreadsheetId, oauth2Client),
+          cloudInfoOf(entry.spreadsheetId).catch(err => ({ error: err.message })),
           Promise.resolve().then(readLocal).catch(() => {})
         ]);
         info = infoResult;
         if (epoch !== authEpoch) return res.status(409).json({ error: 'Google 账号已变更，请重新打开差异预览' });
         if (!info || !info.modifiedTime) {
-          return res.status(502).json({ error: '无法取得云端表格信息，请检查网络或授权' });
+          return res.status(502).json({ error: `无法取得云端表格信息，请检查网络或授权${info && info.error ? `（${info.error}）` : ''}` });
         }
         driveCaches.get(req.ctx.id).set(entry.spreadsheetId, info);
 
@@ -1417,7 +1457,10 @@ async function main(opts = {}) {
           reviewed: true
         },
         local: localStat ? { exists: true, size: localStat.size, mtime: localStat.mtime.toISOString() } : { exists: false },
-        cloud: { spreadsheetId: entry.spreadsheetId, modifiedTime: info.modifiedTime, modifiedBy: info.modifiedBy, name: info.name },
+        cloud: {
+          spreadsheetId: entry.spreadsheetId, modifiedTime: info.modifiedTime, modifiedBy: info.modifiedBy, name: info.name,
+          ownModifiedTime: info.ownModifiedTime || null, changedVia: info.changedVia || null, sourceWarning: info.sourceWarning || null
+        },
         diff: diffWorkbooks(localWb, cloudWb, { keys: entry.diffKeys })
       });
     } catch (err) {
