@@ -15,6 +15,7 @@ const backups = require('./lib/backups');
 const { appendHistory, readHistory } = require('./lib/history');
 const { readWorkbook } = require('./lib/xlsx-reader');
 const { diffWorkbooks, summarizeDiff, findRecords } = require('./lib/xlsx-diff');
+const { patchWorkbook } = require('./lib/xlsx-writer');
 const {
   getMemoryWorkbook,
   setMemoryWorkbook,
@@ -117,7 +118,7 @@ async function main(opts = {}) {
     }
     next();
   });
-  app.use(express.json());
+  app.use(express.json({ limit: '64mb' }));   // 差异窗口保存编辑结果时会带整张表
 
   let { client: oauth2Client, hasToken } = buildOAuthClient(listenPort, CREDENTIALS_PATH, TOKEN_PATH);
   const driveCaches = new Map(); // projectId -> Map(spreadsheetId -> { modifiedTime, name, error })
@@ -811,24 +812,36 @@ async function main(opts = {}) {
     if (buf.length < 4 || buf[0] !== 0x50 || buf[1] !== 0x4b) {
       return res.status(400).json({ error: '本地文件不是有效的 xlsx' });
     }
+    const r = await uploadBufferToCloud(req.ctx, entry, buf, {
+      expect: req.query.expect, force: req.query.force === '1', writeThrough: req.query.writeThrough === '1'
+    });
+    res.status(r.status).json(r.body);
+  });
+
+  // 把一份 xlsx 内容写到云端：冲突检测 → 上传（默认保留云端公式）→ 作废缓存 → 记历史。
+  // opts：expect（用户确认时看到的云端版本）/ force / writeThrough / markSynced（上传后云端与本地一致才传 true）/ op（历史记录类型）
+  // 返回 { status, body }，由调用方原样回给前端
+  async function uploadBufferToCloud(ctx, entry, buf, opts = {}) {
+    const { cfg, id } = ctx;
+    const reply = (status, body) => ({ status, body });
     // 冲突检测：上传前重新查一次云端。用户确认上传时看到的云端时间（expect）或上次同步的时间之后云端又被改过，
     // 直接覆盖会把别人的改动冲掉 —— 返回 409，由用户看过差异后决定是否强制覆盖（force=1）
     let before;
     try { before = await cloudInfoOf(entry.spreadsheetId); } catch (err) {
-      return res.status(502).json({ error: `查询云端状态失败：${err.message}` });
+      return reply(502, { error: `查询云端状态失败：${err.message}` });
     }
     const stateRow = loadState(cfg.statePath)[entry.path] || null;
     const cached = driveCaches.get(id).get(entry.spreadsheetId);
     const conflict = uploadConflict({
       cloudModifiedTime: before.modifiedTime,
-      expect: req.query.expect,
+      expect: opts.expect,
       lastSyncedModifiedTime: stateRow && stateRow.lastSyncedModifiedTime,
       cachedModifiedTime: cached && cached.modifiedTime,
-      force: req.query.force === '1'
+      force: !!opts.force
     });
     if (conflict) {
       const where = before.changedVia ? `源表「${before.changedVia.name || before.changedVia.id}」` : '云端';
-      return res.status(409).json({
+      return reply(409, {
         error: 'CLOUD_CHANGED',
         message: `${where}在 ${before.modifiedTime} 被${before.modifiedBy ? `「${before.modifiedBy}」` : '其他人'}修改过，晚于你确认时看到的版本`,
         cloudModifiedTime: before.modifiedTime,
@@ -841,7 +854,7 @@ async function main(opts = {}) {
       // 配置 preserveCloudFormulas:false 可退回整表替换
       const info = cfg.preserveCloudFormulas === false
         ? await uploadXlsxToSheet(entry.spreadsheetId, buf, oauth2Client)
-        : await uploadXlsxPreservingFormulas(entry.spreadsheetId, buf, oauth2Client, { writeThrough: req.query.writeThrough === '1' });
+        : await uploadXlsxPreservingFormulas(entry.spreadsheetId, buf, oauth2Client, { writeThrough: !!opts.writeThrough });
       const extra = info.formulaProtected ? {
         formulaProtected: true, written: info.written, sourceWriteCount: info.sourceWriteCount, sources: info.sources,
         derivedCount: info.derivedCount, derivedSamples: info.derivedSamples,
@@ -849,7 +862,7 @@ async function main(opts = {}) {
         formulaSheets: info.formulaSheets, localOnlySheets: info.localOnlySheets, cloudOnlySheets: info.cloudOnlySheets
       } : {};
       // 需要改源表：先把预览给用户确认，此时什么都没写
-      if (info.needsWriteThrough) return res.status(409).json({ error: 'NEEDS_WRITE_THROUGH', ...extra });
+      if (info.needsWriteThrough) return reply(409, { error: 'NEEDS_WRITE_THROUGH', ...extra });
       // 云端内容已变：作废这张表的导出缓存与核对结果。镜像表写回源表后修改时间不变，不作废会一直拿旧内容做差异 / 核对 / 下载
       invalidateCloudExports(exportCacheDir, entry.spreadsheetId);
       delete verifyCacheOf(id)[entry.path];
@@ -870,24 +883,24 @@ async function main(opts = {}) {
       if (!partial && (info.sourceWriteCount > 0 || (sourceStore.get(entry.spreadsheetId)?.sources || []).length)) {
         try { synced = await cloudInfoOf(entry.spreadsheetId); } catch (_) { /* 退回只用自身时间 */ }
       }
-      if (!partial) {
+      if (!partial && opts.markSynced !== false) {
         markSynced(synced);
         settleModifiedTime(entry.spreadsheetId, synced.modifiedTime).then(t => { if (t && t.modifiedTime !== synced.modifiedTime) markSynced(t); }).catch(() => {});
       }
-      await logHistory(req.ctx, {
-        op: 'upload', path: entry.path, name: entry.name, ok: true, forced: req.query.force === '1',
+      await logHistory(ctx, {
+        op: opts.op || 'upload', path: entry.path, name: entry.name, ok: true, forced: !!opts.force,
         cloudModifiedTime: info.modifiedTime, replacedCloudModifiedTime: before.modifiedTime, replacedCloudModifiedBy: before.modifiedBy,
         ...(info.formulaProtected ? {
           formulaProtected: true, written: info.written, sourceWriteCount: info.sourceWriteCount, blockedCount: info.blockedCount,
           sources: (info.sources || []).map(x => ({ sourceId: x.sourceId, name: x.name, count: x.sheets.reduce((n, t) => n + t.count, 0) }))
         } : {})
       });
-      res.json({ ok: true, modifiedTime: synced.modifiedTime, size: buf.length, ...(info.formulaProtected ? { ...extra, partial } : {}) });
+      return reply(200, { ok: true, synced: !partial && opts.markSynced !== false, modifiedTime: synced.modifiedTime, size: buf.length, ...(info.formulaProtected ? { ...extra, partial } : {}) });
     } catch (err) {
-      await logHistory(req.ctx, { op: 'upload', path: entry.path, name: entry.name, ok: false, error: err.message });
-      res.status(500).json({ error: err.message });
+      await logHistory(ctx, { op: opts.op || 'upload', path: entry.path, name: entry.name, ok: false, error: err.message });
+      return reply(500, { error: err.message });
     }
-  });
+  }
 
   // ---------- 配置表清单（filelist.json）预览与编辑 ----------
   const editorStatus = err => ({ INVALID: 400, INVALID_JSON: 500, NOT_FOUND: 404, DUPLICATE_PATH: 409, DUPLICATE_ID: 409, STALE_PREVIEW: 409 }[err.code] || 500);
@@ -1466,6 +1479,101 @@ async function main(opts = {}) {
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
+  });
+
+  // ---------- 差异窗口编辑后保存（类似 Beyond Compare：两侧各自编辑、各自保存） ----------
+  // body：{ path, side: 'local'|'cloud', expect: { localVersion, cloudModifiedTime }, sheets: [{ name, rows: [{ src, v }] }],
+  //         force?, writeThrough?, ignoreLock? }
+  // rows 是该工作表编辑后的完整内容：src = 原文件行号（1 起），null = 新插入的行；没出现的原行即被删除。
+  // 两侧以差异窗口打开时看到的版本为准（expect），期间被别人改过就拒绝，避免覆盖看不到的改动。
+  const officeLockOf = savePath => {
+    const dir = path.dirname(savePath);
+    const base = path.basename(savePath);
+    return [`~$${base}`, `.~${base}`, `.~lock.${base}#`].map(n => path.join(dir, n)).find(p => fs.existsSync(p)) || null;
+  };
+  const validMergeSheets = sheets => Array.isArray(sheets) && sheets.length > 0 && sheets.every(sh => sh && typeof sh.name === 'string'
+    && Array.isArray(sh.rows) && sh.rows.every(r => r && Array.isArray(r.v) && r.v.every(x => typeof x === 'string')
+      && (r.src === null || (Number.isInteger(r.src) && r.src > 0))));
+
+  // 编辑结果与另一侧内容完全一致时，保存后就算已同步
+  const sameContent = (a, b, keys) => diffWorkbooks(a, b, { keys, view: false, maxChanges: 0 }).identical;
+
+  async function cloudWorkbookAt(entry, modifiedTime) {
+    const key = cloudMemoryKey(entry.spreadsheetId, modifiedTime);
+    let wb = getMemoryWorkbook(key);
+    const cached = getCachedExportPath(exportCacheDir, entry.spreadsheetId, modifiedTime);
+    if (!wb && cached) { wb = readWorkbook(cached); setMemoryWorkbook(key, wb); }
+    return { wb, cached };
+  }
+
+  projectRouter.post('/merge/save', async (req, res) => {
+    const { cfg, id } = req.ctx;
+    const { side, expect = {}, sheets } = req.body || {};
+    if (side !== 'local' && side !== 'cloud') return res.status(400).json({ error: 'side 必须是 local 或 cloud' });
+    if (!validMergeSheets(sheets)) return res.status(400).json({ error: '编辑内容格式不正确' });
+    const entry = loadFilelist(cfg.filelistPath).find(e => e.path === req.body.path);
+    if (!entry) return res.status(404).json({ error: `unknown path: ${req.body.path}` });
+    if (!entry.spreadsheetId) return res.status(400).json({ error: '该表没有 spreadsheetId' });
+    if (!hasToken) return res.status(401).json({ error: 'OAUTH_REQUIRED' });
+
+    if (side === 'local') {
+      let stat;
+      try { stat = fs.statSync(entry.savePath); } catch (_) { return res.status(404).json({ error: `本地文件不存在: ${entry.savePath}` }); }
+      if (!expect.localVersion || fileVersion(stat) !== expect.localVersion) {
+        return res.status(409).json({ error: 'LOCAL_CHANGED', message: '打开差异窗口之后本地文件被改过，请重新比较后再编辑' });
+      }
+      const lock = officeLockOf(entry.savePath);
+      if (lock && !req.body.ignoreLock) {
+        return res.status(423).json({ error: 'FILE_LOCKED', message: `本地文件可能正被 Excel / WPS 打开（发现 ${path.basename(lock)}）。先关闭它再保存，否则在那边再保存一次会把这里的修改覆盖掉。` });
+      }
+      try {
+        const { buffer, warnings } = patchWorkbook(fs.readFileSync(entry.savePath), sheets);
+        const backup = backups.backupFile(backupRootOf(id), entry.path, entry.savePath, { reason: '差异窗口编辑保存前自动备份' });
+        const tmp = `${entry.savePath}.csm-${randomUUID()}.tmp`;
+        fs.writeFileSync(tmp, buffer);
+        fs.renameSync(tmp, entry.savePath);
+        delete verifyCacheOf(id)[entry.path];
+        writeJson(verifyCachePathOf(id), verifyCacheOf(id));
+        // 保存后与云端（打开时的版本、且云端没再变）内容一致：记为已同步
+        let synced = false;
+        const cloudNow = driveCaches.get(id)?.get(entry.spreadsheetId);
+        if (expect.cloudModifiedTime && cloudNow?.modifiedTime === expect.cloudModifiedTime) {
+          const { wb: cloudWb } = await cloudWorkbookAt(entry, expect.cloudModifiedTime);
+          if (cloudWb && sameContent(readWorkbook(buffer), cloudWb, entry.diffKeys)) {
+            const st = fs.statSync(entry.savePath);
+            updateEntry(cfg.statePath, entry.path, { lastSyncedModifiedTime: expect.cloudModifiedTime, lastSyncedSize: st.size, lastSyncedMtime: st.mtime.toISOString(), lastSyncedHash: hashFile(entry.savePath) });
+            if (cfg.sidecarPath) updateSidecar(cfg.sidecarPath, entry.path, expect.cloudModifiedTime);
+            synced = true;
+          }
+        }
+        await logHistory(req.ctx, { op: 'merge-local', path: entry.path, name: entry.name, ok: true, backup: backup && backup.id, sheets: sheets.map(s => s.name) });
+        return res.json({ ok: true, side, backup: backup && backup.id, warnings, synced, localVersion: fileVersion(fs.statSync(entry.savePath)) });
+      } catch (err) {
+        await logHistory(req.ctx, { op: 'merge-local', path: entry.path, name: entry.name, ok: false, error: err.message });
+        return res.status(422).json({ error: err.message });
+      }
+    }
+
+    // 云端：在打开时看到的那一版云端导出上应用编辑，再走保留公式的上传（有公式时只写差异单元格，无公式时整表替换）
+    if (!cfg.allowUpload) return res.status(403).json({ error: '配置已禁用上传' });
+    if (!oauth.hasUploadScope(oauth.loadToken(TOKEN_PATH))) return res.status(403).json({ error: 'NEED_UPLOAD_SCOPE' });
+    if (!expect.cloudModifiedTime) return res.status(400).json({ error: '缺少云端版本' });
+    const { cached } = await cloudWorkbookAt(entry, expect.cloudModifiedTime);
+    if (!cached) return res.status(409).json({ error: 'CLOUD_CHANGED', message: '找不到打开时的云端版本，请重新比较后再编辑' });
+    let patched;
+    try { patched = patchWorkbook(fs.readFileSync(cached), sheets); } catch (err) { return res.status(422).json({ error: err.message }); }
+    let equalsLocal = false;
+    try {
+      const stat = fs.statSync(entry.savePath);
+      if (!expect.localVersion || fileVersion(stat) === expect.localVersion) {
+        equalsLocal = sameContent(readWorkbook(entry.savePath), readWorkbook(patched.buffer), entry.diffKeys);
+      }
+    } catch (_) { /* 本地不存在：不算已同步 */ }
+    const r = await uploadBufferToCloud(req.ctx, entry, patched.buffer, {
+      expect: expect.cloudModifiedTime, force: !!req.body.force, writeThrough: !!req.body.writeThrough,
+      markSynced: equalsLocal, op: 'merge-cloud'
+    });
+    res.status(r.status).json(r.status === 200 ? { ...r.body, side, warnings: patched.warnings } : r.body);
   });
 
   // ---------- 内容核对：修改时间 / 文件字节变了，但内容可能没变 ----------

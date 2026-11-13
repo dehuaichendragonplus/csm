@@ -5667,3 +5667,51 @@ button.row-change-summary {
   color: var(--text-secondary);
   line-height: 1.6;
 }
+
+/* ===== 差异窗口：Beyond Compare 风格配色与编辑 =====
+   红 = 两边不同的行（不同的单元格加深 + 红字），紫 = 只有一侧有的行（孤立行，对面斜纹），黄 = 已编辑未保存 */
+.dg tr.mod td { background: #fff1f1; }
+.dg tr.mod .gut, .dg tr.mod .sign { background: #fde2e2; color: #c81e1e; }
+.dg tr.mod td.hl { background: #ffd2d2; color: #c40000; font-weight: 600; }
+.dg tr.mod td.hl mark { text-decoration-color: #c40000; }
+.dg tr.mod2 td { border-bottom-color: #f5c2c2; }
+.dg tr.orph td { background: #f3edff; color: #5b21b6; }
+.dg tr.orph .gut, .dg tr.orph .sign { background: #e6dafd; color: #6d28d9; }
+.dg tr.fill.orph-gap td { background: repeating-linear-gradient(-45deg, #faf7ff, #faf7ff 4px, #ede5fd 4px, #ede5fd 8px); }
+.dg tr.fill.orph-gap .gut, .dg tr.fill.orph-gap .sign { background: #f1ebfe; }
+.dg td.ed, .dg tr.mod td.ed, .dg tr.orph td.ed { background: #fff3b0; color: #713f12; box-shadow: inset 0 -2px 0 #eab308; }
+.dg tr.ed-row td { background: #fff8d6; color: #713f12; }
+.dg tr.ed-row .gut { box-shadow: inset 3px 0 0 #eab308; }
+.diff-scroll.editing .dg tbody td { cursor: cell; user-select: none; }
+.diff-scroll.editing .dg tbody td.gut { cursor: pointer; }
+.dg td.sel { box-shadow: inset 0 0 0 2px #2563eb; background-image: linear-gradient(rgba(37, 99, 235, 0.14), rgba(37, 99, 235, 0.14)); }
+.dg tr.sel-row td { background-image: linear-gradient(rgba(37, 99, 235, 0.14), rgba(37, 99, 235, 0.14)); }
+.dg tr.sel-row .gut { box-shadow: inset 3px 0 0 #2563eb; }
+.dg .cp { width: 18px; height: 18px; padding: 0; border: 1px solid transparent; border-radius: 4px; background: transparent; color: #64748b; font-size: 12px; line-height: 16px; cursor: pointer; }
+.dg tr:hover .cp { border-color: #cbd5e1; background: #fff; color: #1d4ed8; }
+.dg .cp:hover { background: #dbeafe !important; border-color: #93c5fd !important; }
+.dm-n.orph { color: #6d28d9; }
+.dm-chip.local { background: #e0f2fe; color: #075985; }
+.dm-chip.cloud { background: #dcfce7; color: #166534; }
+.dt-cnt b.orph { color: #6d28d9; }
+.dt-cnt b.ed { color: #ca8a04; }
+.dt-badge.orph { background: #ede9fe; color: #6d28d9; }
+.diff-ruler .rk.orph { background: #a78bfa; }
+.diff-ruler .rk.mod { background: #ef4444; }
+.diff-edit-tools { display: inline-flex; gap: 6px; padding-left: 8px; margin-left: 4px; border-left: 1px solid var(--border-default); }
+.diff-legend { display: inline-flex; align-items: center; gap: 4px; margin-left: 8px; font-size: 11px; color: var(--text-tertiary); white-space: nowrap; }
+.diff-legend .lg { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-left: 6px; }
+.diff-legend .lg.mod { background: #ffd2d2; border: 1px solid #f19999; }
+.diff-legend .lg.orph { background: #e6dafd; border: 1px solid #b9a1f5; }
+.diff-legend .lg.ed { background: #fff3b0; border: 1px solid #eab308; }
+.diff-save-actions { flex: 1 1 100%; display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; border-radius: 8px; background: #fffbeb; border: 1px solid #fde68a; }
+.diff-save-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+.diff-save-actions small { color: #92400e; font-size: 11px; }
+.diff-save-actions button.diff-primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+.diff-ctx { position: fixed; z-index: 10000; min-width: 220px; padding: 4px; border-radius: 8px; background: var(--bg-surface, #fff); border: 1px solid var(--border-default, #e2e8f0); box-shadow: 0 8px 24px rgba(15, 23, 42, 0.16); display: flex; flex-direction: column; }
+.diff-ctx button { text-align: left; padding: 6px 10px; border: 0; border-radius: 5px; background: transparent; font: inherit; font-size: 12px; cursor: pointer; color: var(--text-primary, #0f172a); }
+.diff-ctx button:hover:not(:disabled) { background: var(--primary-subtle, #eff6ff); }
+.diff-ctx button:disabled { color: var(--text-quaternary, #94a3b8); cursor: default; }
+.diff-ctx.hidden { display: none; }
+.diff-toolbar label { white-space: nowrap; }
+.diff-split .dg .gap-text { left: 72px; }   /* 并排时左侧固定列只有行号 + 箭头（66px），折叠提示紧挨其后，不被遮住 */

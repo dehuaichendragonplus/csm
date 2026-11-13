@@ -936,6 +936,14 @@
         <button type="button" id="diff-swap" title="交换旧 / 新两边">⇄ 交换</button>
         <label title="只显示有改动的列（以及主键列）"><input type="checkbox" id="diff-onlycols"> 只看改动列</label>
         <label title="不折叠相同的行"><input type="checkbox" id="diff-allrows"> 显示全部行</label>
+        <span id="diff-edit-tools" class="diff-edit-tools hidden">
+          <button type="button" id="diff-copy-right">复制到右侧 →</button>
+          <button type="button" id="diff-copy-left">← 复制到左侧</button>
+          <button type="button" id="diff-undo" title="撤销（⌘Z）">↶ 撤销</button>
+        </span>
+        <span class="diff-legend" title="配色同 Beyond Compare：红 = 两边不同，紫 = 只有一侧有（孤立行），黄 = 已编辑未保存">
+          <i class="lg mod"></i>差异 <i class="lg orph"></i>仅一侧 <i class="lg ed"></i>已编辑
+        </span>
         <span class="diff-spacer"></span>
         <span id="diff-pos" class="diff-pos"></span>
         <button type="button" id="diff-prev" title="上一处改动（K / ⌥↑）">↑</button>
@@ -961,6 +969,14 @@
           </div>
         </div>
         <div class="diff-footer-actions">
+          <div id="diff-save-actions" class="diff-save-actions hidden">
+            <div class="diff-save-buttons">
+              <button id="diff-save-local" type="button" title="把左右两侧里「本地」那一侧的编辑写回本地 xlsx（保存前自动备份）">保存本地</button>
+              <button id="diff-save-cloud" type="button" title="把「云端」那一侧的编辑写入 Google 表格（只写有改动的单元格）">保存到云端</button>
+              <button id="diff-discard" type="button">放弃编辑</button>
+            </div>
+            <small id="diff-save-status"></small>
+          </div>
           <div class="diff-action">
             <button id="diff-download" type="button" class="diff-dl" aria-describedby="diff-download-hint">云端 → 覆盖本地</button>
             <small id="diff-download-hint">覆盖前自动备份，可在列表的「本地备份」恢复</small>
