@@ -1738,6 +1738,7 @@
     const action = lubanAction();
     els.btnLuban.disabled = busyCount > 0 || !action;
     els.btnLuban.title = action ? `执行 ${action.label}` : '缺少 Tools 目录下的 Luban 客户端生成脚本';
+    els.btnLuban.classList.toggle('hidden', !action);
   }
 
   els.btnLuban.addEventListener('click', () => {
