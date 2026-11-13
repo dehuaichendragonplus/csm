@@ -22,7 +22,8 @@ const {
   getCachedExportPath,
   saveExportToCache,
   singleFlightExport,
-  pruneOldExports
+  pruneOldExports,
+  invalidateCloudExports
 } = require('./lib/cloud-export-cache');
 const updateCheck = require('./lib/update-check');
 const githubUpdate = require('./lib/github-update');
@@ -822,6 +823,10 @@ async function main(opts = {}) {
       } : {};
       // 需要改源表：先把预览给用户确认，此时什么都没写
       if (info.needsWriteThrough) return res.status(409).json({ error: 'NEEDS_WRITE_THROUGH', ...extra });
+      // 云端内容已变：作废这张表的导出缓存与核对结果。镜像表写回源表后修改时间不变，不作废会一直拿旧内容做差异 / 核对 / 下载
+      invalidateCloudExports(exportCacheDir, entry.spreadsheetId);
+      delete verifyCacheOf(id)[entry.path];
+      writeJson(verifyCachePathOf(id), verifyCacheOf(id));
       // 还有写不进去的差异（源表有公式 / 源表刚被改过 / 超出公式范围 / 冲突）：云端与本地不一致，不记为「已同步」
       const partial = !!(info.formulaProtected && (info.blockedCount > 0 || (info.localOnlySheets || []).length > 0));
       // 云端内容已与本地一致：记为已同步（并等 Drive 转换后修改时间稳定再记一次），避免上传后显示「有更新」

@@ -98,3 +98,24 @@ test('cloud-export-cache: singleFlightExport deduplicates concurrent calls', asy
   assert.strictEqual(res2, 'done');
   assert.strictEqual(res3, 'done');
 });
+
+test('invalidateCloudExports：只删指定表的全部导出缓存（内存 + 磁盘），不动其他表', () => {
+  const os = require('node:os');
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const c = require('../lib/cloud-export-cache');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'csm-inv-'));
+  const src = path.join(dir, 'src.xlsx');
+  fs.writeFileSync(src, 'x');
+  c.saveExportToCache(dir, 'SHEET_A_1234567890', 't1', src);
+  c.saveExportToCache(dir, 'SHEET_A_1234567890', 't2', src);
+  c.saveExportToCache(dir, 'SHEET_B_1234567890', 't1', src);
+  c.setMemoryWorkbook(c.cloudMemoryKey('SHEET_A_1234567890', 't1'), [{}]);
+  c.setMemoryWorkbook(c.cloudMemoryKey('SHEET_B_1234567890', 't1'), [{}]);
+  assert.strictEqual(c.invalidateCloudExports(dir, 'SHEET_A_1234567890'), 2);
+  assert.strictEqual(c.getCachedExportPath(dir, 'SHEET_A_1234567890', 't1'), null);
+  assert.ok(c.getCachedExportPath(dir, 'SHEET_B_1234567890', 't1'));
+  assert.strictEqual(c.getMemoryWorkbook(c.cloudMemoryKey('SHEET_A_1234567890', 't1')), null);
+  assert.ok(c.getMemoryWorkbook(c.cloudMemoryKey('SHEET_B_1234567890', 't1')));
+  fs.rmSync(dir, { recursive: true, force: true });
+});
