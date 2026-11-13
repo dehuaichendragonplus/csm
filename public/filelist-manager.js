@@ -135,7 +135,7 @@
   async function loadList(highlightPath) {
     const projectId = panelProjectId;
     if (!panelIsCurrent(projectId)) return;
-    if (!entries.length) el.tbody.innerHTML = '<tr><td colspan="6" class="fl-empty">加载中…</td></tr>';
+    if (!el.tbody.children.length) el.tbody.innerHTML = '<tr><td colspan="6" class="fl-empty">加载中…</td></tr>';
     const resp = await fetch(api('/filelist'));
     const data = await readJson(resp);
     if (!panelIsCurrent(projectId)) return;
@@ -219,6 +219,9 @@
   }
 
   function renderList(highlightPath) {
+    const wrap = el.tbody?.closest('.fl-table-wrap');
+    const prevScrollTop = wrap ? wrap.scrollTop : 0;
+
     const terms = window.TableSearch.parseQuery(el.filter.value);
     const match = list => (terms.length ? list.filter(e => window.TableSearch.matchRow(e, terms)) : list);
     const linkedEntries = entries.filter(linked);
@@ -273,7 +276,11 @@
         for (const t of localShown) el.tbody.appendChild(renderLocalRow(t));
       }
     }
-    if (target) target.scrollIntoView({ block: 'center' });
+    if (target) {
+      target.scrollIntoView({ block: 'center' });
+    } else if (wrap && prevScrollTop) {
+      wrap.scrollTop = prevScrollTop;
+    }
   }
 
   // 本地路径 → 云端目标目录（按映射镜像相对目录）；没有映射时返回 null
@@ -290,7 +297,9 @@
   function renderLocalRow(t) {
     const tr = document.createElement('tr');
     tr.className = 'fl-row fl-row-local';
-    
+    const busy = rowBusy.get(t.path);
+    if (busy) tr.classList.add('is-busy');
+
     // 表名
     const nameTd = document.createElement('td');
     nameTd.className = 'fl-col-name';
@@ -336,29 +345,40 @@
     // 本地文件状态
     const statusTd = document.createElement('td');
     statusTd.className = 'fl-col-status';
-    statusTd.innerHTML = `<span class="fl-status-pill status-unuploaded"><span class="dot"></span>仅本地 · ${fmtSize(t.size)}</span>`;
+    if (busy) {
+      statusTd.innerHTML = `<span class="fl-status-pill status-busy"><span class="dot"></span>${escapeHtml(busy)} · ${fmtSize(t.size)}</span>`;
+    } else {
+      statusTd.innerHTML = `<span class="fl-status-pill status-unuploaded"><span class="dot"></span>仅本地 · ${fmtSize(t.size)}</span>`;
+    }
     statusTd.title = `本地修改时间：${fmtTime(t.mtime)}`;
     tr.appendChild(statusTd);
 
     // 操作
     const ops = document.createElement('td');
     ops.className = 'fl-col-ops';
-    const up = document.createElement('button');
-    up.type = 'button';
-    up.className = 'fl-action-btn fl-btn-primary';
-    up.innerHTML = `${window.CSMIcons?.upload || '⬆'} <span>上传到云端</span>`;
-    up.title = '在云端对应目录新建 Google 表格并加入清单';
-    up.disabled = batchRunning;
-    up.addEventListener('click', () => openUpload(t));
-    ops.appendChild(up);
+    if (busy) {
+      const b = document.createElement('span');
+      b.className = 'fl-busy-pill';
+      b.textContent = busy;
+      ops.appendChild(b);
+    } else {
+      const up = document.createElement('button');
+      up.type = 'button';
+      up.className = 'fl-action-btn fl-btn-primary';
+      up.innerHTML = `${window.CSMIcons?.upload || '⬆'} <span>上传到云端</span>`;
+      up.title = '在云端对应目录新建 Google 表格并加入清单';
+      up.disabled = batchRunning;
+      up.addEventListener('click', () => openUpload(t));
+      ops.appendChild(up);
+    }
     tr.appendChild(ops);
-    tr.addEventListener('dblclick', () => openUpload(t));
+    if (!busy) tr.addEventListener('dblclick', () => openUpload(t));
     return tr;
   }
 
   // ---------- 上传本地表 ----------
   function openUpload(t) {
-    if (batchRunning) return;
+    if (batchRunning || rowBusy.has(t.path)) return;
     uploading = t;
     const target = cloudTargetOf(t.path);
     el.upLocal.textContent = `${baseLabel}${t.path}`;
@@ -405,6 +425,7 @@
     if (!t) return;
     el.upSave.disabled = true;
     setText(el.upMsg, '上传中…（xlsx 较大时需要十几秒）');
+    setRowBusy(t.path, '上传中…');
     try {
       const { resp, data } = await postUpload({
         path: t.path,
@@ -415,21 +436,32 @@
       });
       if (resp.status === 409 && data.code === 'CLOUD_EXISTS') {
         setText(el.upMsg, '');
+        rowBusy.delete(t.path);
+        renderList();
         const ok = confirm(`${data.error}\n\n确定：直接关联这张已有的云端表（不上传、不覆盖它）\n取消：返回，可修改云端表名后再上传`);
         if (ok) return saveUpload('link');
         el.upCloudName.focus();
         return;
       }
-      if (!resp.ok) { setText(el.upMsg, uploadErrorText(resp, data), 'error'); return; }
+      if (!resp.ok) {
+        rowBusy.delete(t.path);
+        renderList();
+        setText(el.upMsg, uploadErrorText(resp, data), 'error');
+        return;
+      }
       logUploaded(data);
       closeUpload();
       el.filter.value = '';
+      rowBusy.delete(t.path);
       await loadList(data.entry.path);
       setText(el.flash, data.linked ? `已关联：${data.entry.path}` : `已上传并加入清单：${data.entry.path}`, 'ok');
-      window.CSM.reloadTables();
+      window.CSM.reloadTables?.();
     } catch (err) {
+      rowBusy.delete(t.path);
+      renderList();
       setText(el.upMsg, err.message, 'error');
     } finally {
+      rowBusy.delete(t.path);
       el.upSave.disabled = false;
     }
   }
@@ -448,21 +480,31 @@
     const failed = [];
     window.CSM.appendLog(`\n===== 批量上传本地表（${list.length}）=====\n`);
     for (const t of list) {
+      setRowBusy(t.path, '上传中…');
       setText(el.flash, `上传中 ${done + failed.length + 1}/${list.length}：${t.path}`);
       try {
         const { resp, data } = await postUpload({ path: t.path, onExisting: 'link' });
+        rowBusy.delete(t.path);
         if (!resp.ok) {
           failed.push(t.path);
           window.CSM.appendLog(`✗ ${t.path}：${uploadErrorText(resp, data)}\n`);
-          if (resp.status === 401 || resp.status === 403 || data.code === 'NO_ROOT') break; // 后面的也会同样失败
+          if (resp.status === 401 || resp.status === 403 || data.code === 'NO_ROOT') {
+            renderList();
+            break; // 后面的也会同样失败
+          }
+          renderList();
           continue;
         }
         done++;
         if (data.linked) linked++;
         logUploaded(data);
+        await loadList();
+        window.CSM.reloadTables?.();
       } catch (err) {
+        rowBusy.delete(t.path);
         failed.push(t.path);
         window.CSM.appendLog(`✗ ${t.path}：${err.message}\n`);
+        renderList();
       }
     }
     batchRunning = false;
@@ -470,7 +512,7 @@
     const summary = `批量上传完成：成功 ${done}${linked ? `（其中关联已有表 ${linked}）` : ''}${failed.length ? `，失败 ${failed.length}（详见日志）` : ''}`;
     setText(el.flash, summary, failed.length ? 'error' : 'ok');
     window.CSM.appendLog(`${summary}\n`);
-    window.CSM.reloadTables();
+    window.CSM.reloadTables?.();
   }
 
   // ---------- 路径显示：去掉映射目录段，只显示相对部分 ----------

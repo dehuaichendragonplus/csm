@@ -3167,6 +3167,16 @@ kbd {
 }
 .fl-status-pill.status-unuploaded .dot { background: #64748b; }
 
+.fl-status-pill.status-busy {
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  color: #1d4ed8;
+}
+.fl-status-pill.status-busy .dot {
+  background: #3b82f6;
+  animation: tab-badge-pulse 1.8s ease-in-out infinite;
+}
+
 .fl-status-pill.status-warn {
   background: #fffbeb;
   border: 1px solid #fde68a;
