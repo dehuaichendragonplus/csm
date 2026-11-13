@@ -812,6 +812,8 @@
         await loadDiff({ force: true });
         return;
       }
+    } else if (r.status === 409 && r.data.error === 'NEEDS_WRITE_THROUGH') {
+      setMsg(d.msg, '已取消：该表是公式镜像，全部覆盖需要写回源表，未写入任何内容', 'error');
     } else {
       setMsg(d.msg, `上传失败：${r.data.error || r.status}`, 'error');
     }

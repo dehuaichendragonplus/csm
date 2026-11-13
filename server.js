@@ -9,7 +9,7 @@ const oauth = require('./lib/oauth');
 const { loadFilelist } = require('./lib/filelist-loader');
 const { loadState, saveState, updateEntry, hashFile, fileVersion } = require('./lib/sync-state');
 const { google } = require('googleapis');
-const { getModifiedTimes, getCloudInfo, getCurrentUser, withRetry, uploadXlsxToSheet, downloadViaDrive, getFileInfo, resolveFolderPath, findSheetInFolder, createSheetFromXlsx } = require('./lib/drive-api');
+const { getModifiedTimes, getCloudInfo, getCurrentUser, withRetry, uploadXlsxToSheet, uploadXlsxPreservingFormulas, downloadViaDrive, getFileInfo, resolveFolderPath, findSheetInFolder, createSheetFromXlsx } = require('./lib/drive-api');
 const backups = require('./lib/backups');
 const { appendHistory, readHistory } = require('./lib/history');
 const { readWorkbook } = require('./lib/xlsx-reader');
@@ -809,7 +809,21 @@ async function main(opts = {}) {
       });
     }
     try {
-      const info = await uploadXlsxToSheet(entry.spreadsheetId, buf, oauth2Client);
+      // 默认保留云端公式：云端有公式（如 IMPORTRANGE 镜像主表）时按单元格写入、不动公式；镜像区的改动写回源表（需 writeThrough=1 确认）。
+      // 配置 preserveCloudFormulas:false 可退回整表替换
+      const info = cfg.preserveCloudFormulas === false
+        ? await uploadXlsxToSheet(entry.spreadsheetId, buf, oauth2Client)
+        : await uploadXlsxPreservingFormulas(entry.spreadsheetId, buf, oauth2Client, { writeThrough: req.query.writeThrough === '1' });
+      const extra = info.formulaProtected ? {
+        formulaProtected: true, written: info.written, sourceWriteCount: info.sourceWriteCount, sources: info.sources,
+        derivedCount: info.derivedCount, derivedSamples: info.derivedSamples,
+        blockedCount: info.blockedCount, blockedSamples: info.blockedSamples,
+        formulaSheets: info.formulaSheets, localOnlySheets: info.localOnlySheets, cloudOnlySheets: info.cloudOnlySheets
+      } : {};
+      // 需要改源表：先把预览给用户确认，此时什么都没写
+      if (info.needsWriteThrough) return res.status(409).json({ error: 'NEEDS_WRITE_THROUGH', ...extra });
+      // 还有写不进去的差异（源表有公式 / 源表刚被改过 / 超出公式范围 / 冲突）：云端与本地不一致，不记为「已同步」
+      const partial = !!(info.formulaProtected && (info.blockedCount > 0 || (info.localOnlySheets || []).length > 0));
       // 云端内容已与本地一致：记为已同步（并等 Drive 转换后修改时间稳定再记一次），避免上传后显示「有更新」
       const markSynced = modifiedTime => {
         const st = fs.statSync(entry.savePath);
@@ -818,13 +832,19 @@ async function main(opts = {}) {
         delete verifyCacheOf(id)[entry.path];
         driveCaches.get(id).set(entry.spreadsheetId, { modifiedTime, name: info.name, modifiedBy: currentUser && (currentUser.name || currentUser.email), error: null });
       };
-      markSynced(info.modifiedTime);
-      settleModifiedTime(entry.spreadsheetId, info.modifiedTime).then(t => { if (t !== info.modifiedTime) markSynced(t); }).catch(() => {});
+      if (!partial) {
+        markSynced(info.modifiedTime);
+        settleModifiedTime(entry.spreadsheetId, info.modifiedTime).then(t => { if (t !== info.modifiedTime) markSynced(t); }).catch(() => {});
+      }
       await logHistory(req.ctx, {
         op: 'upload', path: entry.path, name: entry.name, ok: true, forced: req.query.force === '1',
-        cloudModifiedTime: info.modifiedTime, replacedCloudModifiedTime: before.modifiedTime, replacedCloudModifiedBy: before.modifiedBy
+        cloudModifiedTime: info.modifiedTime, replacedCloudModifiedTime: before.modifiedTime, replacedCloudModifiedBy: before.modifiedBy,
+        ...(info.formulaProtected ? {
+          formulaProtected: true, written: info.written, sourceWriteCount: info.sourceWriteCount, blockedCount: info.blockedCount,
+          sources: (info.sources || []).map(x => ({ sourceId: x.sourceId, name: x.name, count: x.sheets.reduce((n, t) => n + t.count, 0) }))
+        } : {})
       });
-      res.json({ ok: true, modifiedTime: info.modifiedTime, size: buf.length });
+      res.json({ ok: true, modifiedTime: info.modifiedTime, size: buf.length, ...(info.formulaProtected ? { ...extra, partial } : {}) });
     } catch (err) {
       await logHistory(req.ctx, { op: 'upload', path: entry.path, name: entry.name, ok: false, error: err.message });
       res.status(500).json({ error: err.message });

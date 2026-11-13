@@ -1174,12 +1174,14 @@
 
   // 上传请求（确认流程在差异预览里）：expect = 用户确认时看到的云端修改时间，force = 云端已变仍强制覆盖。
   // 返回 { ok, status, data }；授权类错误在这里统一提示
-  async function uploadRequest(p, { expect, force } = {}) {
+  async function uploadRequest(p, { expect, force, writeThrough } = {}) {
     const q = new URLSearchParams({ path: p });
     if (expect) q.set('expect', expect);
     if (force) q.set('force', '1');
+    if (writeThrough) q.set('writeThrough', '1');
     setBusy(true);
     setRowBusy(p, true, '上传中…');
+    let again = null;
     try {
       const resp = await fetch(api(`/upload?${q}`), { method: 'POST' });
       const data = await resp.json().catch(() => ({}));
@@ -1189,20 +1191,62 @@
       } else if (resp.status === 403 && data.error === 'NEED_UPLOAD_SCOPE') {
         appendLog('! 当前授权不含写权限，请重新授权后再上传\n');
         if (confirm('当前 Google 授权只有只读权限，需要重新授权才能上传。现在去授权吗？')) location.href = '/auth/start';
+      } else if (resp.status === 409 && data.error === 'NEEDS_WRITE_THROUGH') {
+        // 云端是公式镜像（IMPORTRANGE）：要全部覆盖，镜像区的改动只能写回源表，先让用户确认（此时什么都没写）
+        if (confirm(writeThroughConfirmText(p, data))) again = { expect, force, writeThrough: true };
+        else appendLog(`- 已取消上传 ${p}（未写入任何内容）\n`);
+      } else if (resp.ok && data.formulaProtected) {
+        logFormulaUpload(p, data);
       } else if (resp.ok) {
         appendLog(`✓ 已用本地覆盖云端 ${p}（云端修改时间 ${formatTime(data.modifiedTime)}）\n`);
       } else if (resp.status !== 409) {
         appendLog(`✗ 上传失败: ${data.error || resp.status}\n`);
       }
-      return { ok: resp.ok, status: resp.status, data };
+      if (!again) return { ok: resp.ok, status: resp.status, data };
     } catch (err) {
       appendLog(`! ${err.message}\n`);
       return { ok: false, status: 0, data: { error: err.message } };
     } finally {
       setRowBusy(p, false);
       setBusy(false);
-      loadTables();
+      if (!again) loadTables();
     }
+    return uploadRequest(p, again);
+  }
+
+  const BLOCK_REASON = {
+    outside_range: '超出公式引用的范围',
+    conflict: '多张镜像表要写同一个源格但值不同',
+    source_formula: '源表这一格本身是公式',
+    source_changed: '源表刚被别人改过（镜像还没刷新）',
+    source_missing: '找不到源表的工作表',
+    mirror_error: '镜像公式当前报错（如 IMPORTRANGE 未授权），看不到源数据，无法核对'
+  };
+
+  function writeThroughConfirmText(p, d) {
+    const lines = [`「${p}」的云端表是公式镜像，镜像区不能直接写值（会把公式顶成 #REF!）。`, '', '要让云端与本地完全一致，将按公式映射写回源表：'];
+    for (const s of d.sources || []) {
+      lines.push(`  · ${s.name || s.sourceId}`);
+      for (const t of s.sheets) {
+        lines.push(`      ${t.title}：${t.count} 个单元格，例：${t.samples.slice(0, 3).map(x => `${x.cell}=「${x.value}」`).join('；')}`);
+      }
+    }
+    lines.push('', `镜像表自身的非公式区：${d.written} 个单元格。`);
+    if (d.derivedCount) lines.push(`另有 ${d.derivedCount} 格是 VLOOKUP 等公式算出来的，不写，源表更新后会自动变。`);
+    if (d.blockedCount) lines.push(`有 ${d.blockedCount} 格写不了（见日志），上传后该表仍会显示有差异。`);
+    lines.push('', '源表是共享数据源，写入会影响所有引用它的表。确定写入吗？');
+    return lines.join('\n');
+  }
+
+  function logFormulaUpload(p, d) {
+    appendLog(`✓ ${p}：已保留云端公式。镜像表写入 ${d.written} 格${d.sourceWriteCount ? `，源表写入 ${d.sourceWriteCount} 格` : ''}（云端修改时间 ${formatTime(d.modifiedTime)}）\n`);
+    for (const s of d.sources || []) appendLog(`    源表 ${s.name || s.sourceId}：${s.sheets.map(t => `${t.title} ${t.count} 格`).join('，')}\n`);
+    if (d.derivedCount) appendLog(`  ${d.derivedCount} 格由 VLOOKUP 等公式计算，未写入，源表刷新后自动更新\n`);
+    if (d.blockedCount) {
+      appendLog(`! ${d.blockedCount} 格未能写入，该表仍会显示有差异：\n`);
+      for (const x of d.blockedSamples || []) appendLog(`    ${x.sheet}!${x.cell}「${x.cloud}」→「${x.local}」：${BLOCK_REASON[x.reason] || x.reason}\n`);
+    }
+    for (const n of d.localOnlySheets || []) appendLog(`! 本地有而云端没有的工作表未上传：${n}\n`);
   }
 
   function appendChangeSummary(parent, row) {
