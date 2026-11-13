@@ -170,3 +170,16 @@ test('按 ID 查找能命中完整差异展示上限之后的记录', () => {
   assert.deepStrictEqual(sheet.view.rows[0].lv, ['2004', '6']);
   assert.deepStrictEqual(sheet.view.rows[0].cv, ['2004', '12']);
 });
+
+// 一侧整列为空 = 新增 / 删除了一整列（如云端加了一列、表头还没填）：差异结果要标出来
+test('diffWorkbooks 标出只在一侧有内容的列', () => {
+  const { diffWorkbooks: diff } = require('../lib/xlsx-diff');
+  const L = [['id', 'a'], ['number', 'number'], ['#ID', 'x'], ['1', '5']];
+  const C = [['id', 'a', '', ''], ['number', 'number', '', ''], ['#ID', 'x', '', '颜色'], ['1', '5', '', '5,2']];
+  const sheet = diff([{ name: 'S', rows: L }], [{ name: 'S', rows: C }]).sheets[0];
+  assert.deepEqual(sheet.onlyCols, { local: [], cloud: [3] });
+  const back = diff([{ name: 'S', rows: C }], [{ name: 'S', rows: L }]).sheets[0];
+  assert.deepEqual(back.onlyCols, { local: [3], cloud: [] });
+  const same = diff([{ name: 'S', rows: L }], [{ name: 'S', rows: L }]).sheets[0];
+  assert.deepEqual(same.onlyCols, { local: [], cloud: [] });
+});
