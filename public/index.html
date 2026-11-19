@@ -249,7 +249,7 @@
   <div id="dir-modal" class="modal hidden">
     <div class="modal-box">
       <header class="modal-head">
-        <strong>选择项目的配置表目录</strong>
+        <strong id="dir-modal-title">选择项目的配置表目录</strong>
         <button id="dir-close" type="button" class="modal-close-btn" title="关闭">✕</button>
       </header>
       <div class="dir-toolbar">
@@ -258,12 +258,12 @@
       </div>
       <div id="dir-path" class="dir-path"></div>
       <ul id="dir-list" class="dir-list"></ul>
-      <label class="dir-name">项目名称
+      <label id="dir-name-field" class="dir-name">项目名称
         <input id="dir-name" type="text" placeholder="留空则使用配置里的 title / 目录名">
       </label>
       <p id="dir-msg" class="dir-msg" role="status"></p>
       <footer class="modal-foot">
-        <span class="dir-tip">选择包含项目配置或配置表清单的目录</span>
+        <span id="dir-modal-tip" class="dir-tip">选择包含项目配置或配置表清单的目录</span>
         <button id="dir-pick" type="button" class="primary">添加此目录</button>
       </footer>
     </div>
@@ -885,7 +885,10 @@
               <span>本地配置目录</span>
               <p id="project-settings-dir" class="dir-monospace-tip">—</p>
             </div>
-            <button id="project-btn-reveal" type="button" class="secondary" title="在访达中定位项目配置表根目录">在访达中显示 ↗</button>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <button id="project-btn-change-dir" type="button" class="secondary" title="更改或重新定位项目配置表目录">更改目录…</button>
+              <button id="project-btn-reveal" type="button" class="secondary" title="在访达中定位项目配置表根目录">在访达中显示 ↗</button>
+            </div>
           </div>
         </section>
 

@@ -37,7 +37,7 @@ const driveTree = require('./lib/drive-tree');
 const { aggregateTables } = require('./lib/table-aggregator');
 const { CONFIG_FILENAME, loadConfig, publicConfig } = require('./lib/config');
 const { uploadConflict } = require('./lib/status');
-const { loadProjects, addProject, removeProject, renameProject, moveProject, findProject } = require('./lib/projects');
+const { loadProjects, addProject, removeProject, renameProject, updateProject, moveProject, findProject } = require('./lib/projects');
 const { listDirs } = require('./lib/fs-browser');
 const { pickFolder } = require('./lib/native-picker');
 const { sseSetup, sseEmit } = require('./lib/sse');
@@ -404,7 +404,11 @@ async function main(opts = {}) {
 
   // ---------- 项目管理 ----------
   app.get('/api/projects', (_req, res) => {
-    res.json(loadProjects(REGISTRY_PATH));
+    const list = loadProjects(REGISTRY_PATH).map(p => ({
+      ...p,
+      exists: fs.existsSync(p.dir)
+    }));
+    res.json(list);
   });
 
   app.post('/api/projects', (req, res) => {
@@ -430,11 +434,19 @@ async function main(opts = {}) {
 
   app.patch('/api/projects/:id', (req, res) => {
     try {
-      const p = renameProject(REGISTRY_PATH, req.params.id, req.body && req.body.name);
-      if (!p) return res.status(404).json({ error: 'unknown project' });
-      res.json(p);
+      const { name, dir } = req.body || {};
+      const result = updateProject(REGISTRY_PATH, req.params.id, { name, dir });
+      if (!result || !result.project) return res.status(404).json({ error: 'unknown project' });
+      const { project, generated } = result;
+      if (dir) {
+        driveCaches.delete(project.id);
+        driveCacheFresh.delete(project.id);
+        cloudPathPreviews.delete(project.id);
+        clearVerifyCache(project.id);
+      }
+      res.json({ ...project, project, generated, exists: fs.existsSync(project.dir) });
     } catch (err) {
-      res.status(400).json({ error: err.message });
+      res.status(err.code === 'DUPLICATE' ? 409 : 400).json({ error: err.message });
     }
   });
 

@@ -142,7 +142,23 @@
     if (!resp.ok) {
       el.tbody.innerHTML = '';
       el.count.textContent = '';
+      const isMissingConfig = /找不到配置文件|目录不存在|项目配置有误/i.test(data.error || '');
       setText(el.flash, `读取清单失败：${data.error || resp.status}`, 'error');
+      if (isMissingConfig && el.tbody) {
+        el.tbody.innerHTML = `<tr><td colspan="6" class="fl-empty" style="padding:32px 16px;text-align:center;">
+          <div style="font-size:24px;margin-bottom:8px;">📁</div>
+          <div style="font-weight:600;margin-bottom:6px;color:var(--text-primary);">项目配置目录不存在或已被移动</div>
+          <div style="font-size:12px;color:var(--text-secondary);margin-bottom:12px;">${escapeHtml(data.error || '')}</div>
+          <button type="button" id="fl-tbody-relocate-btn" class="fl-btn fl-btn-primary" style="margin:0 auto;display:inline-flex;">重新定位项目目录…</button>
+        </td></tr>`;
+        document.getElementById('fl-tbody-relocate-btn')?.addEventListener('click', () => {
+          close();
+          const p = window.CSM?.getProjects?.().find(x => x.id === panelProjectId);
+          if (typeof window.CSM?.relocateProject === 'function') {
+            window.CSM.relocateProject(p || { id: panelProjectId });
+          }
+        });
+      }
       return;
     }
     entries = data.entries || [];
@@ -956,7 +972,20 @@
       return;
     }
     if (rootInfo.error) {
-      el.root.innerHTML = `<div class="fl-root-error">⚠ ${escapeHtml(rootInfo.error)}</div>`;
+      const isMissingConfig = /找不到配置文件|目录不存在|项目配置有误/i.test(rootInfo.error);
+      el.root.innerHTML = `<div class="fl-root-error" style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+        <span>⚠ ${escapeHtml(rootInfo.error)}</span>
+        ${isMissingConfig ? '<button type="button" id="fl-btn-relocate-dir" class="fl-btn fl-btn-secondary" style="font-size:12px;padding:3px 8px;white-space:nowrap;">重新定位目录</button>' : ''}
+      </div>`;
+      if (isMissingConfig) {
+        document.getElementById('fl-btn-relocate-dir')?.addEventListener('click', () => {
+          close();
+          const p = window.CSM?.getProjects?.().find(x => x.id === panelProjectId);
+          if (typeof window.CSM?.relocateProject === 'function') {
+            window.CSM.relocateProject(p || { id: panelProjectId });
+          }
+        });
+      }
       return;
     }
     const r = rootInfo.root;

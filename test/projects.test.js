@@ -3,7 +3,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const { addProject, removeProject, renameProject, loadProjects, findProject, moveProject } = require('../lib/projects');
+const { addProject, removeProject, renameProject, updateProject, loadProjects, findProject, moveProject } = require('../lib/projects');
 const { listDirs } = require('../lib/fs-browser');
 
 function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'sm-proj-')); }
@@ -110,4 +110,76 @@ test('拖动目标已被移除时，拒绝移动并保留其他项目', () => {
   fs.writeFileSync(reg, JSON.stringify(projects));
   assert.strictEqual(moveProject(reg, 'alpha', 'removed', 'before'), null);
   assert.deepStrictEqual(loadProjects(reg), projects);
+});
+
+test('updateProject: 可以更新项目目录，保留 id 与未改动字段', () => {
+  const reg = path.join(tmp(), 'projects.json');
+  const dir1 = tmp();
+  const dir2 = tmp();
+  fs.writeFileSync(path.join(dir1, 'syncmanager.config.json'), JSON.stringify({ title: 'T1', filelist: 'f.json' }));
+  fs.writeFileSync(path.join(dir2, 'syncmanager.config.json'), JSON.stringify({ title: 'T2', filelist: 'f.json' }));
+  const { project } = addProject(reg, dir1, 'Project1');
+
+  const updated = updateProject(reg, project.id, { dir: dir2 });
+  assert.strictEqual(updated.project.id, project.id);
+  assert.strictEqual(updated.project.name, 'Project1');
+  assert.strictEqual(updated.project.dir, dir2);
+  assert.strictEqual(updated.generated, false);
+  assert.strictEqual(findProject(reg, project.id).dir, dir2);
+});
+
+test('updateProject: 新目录只含 Input/filelist.json 时自动生成配置', () => {
+  const reg = path.join(tmp(), 'projects.json');
+  const dir1 = tmp();
+  const dir2 = tmp();
+  fs.writeFileSync(path.join(dir1, 'syncmanager.config.json'), JSON.stringify({ title: 'T1', filelist: 'f.json' }));
+  fs.mkdirSync(path.join(dir2, 'Input'));
+  fs.writeFileSync(path.join(dir2, 'Input/filelist.json'), '[]');
+  const { project } = addProject(reg, dir1, 'Project1');
+
+  const updated = updateProject(reg, project.id, { dir: dir2 });
+  assert.strictEqual(updated.generated, true);
+  assert.strictEqual(updated.project.dir, dir2);
+  assert.ok(fs.existsSync(path.join(dir2, 'syncmanager.config.json')));
+});
+
+test('updateProject: 新目录不存在或无配置/清单时抛出错误，原项目信息不变', () => {
+  const reg = path.join(tmp(), 'projects.json');
+  const dir1 = tmp();
+  const badDir = tmp();
+  fs.writeFileSync(path.join(dir1, 'syncmanager.config.json'), JSON.stringify({ title: 'T1', filelist: 'f.json' }));
+  const { project } = addProject(reg, dir1, 'Project1');
+
+  assert.throws(() => updateProject(reg, project.id, { dir: '/not/exist/path' }), /目录不存在/);
+  assert.throws(() => updateProject(reg, project.id, { dir: badDir }), /没有 syncmanager.config.json/);
+  assert.strictEqual(findProject(reg, project.id).dir, dir1);
+});
+
+test('updateProject: 重复指向其他已有项目的目录时报 DUPLICATE', () => {
+  const reg = path.join(tmp(), 'projects.json');
+  const dir1 = tmp();
+  const dir2 = tmp();
+  fs.writeFileSync(path.join(dir1, 'syncmanager.config.json'), JSON.stringify({ title: 'T1', filelist: 'f.json' }));
+  fs.writeFileSync(path.join(dir2, 'syncmanager.config.json'), JSON.stringify({ title: 'T2', filelist: 'f.json' }));
+  const p1 = addProject(reg, dir1, 'Project1').project;
+  const p2 = addProject(reg, dir2, 'Project2').project;
+
+  assert.throws(() => updateProject(reg, p1.id, { dir: dir2 }), e => e.code === 'DUPLICATE');
+});
+
+test('updateProject: 支持同时修改名称和目录，或只修改名称', () => {
+  const reg = path.join(tmp(), 'projects.json');
+  const dir1 = tmp();
+  const dir2 = tmp();
+  fs.writeFileSync(path.join(dir1, 'syncmanager.config.json'), JSON.stringify({ title: 'T1', filelist: 'f.json' }));
+  fs.writeFileSync(path.join(dir2, 'syncmanager.config.json'), JSON.stringify({ title: 'T2', filelist: 'f.json' }));
+  const p1 = addProject(reg, dir1, 'P1').project;
+
+  const res1 = updateProject(reg, p1.id, { name: 'P1-New', dir: dir2 });
+  assert.strictEqual(res1.project.name, 'P1-New');
+  assert.strictEqual(res1.project.dir, dir2);
+
+  const res2 = updateProject(reg, p1.id, { name: 'P1-Final' });
+  assert.strictEqual(res2.project.name, 'P1-Final');
+  assert.strictEqual(res2.project.dir, dir2);
 });

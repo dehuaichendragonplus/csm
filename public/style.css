@@ -204,6 +204,14 @@ html, body {
   height: 34px;
 }
 
+.project-tab.missing-dir {
+  color: var(--danger, #dc2626);
+}
+
+.project-tab.missing-dir .tab-icon {
+  opacity: 0.75;
+}
+
 /* Hide divider next to active tab */
 .project-tab.active::after,
 .project-tab.active + .project-tab::after {
@@ -521,6 +529,21 @@ html, body {
   background: #e9ecef;
   border-color: #cbd5e1;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.omnibar.has-warning {
+  background: #fef2f2;
+  border-color: #fca5a5;
+  color: var(--danger, #dc2626);
+}
+
+.omnibar.has-warning:hover {
+  background: #fee2e2;
+  border-color: #f87171;
+}
+
+.omnibar.has-warning .omnibar-path {
+  color: var(--danger, #dc2626);
 }
 
 .omnibar:focus-visible {

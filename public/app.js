@@ -27,6 +27,9 @@
   let projects = [];
   const api = (p, projId = currentId) => `/api/p/${encodeURIComponent(projId)}${p}`;
   const PROJECT_KEY = 'syncmanager.currentProject';
+  function escapeHtml(s) {
+    return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
 
   // ---------- 项目状态汇总与 Dock / Tab 角标 ----------
   const projectSummaries = new Map(); // id -> { pending, updated, conflict, missing, neverSynced, total }
@@ -233,6 +236,7 @@
     projectBtnRename: document.getElementById('project-btn-rename'),
     projectSettingsDir: document.getElementById('project-settings-dir'),
     projectBtnReveal: document.getElementById('project-btn-reveal'),
+    projectBtnChangeDir: document.getElementById('project-btn-change-dir'),
     consoleDrawer: document.getElementById('console-drawer'),
     consoleBar: document.getElementById('console-bar'),
     consoleIndicator: document.getElementById('console-indicator'),
@@ -1006,6 +1010,29 @@
   function showRefreshFailure(error) {
     setCloudStatus('failed', lastRows ? '检查失败 · 显示上次结果' : '检查失败 · 暂无云端状态');
     appendLog(`! 检查云端失败：${error}\n`);
+    if (!lastRows) {
+      const p = projects.find(x => x.id === currentId);
+      const isMissingDir = (p && p.exists === false) || /找不到配置文件|目录不存在|项目配置有误|ENOENT/i.test(error || '');
+      els.summary.textContent = isMissingDir ? '项目配置目录不存在或已被移动' : '读取配置表列表失败';
+      els.groups.innerHTML = `
+        <div class="empty-tip" style="padding:48px 24px;text-align:center;">
+          <div style="font-size:36px;margin-bottom:12px;">📂</div>
+          <div style="font-weight:600;font-size:15px;color:var(--text-primary);margin-bottom:8px;">
+            ${isMissingDir ? '项目配置目录不存在或已被移动' : '无法读取项目配置'}
+          </div>
+          <div style="font-size:13px;color:var(--text-secondary);max-width:540px;margin:0 auto 16px;line-height:1.6;">
+            ${escapeHtml(error || '找不到项目配置文件，可能是项目位置已移动。')}
+          </div>
+          <button type="button" id="btn-fix-missing-dir" class="primary" style="padding:8px 18px;font-size:13px;">
+            重新定位项目目录…
+          </button>
+        </div>
+      `;
+      const btn = document.getElementById('btn-fix-missing-dir');
+      if (btn) btn.addEventListener('click', () => {
+        if (p) openDirModal({ mode: 'relocate', project: p });
+      });
+    }
   }
 
   function showAuthorizationRequired() {
@@ -1857,7 +1884,15 @@
     els.cloudStatusBar.classList.toggle('hidden', !p);
     if (!p) return;
     els.projectName.textContent = p.name;
-    els.projectDir.textContent = p.dir;
+    if (p.exists === false) {
+      els.projectDir.textContent = `${p.dir} (目录不存在或已移动)`;
+      els.projectDirBadge?.classList.add('has-warning');
+      els.projectDirBadge?.setAttribute('title', `项目配置表目录不存在：${p.dir}\n点击可重新定位目录`);
+    } else {
+      els.projectDir.textContent = p.dir;
+      els.projectDirBadge?.classList.remove('has-warning');
+      els.projectDirBadge?.setAttribute('title', '项目配置表目录：点击在访达 (Finder) 中显示此文件夹');
+    }
     els.projectDir.title = p.dir;
   }
 
@@ -1944,9 +1979,11 @@
     els.projectTabs.innerHTML = '';
     projects.forEach(p => {
       const tab = document.createElement('span');
-      tab.className = `project-tab${p.id === currentId ? ' active' : ''}`;
+      tab.className = `project-tab${p.id === currentId ? ' active' : ''}${p.exists === false ? ' missing-dir' : ''}`;
       tab.dataset.projectId = p.id;
-      tab.title = `${p.dir}\n拖动排序 · 双击重命名`;
+      tab.title = p.exists === false
+        ? `⚠️ 目录不存在或已被移动：${p.dir}\n双击重命名 · 点击可切换`
+        : `${p.dir}\n拖动排序 · 双击重命名`;
       tab.draggable = true;
       tab.addEventListener('mousedown', e => {
         tab.draggable = !e.target.closest('.tab-close, .tab-rename-input');
@@ -2230,15 +2267,20 @@
   // ---------- 选择目录弹窗 ----------
   const dirEls = {
     modal: document.getElementById('dir-modal'),
+    title: document.getElementById('dir-modal-title'),
     path: document.getElementById('dir-path'),
     list: document.getElementById('dir-list'),
     msg: document.getElementById('dir-msg'),
     pick: document.getElementById('dir-pick'),
     close: document.getElementById('dir-close'),
     native: document.getElementById('dir-native'),
-    name: document.getElementById('dir-name')
+    name: document.getElementById('dir-name'),
+    nameField: document.getElementById('dir-name-field'),
+    tip: document.getElementById('dir-modal-tip')
   };
   let dirCurrent = null;
+  let dirMode = 'add'; // 'add' | 'relocate'
+  let relocateTarget = null;
   const DIR_KEY = 'syncmanager.lastDir';
 
   let dirBrowseId = 0;
@@ -2255,7 +2297,7 @@
       dirCurrent = data.path;
       dirEls.path.textContent = data.path;
       dirEls.msg.textContent = data.hint
-        ? '已找到项目配置或配置表清单，可以添加。'
+        ? (dirMode === 'relocate' ? '已找到项目配置或配置表清单，可以更新项目目录。' : '已找到项目配置或配置表清单，可以添加。')
         : '此目录没有找到配置表清单。请继续浏览，或用系统选择器重新选目录。';
       dirEls.pick.disabled = !data.hint;
       dirEls.list.replaceChildren();
@@ -2275,19 +2317,69 @@
     }
   }
 
-  function openDirModal() {
+  function openDirModal(options = {}) {
     if (downloadInProgress) return;
-    dirEls.modal.classList.remove('hidden');
-    dirEls.name.value = '';
-    dirEls.native.focus();
-    browse(lsGet(DIR_KEY));
+    dirMode = options.mode || 'add';
+    relocateTarget = options.project || null;
+
+    if (dirMode === 'relocate' && relocateTarget) {
+      if (dirEls.title) dirEls.title.textContent = `更改「${relocateTarget.name}」的配置表目录`;
+      if (dirEls.nameField) dirEls.nameField.style.display = 'none';
+      if (dirEls.tip) dirEls.tip.textContent = '选择包含项目配置或配置表清单的新目录';
+      if (dirEls.pick) dirEls.pick.textContent = '更新此目录';
+      dirEls.modal.classList.remove('hidden');
+      dirEls.native.focus();
+      browse(relocateTarget.dir || lsGet(DIR_KEY));
+    } else {
+      dirMode = 'add';
+      relocateTarget = null;
+      if (dirEls.title) dirEls.title.textContent = '选择项目的配置表目录';
+      if (dirEls.nameField) dirEls.nameField.style.display = '';
+      if (dirEls.tip) dirEls.tip.textContent = '选择包含项目配置或配置表清单的目录';
+      if (dirEls.pick) dirEls.pick.textContent = '添加此目录';
+      dirEls.modal.classList.remove('hidden');
+      dirEls.name.value = '';
+      dirEls.native.focus();
+      browse(lsGet(DIR_KEY));
+    }
   }
 
-  async function addCurrentDir() {
+  async function submitDirModal() {
     if (!dirCurrent || dirEls.pick.disabled) return;
     const dir = dirCurrent;
     const browseId = dirBrowseId;
     dirEls.pick.disabled = true;
+
+    if (dirMode === 'relocate') {
+      const p = relocateTarget;
+      if (!p) return;
+      dirEls.msg.textContent = '正在更新项目目录…';
+      try {
+        const resp = await fetch(`/api/projects/${encodeURIComponent(p.id)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dir })
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+        lsSet(DIR_KEY, dir);
+        dirEls.modal.classList.add('hidden');
+        appendLog(`✓ 项目「${p.name}」配置目录已更新为：${dir}${data.generated ? '（已自动生成 syncmanager.config.json）' : ''}\n`);
+        showToast(`已更新项目「${p.name}」配置目录`, 'info');
+        await loadProjects(p.id);
+        document.dispatchEvent(new Event('csm-project-changed'));
+        if (els.projectSettingsModal && !els.projectSettingsModal.classList.contains('hidden')) {
+          openProjectSettings();
+        }
+      } catch (err) {
+        if (browseId === dirBrowseId) {
+          dirEls.pick.disabled = false;
+          dirEls.msg.textContent = `更新失败：${err.message}`;
+        }
+      }
+      return;
+    }
+
     dirEls.msg.textContent = '正在添加项目…';
     try {
       const resp = await fetch('/api/projects', {
@@ -2321,7 +2413,7 @@
       if (resp.status === 404) { dirEls.msg.textContent = '服务端还没有该接口，请重启 CSM 后再试（暂时可用下方列表浏览）'; return; }
       const data = await resp.json();
       if (!resp.ok) { dirEls.msg.textContent = `${data.error}，请用下方列表浏览`; return; }
-      if (data.path) await browse(data.path); // 跳到所选目录，确认后点「添加此目录」
+      if (data.path) await browse(data.path); // 跳到所选目录，确认后点「添加此目录」或「更新此目录」
     } catch (err) {
       dirEls.msg.textContent = err.message;
     } finally {
@@ -2329,11 +2421,11 @@
     }
   }
 
-  els.btnAddProject.addEventListener('click', openDirModal);
-  els.firstProjectAdd.addEventListener('click', openDirModal);
+  els.btnAddProject.addEventListener('click', () => openDirModal({ mode: 'add' }));
+  els.firstProjectAdd.addEventListener('click', () => openDirModal({ mode: 'add' }));
   dirEls.native.addEventListener('click', pickNative);
   dirEls.close.addEventListener('click', () => dirEls.modal.classList.add('hidden'));
-  dirEls.pick.addEventListener('click', addCurrentDir);
+  dirEls.pick.addEventListener('click', submitDirModal);
 
   els.btnRefresh.addEventListener('click', () => refresh());
   els.retryRefresh.addEventListener('click', () => refresh());
@@ -2364,9 +2456,14 @@
     });
   }
 
-  // 在访达中定位项目目录
+  // 在访达中定位项目目录（目录不存在时引导重新定位）
   if (els.projectDirBadge) {
     els.projectDirBadge.addEventListener('click', () => {
+      const p = projects.find(x => x.id === currentId);
+      if (p && p.exists === false) {
+        openDirModal({ mode: 'relocate', project: p });
+        return;
+      }
       revealLocal('').then(res => {
         if (res) showToast('已在访达中打开项目目录', 'info');
       });
@@ -2504,7 +2601,15 @@
     const p = projects.find(x => x.id === currentId);
     if (els.projectSettingsName) els.projectSettingsName.textContent = p ? p.name : '';
     if (els.projectSettingsNameInput) els.projectSettingsNameInput.value = p ? p.name : '';
-    if (els.projectSettingsDir) els.projectSettingsDir.textContent = p ? p.dir : '未配置';
+    if (els.projectSettingsDir) {
+      if (!p) {
+        els.projectSettingsDir.textContent = '未配置';
+      } else if (p.exists === false) {
+        els.projectSettingsDir.innerHTML = `${escapeHtml(p.dir)} <span class="badge-missing" style="color:var(--danger,#e53e3e);margin-left:6px;font-weight:600;font-size:11px;">⚠️ 目录不存在或已移动</span>`;
+      } else {
+        els.projectSettingsDir.textContent = p.dir;
+      }
+    }
     if (els.projectSettingsModal) els.projectSettingsModal.classList.remove('hidden');
     if (els.projectSettingsNameInput) {
       setTimeout(() => els.projectSettingsNameInput.focus(), 50);
@@ -2564,8 +2669,23 @@
     });
   }
 
+  if (els.projectBtnChangeDir) {
+    els.projectBtnChangeDir.addEventListener('click', () => {
+      const p = projects.find(x => x.id === currentId);
+      if (p) {
+        closeProjectSettings();
+        openDirModal({ mode: 'relocate', project: p });
+      }
+    });
+  }
+
   if (els.projectBtnReveal) {
     els.projectBtnReveal.addEventListener('click', () => {
+      const p = projects.find(x => x.id === currentId);
+      if (p && p.exists === false) {
+        showToast('项目目录不存在，请先点击「更改目录」重新定位', 'error');
+        return;
+      }
       revealLocal('').then(res => {
         if (res) showToast('已在访达中定位项目根目录', 'info');
       });
@@ -2588,6 +2708,7 @@
     tableRow: p => (lastRows || []).find(r => r.path === p) || null,
     currentId: () => currentId,
     getProjects: () => (projects || []).slice(),
+    relocateProject: p => openDirModal({ mode: 'relocate', project: p || projects.find(x => x.id === currentId) }),
     reloadTables: () => loadTables(),
     appendLog,
     showAuthBanner: () => els.authBanner.classList.remove('hidden')
