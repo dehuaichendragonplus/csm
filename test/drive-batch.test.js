@@ -70,7 +70,7 @@ test('getModifiedTimes：超过 100 个分块请求；被限流的条目和失�
   assert.ok(m.get('id120').error, '整块失败的条目重查后记为错误');
 });
 
-test('toCloudInfo：优先取 lastModifyingUser，退避到 owners 或 sharingUser', () => {
+test('toCloudInfo：优先取 lastModifyingUser，已注销显示已删除账号，不回退 owner 并显示未知', () => {
   // 1. 标准有 displayName
   assert.strictEqual(toCloudInfo({
     modifiedTime: '2026-01-01T00:00:00Z',
@@ -85,33 +85,33 @@ test('toCloudInfo：优先取 lastModifyingUser，退避到 owners 或 sharingUs
     lastModifyingUser: { emailAddress: 'bot@example.com' }
   }).modifiedBy, 'bot@example.com');
 
-  // 3. lastModifyingUser 为空字串或仅有 kind，兜底取 owners[0]
+  // 3. lastModifyingUser 结构存在但为空（Google Workspace 已注销/删除账号），不回退 owner，标记为已删除账号
   assert.strictEqual(toCloudInfo({
     modifiedTime: '2026-01-01T00:00:00Z',
     name: 'T3',
     lastModifyingUser: { kind: 'drive#user', displayName: '', me: false },
     owners: [{ displayName: '王五', emailAddress: 'wangwu@example.com' }]
-  }).modifiedBy, '王五');
+  }).modifiedBy, '已删除账号');
 
-  // 4. lastModifyingUser 缺失，取 owners
+  // 4. lastModifyingUser 缺失，不回退 owners，标记为未知
   assert.strictEqual(toCloudInfo({
     modifiedTime: '2026-01-01T00:00:00Z',
     name: 'T4',
     owners: [{ displayName: '赵六' }]
-  }).modifiedBy, '赵六');
+  }).modifiedBy, '未知');
 
-  // 5. lastModifyingUser 与 owners 均无，取 sharingUser
+  // 5. lastModifyingUser 与 owners 均无，不回退 sharingUser，标记为未知
   assert.strictEqual(toCloudInfo({
     modifiedTime: '2026-01-01T00:00:00Z',
     name: 'T5',
     sharingUser: { displayName: '钱七' }
-  }).modifiedBy, '钱七');
+  }).modifiedBy, '未知');
 
-  // 6. 全无用户信息，返回 null
+  // 6. 全无用户信息，标记为未知
   assert.strictEqual(toCloudInfo({
     modifiedTime: '2026-01-01T00:00:00Z',
     name: 'T6'
-  }).modifiedBy, null);
+  }).modifiedBy, '未知');
 });
 
 test('buildBatchBody：生成的字段包含 lastModifyingUser 与 owners，不带易被 Batch API 误吞的括号子字段', () => {
