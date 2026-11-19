@@ -58,6 +58,15 @@ test('planSheet：非溢出的单格公式只保护它自己', () => {
   assert.strictEqual(plan.skipped.count, 1);
 });
 
+test('planSheet：overwriteFormulas=true 时非溢出公式格允许覆盖写入，spill 公式仍保护', () => {
+  const cloud = { properties: { sheetId: 1, title: 'T' }, data: [{ rowData: [
+    { values: [{ userEnteredValue: { formulaValue: '=GOOGLETRANSLATE(A1,"en","de")' }, effectiveValue: { stringValue: 'old' } }] }
+  ] }] };
+  const plan = guard.planSheet([['new']], cloud, { overwriteFormulas: true });
+  assert.deepStrictEqual(plan.writes, [{ row: 0, col: 0, value: 'new' }]);
+  assert.strictEqual(plan.skipped.count, 0);
+});
+
 test('toValueRanges：同一行连续列合并；表名里的引号转义；= 开头加撇号', () => {
   const r = guard.toValueRanges("It's", [{ row: 0, col: 0, value: 'a' }, { row: 0, col: 1, value: '=1+1' }, { row: 0, col: 3, value: 'c' }]);
   assert.deepStrictEqual(r, [
@@ -210,6 +219,20 @@ test('uploadXlsxPreservingFormulas：源表那格已被别人改过 / 本身是�
     assert.strictEqual(r.blockedCount, 1);
     assert.strictEqual(r.blockedSamples[0].reason, 'source_changed');
     assert.ok(!sheets.calls.values.some(c => c.spreadsheetId === SRC));
+  });
+});
+
+test('uploadXlsxPreservingFormulas：overwriteFormulas=true 时源表格即使是公式也允许写入', async () => {
+  const local = makeXlsx({ Locale_TH: [['key', 'value'], ['STRING', 'STRING'], ['#', '#'], ['k1', 'mine']] });
+  const main = mainSheet([['key'], ['k1']]);
+  main.data[0].rowData[1].values[17] = { userEnteredValue: { formulaValue: '=GOOGLETRANSLATE(D2,"en","th")' }, effectiveValue: { stringValue: 'old' } };
+  const books = { MIRROR: { sheets: [mirrorSheet('Locale_TH', 1, 'R', [['k1', 'old']])] }, [SRC]: { sheets: [main] } };
+  await withFakeDrive(async () => {
+    const sheets = fakeSheetsMulti(books);
+    const r = await uploadXlsxPreservingFormulas('MIRROR', local, {}, { sheetsClient: sheets, writeThrough: true, overwriteFormulas: true });
+    assert.strictEqual(r.sourceWriteCount, 1);
+    assert.strictEqual(r.blockedCount, 0);
+    assert.ok(sheets.calls.values.some(c => c.spreadsheetId === SRC));
   });
 });
 

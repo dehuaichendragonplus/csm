@@ -3967,6 +3967,17 @@ kbd {
 .diff-action small { display: block; margin-top: 4px; color: var(--text-secondary); font-size: 11px; line-height: 1.45; }
 .diff-footer-actions button.diff-primary.diff-dl { background: var(--primary); border-color: var(--primary); color: #fff; }
 .diff-footer-actions button.diff-primary.diff-ul { background: var(--conflict-text); border-color: var(--conflict-text); color: #fff; }
+.diff-footer-actions button.diff-force-ul {
+  background: #ea580c;
+  border-color: #c2410c;
+  color: #fff;
+  font-weight: 600;
+  margin-top: 6px;
+}
+.diff-footer-actions button.diff-force-ul:hover {
+  background: #c2410c;
+  border-color: #9a3412;
+}
 
 .hist-op { white-space: nowrap; font-weight: 600; }
 .hist-fail { color: var(--danger); }

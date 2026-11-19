@@ -1191,11 +1191,12 @@
 
   // 上传请求（确认流程在差异预览里）：expect = 用户确认时看到的云端修改时间，force = 云端已变仍强制覆盖。
   // 返回 { ok, status, data }；授权类错误在这里统一提示
-  async function uploadRequest(p, { expect, force, writeThrough } = {}) {
+  async function uploadRequest(p, { expect, force, writeThrough, overwriteFormulas } = {}) {
     const q = new URLSearchParams({ path: p });
     if (expect) q.set('expect', expect);
     if (force) q.set('force', '1');
     if (writeThrough) q.set('writeThrough', '1');
+    if (overwriteFormulas) q.set('overwriteFormulas', '1');
     setBusy(true);
     setRowBusy(p, true, '上传中…');
     let again = null;
@@ -1210,14 +1211,28 @@
         if (confirm('当前 Google 授权只有只读权限，需要重新授权才能上传。现在去授权吗？')) location.href = '/auth/start';
       } else if (resp.status === 409 && data.error === 'NEEDS_WRITE_THROUGH') {
         // 云端是公式镜像（IMPORTRANGE）：要全部覆盖，镜像区的改动只能写回源表，先让用户确认（此时什么都没写）
-        if (confirm(writeThroughConfirmText(p, data))) again = { expect, force, writeThrough: true };
+        if (confirm(writeThroughConfirmText(p, data))) again = { expect, force, writeThrough: true, overwriteFormulas };
         else appendLog(`- 已取消上传 ${p}（未写入任何内容）\n`);
       } else if (resp.ok && data.formulaProtected) {
         logFormulaUpload(p, data);
+        if (data.blockedCount > 0) {
+          setConsoleCollapsed(false); // 展开控制台抽屉展示详情
+          const msg = `【上传未完全生效：检测到云端公式保护】\n\n表「${p}」包含云端公式，本次上传有 ${data.blockedCount} 个单元格未能写入：\n· 核心原因：源表对应单元格本身是公式（如 GOOGLETRANSLATE 机翻公式），CSM 默认保护不覆盖\n· 当前写入：镜像表 ${data.written} 格，源表 ${data.sourceWriteCount || 0} 格\n\n是否立即【强制上传覆盖】这些公式单元格？\n（将用本地精修文本替换源表的机翻公式，各分表联动保持有效）`;
+          if (confirm(msg)) {
+            again = { expect, force: true, writeThrough: true, overwriteFormulas: true };
+          } else {
+            showToast(`上传未完全生效：${data.blockedCount} 格因公式保护未写入`, 'error', 5000);
+          }
+        } else {
+          showToast(`✓ 已成功上传 ${p}（保留云端公式）`, 'success');
+        }
       } else if (resp.ok) {
         appendLog(`✓ 已用本地覆盖云端 ${p}（云端修改时间 ${formatTime(data.modifiedTime)}）\n`);
+        showToast(`✓ 已成功覆盖云端 ${p}`, 'success');
       } else if (resp.status !== 409) {
         appendLog(`✗ 上传失败: ${data.error || resp.status}\n`);
+        alert(`上传失败：${data.error || resp.status}`);
+        showToast(`✗ 上传失败: ${data.error || resp.status}`, 'error');
       }
       if (!again) return { ok: resp.ok, status: resp.status, data };
     } catch (err) {

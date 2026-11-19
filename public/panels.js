@@ -27,7 +27,7 @@
     findClear: $('diff-find-clear'), findStatus: $('diff-find-status'),
     msg: $('diff-msg'), close: $('diff-close'), cancel: $('diff-cancel'), refresh: $('diff-refresh'),
     direction: $('diff-direction-status'), dl: $('diff-download'), dlHint: $('diff-download-hint'),
-    ul: $('diff-upload'), ulHint: $('diff-upload-hint'), ulAction: $('diff-upload-action'),
+    ul: $('diff-upload'), ulHint: $('diff-upload-hint'), ulAction: $('diff-upload-action'), forceUl: $('diff-force-upload'),
     editTools: $('diff-edit-tools'), copyRight: $('diff-copy-right'), copyLeft: $('diff-copy-left'), undo: $('diff-undo'),
     saveActions: $('diff-save-actions'), saveLocal: $('diff-save-local'), saveCloud: $('diff-save-cloud'),
     discard: $('diff-discard'), saveStatus: $('diff-save-status')
@@ -67,6 +67,7 @@
 
   function openDiff(path, { mode = 'view' } = {}) {
     if (diffState) finishDiff(null);
+    if (d.forceUl) d.forceUl.classList.add('hidden');
     mode = resolveDiffMode(path, mode);
     return new Promise(resolve => {
       diffState = { path, mode, data: null, resolve, opener: document.activeElement };
@@ -975,15 +976,25 @@
     }
   }
 
-  async function doUpload() {
+  async function doUpload(opts = {}) {
     const st = diffState;
-    if (!st?.data || d.ul.disabled || !CSM().allowUpload() || !confirmLoseEdits('整表覆盖') || !confirmOverwrite(st, d.ul, d.ulHint)) return;
+    if (!st?.data || d.ul.disabled || !CSM().allowUpload() || !confirmLoseEdits('整表覆盖') || (!opts.overwriteFormulas && !confirmOverwrite(st, d.ul, d.ulHint))) return;
     startDiffOperation(st, '上传中…');
     // expect：以这次差异预览看到的云端版本为准；之后云端若又被改，服务端会拒绝（409）
-    const r = await CSM().uploadRequest(st.path, { expect: st.data.cloud.modifiedTime });
+    const r = await CSM().uploadRequest(st.path, { expect: st.data.cloud.modifiedTime, ...opts });
     if (diffState !== st) return;
     st.busy = false;
-    if (r.ok) { finishDiff('uploaded'); return; }
+    if (r.ok) {
+      if (r.data?.formulaProtected && r.data?.blockedCount > 0) {
+        setMsg(d.msg, `上传未完全生效：${r.data.blockedCount} 个单元格因云端公式保护未写入（源表是公式）。`, 'error');
+        if (d.forceUl) d.forceUl.classList.remove('hidden');
+        updateButtons();
+        return;
+      }
+      if (d.forceUl) d.forceUl.classList.add('hidden');
+      finishDiff('uploaded');
+      return;
+    }
     if (r.status === 409 && r.data.error === 'CLOUD_CHANGED') {
       st.stale = true;
       const who = r.data.cloudModifiedBy ? `「${r.data.cloudModifiedBy}」` : '其他人';
@@ -1345,7 +1356,14 @@
   d.close.addEventListener('click', () => { if (confirmLoseEdits('关闭')) finishDiff(null); });
   d.cancel.addEventListener('click', () => { if (confirmLoseEdits('关闭')) finishDiff(null); });
   d.dl.addEventListener('click', doDownload);
-  d.ul.addEventListener('click', doUpload);
+  d.ul.addEventListener('click', () => doUpload());
+  if (d.forceUl) {
+    d.forceUl.addEventListener('click', () => {
+      if (confirm('确定要强制上传覆盖吗？\n\n将用本地内容覆盖云端受阻的公式单元格（如机翻公式），各分表联动结构保持有效。')) {
+        doUpload({ writeThrough: true, overwriteFormulas: true, force: true });
+      }
+    });
+  }
   d.refresh.addEventListener('click', () => {
     d.close.focus();
     loadDiff({ force: true });

@@ -813,7 +813,10 @@ async function main(opts = {}) {
       return res.status(400).json({ error: '本地文件不是有效的 xlsx' });
     }
     const r = await uploadBufferToCloud(req.ctx, entry, buf, {
-      expect: req.query.expect, force: req.query.force === '1', writeThrough: req.query.writeThrough === '1'
+      expect: req.query.expect,
+      force: req.query.force === '1',
+      writeThrough: req.query.writeThrough === '1',
+      overwriteFormulas: req.query.overwriteFormulas === '1'
     });
     res.status(r.status).json(r.body);
   });
@@ -851,10 +854,14 @@ async function main(opts = {}) {
     }
     try {
       // 默认保留云端公式：云端有公式（如 IMPORTRANGE 镜像主表）时按单元格写入、不动公式；镜像区的改动写回源表（需 writeThrough=1 确认）。
+      // 强制模式下 overwriteFormulas:true 允许覆盖非溢出公式（如 GOOGLETRANSLATE 机翻公式）
       // 配置 preserveCloudFormulas:false 可退回整表替换
       const info = cfg.preserveCloudFormulas === false
         ? await uploadXlsxToSheet(entry.spreadsheetId, buf, oauth2Client)
-        : await uploadXlsxPreservingFormulas(entry.spreadsheetId, buf, oauth2Client, { writeThrough: !!opts.writeThrough });
+        : await uploadXlsxPreservingFormulas(entry.spreadsheetId, buf, oauth2Client, {
+            writeThrough: !!opts.writeThrough,
+            overwriteFormulas: !!opts.overwriteFormulas
+          });
       const extra = info.formulaProtected ? {
         formulaProtected: true, written: info.written, sourceWriteCount: info.sourceWriteCount, sources: info.sources,
         derivedCount: info.derivedCount, derivedSamples: info.derivedSamples,
@@ -1571,6 +1578,7 @@ async function main(opts = {}) {
     } catch (_) { /* 本地不存在：不算已同步 */ }
     const r = await uploadBufferToCloud(req.ctx, entry, patched.buffer, {
       expect: expect.cloudModifiedTime, force: !!req.body.force, writeThrough: !!req.body.writeThrough,
+      overwriteFormulas: !!req.body.overwriteFormulas,
       markSynced: equalsLocal, op: 'merge-cloud'
     });
     res.status(r.status).json(r.status === 200 ? { ...r.body, side, warnings: patched.warnings } : r.body);
