@@ -199,7 +199,12 @@ async function main(opts = {}) {
       budgetMs
     });
   }
-  const CLOUD_ERROR_TEXT = { forbidden: '当前 Google 账号没有这个表格的访问权限', not_found: '找不到这个表格（已删除，或当前账号没有权限）', rate_limited: '查询过于频繁，请稍后重试' };
+  const CLOUD_ERROR_TEXT = {
+    forbidden: '当前 Google 账号没有这个表格的访问权限',
+    no_access: '当前 Google 账号没有这个表格的访问权限，请打开表格申请权限，或联系表格负责人共享',
+    not_found: '找不到这个表格（已删除，或链接有误）',
+    rate_limited: '查询过于频繁，请稍后重试'
+  };
   // 单张表的云端版本（下载 / 上传 / 差异预览前用）；查询失败抛错
   async function cloudInfoOf(spreadsheetId) {
     const info = (await resolveCloudInfos([spreadsheetId], { budgetMs: SINGLE_PROBE_BUDGET_MS })).get(spreadsheetId);
@@ -215,7 +220,7 @@ async function main(opts = {}) {
     const filelist = loadFilelist(ctx.cfg.filelistPath);
     const ids = filelist.filter(e => e.spreadsheetId).map(e => e.spreadsheetId);
     const map = await resolveCloudInfos(ids);
-    if (map.size && [...map.values()].every(v => v.error && !['forbidden', 'not_found'].includes(v.error))) {
+    if (map.size && [...map.values()].every(v => v.error && !['forbidden', 'no_access', 'not_found'].includes(v.error))) {
       throw new Error('本次无法查询云端表格，请检查网络或 Google 授权后重试');
     }
     driveCaches.set(ctx.id, map);

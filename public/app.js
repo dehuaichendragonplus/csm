@@ -1,6 +1,13 @@
 (function () {
   'use strict';
 
+  // 云端查询错误码 → 行内提示（no_access：Drive 查不到、Sheets 确认表存在但当前账号没权限）
+  const CLOUD_ERROR_HINTS = {
+    no_access: { text: '没有访问权限 · 点云端表名旁的 ↗ 申请', tip: '表格存在，但当前登录的 Google 账号没有访问权限。打开表格点「请求访问权限」，或联系表格负责人共享给你；拿到权限后点「重新检查」' },
+    forbidden: { text: '没有访问权限 · 请联系表格负责人', tip: '当前登录的 Google 账号没有这个表格的访问权限' },
+    not_found: { text: '找不到云端表 · 请检查链接', tip: '云端表已被删除，或清单里的链接 / ID 有误；也可能是当前账号无权限（无法进一步确认时）' },
+    rate_limited: { text: '查询被限流 · 稍后重新检查', tip: 'Google 接口查询过于频繁，稍后点「重新检查」' }
+  };
   const STATUS_LABELS = {
     conflict: { label: '冲突（两边都改过）', icon: '⚠' },
     error: { label: '错误', icon: '✖' },
@@ -873,7 +880,9 @@
     const dot = document.createElement('span');
     dot.className = 'status-dot';
     const statusText = document.createElement('span');
-    statusText.textContent = STATUS_LABELS[row.status] ? STATUS_LABELS[row.status].label : row.status;
+    statusText.textContent = row.error === 'no_access' || row.error === 'forbidden'
+      ? '无权限'
+      : (STATUS_LABELS[row.status] ? STATUS_LABELS[row.status].label : row.status);
     statusPill.append(dot, statusText);
     statusPill.title = timesTip;
     statusMain.appendChild(statusPill);
@@ -881,7 +890,12 @@
     const statusSub = document.createElement('div');
     statusSub.className = 'cell-sub-line status-sub-info';
     if (row.error) {
-      statusSub.innerHTML = `<span class="status-error-text" title="${row.error}">错误: ${row.error}</span>`;
+      const errText = document.createElement('span');
+      errText.className = 'status-error-text';
+      const friendly = CLOUD_ERROR_HINTS[row.error];
+      errText.textContent = friendly ? friendly.text : `错误: ${row.error}`;
+      errText.title = friendly ? friendly.tip : row.error;
+      statusSub.appendChild(errText);
     } else if (row.status === 'synced') {
       statusSub.textContent = '本地与云端一致';
     } else if (row.status === 'updated') {

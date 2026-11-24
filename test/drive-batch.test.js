@@ -121,3 +121,25 @@ test('buildBatchBody：生成的字段包含 lastModifyingUser 与 owners，不�
   const body = buildBatchBody(['id1'], 'test_bound');
   assert.match(body, /fields=id,modifiedTime,name,lastModifyingUser,owners/);
 });
+
+test('getModifiedTimes：Drive 404 再探测 Sheets，表存在但没权限的标为 no_access', async () => {
+  const request = async () => fakeBatchResponse([
+    { status: 404, body: { error: { code: 404, message: 'File not found' } } },
+    { status: 404, body: { error: { code: 404, message: 'File not found' } } },
+    { status: 404, body: { error: { code: 404, message: 'File not found' } } },
+    { status: 403, body: { error: { code: 403, message: 'forbidden' } } }
+  ]);
+  const probed = [];
+  const accessProbe = async id => {
+    probed.push(id);
+    if (id === 'noacc') return 'no_access';
+    if (id === 'gone') return 'not_found';
+    throw new Error('网络错误');
+  };
+  const m = await getModifiedTimes(['noacc', 'gone', 'flaky', 'forb'], null, { request, accessProbe });
+  assert.deepStrictEqual(probed.sort(), ['flaky', 'gone', 'noacc'], '只探测 not_found 的条目');
+  assert.strictEqual(m.get('noacc').error, 'no_access');
+  assert.strictEqual(m.get('gone').error, 'not_found');
+  assert.strictEqual(m.get('flaky').error, 'not_found', '探测失败时保持原样');
+  assert.strictEqual(m.get('forb').error, 'forbidden');
+});
