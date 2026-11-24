@@ -2296,10 +2296,24 @@
       if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
       dirCurrent = data.path;
       dirEls.path.textContent = data.path;
-      dirEls.msg.textContent = data.hint
-        ? (dirMode === 'relocate' ? '已找到项目配置或配置表清单，可以更新项目目录。' : '已找到项目配置或配置表清单，可以添加。')
-        : '此目录没有找到配置表清单。请继续浏览，或用系统选择器重新选目录。';
-      dirEls.pick.disabled = !data.hint;
+      const legacy = !data.hint && data.legacy ? data.legacy : null;
+      if (data.hint) {
+        dirEls.msg.textContent = dirMode === 'relocate' ? '已找到项目配置或配置表清单，可以更新项目目录。' : '已找到项目配置或配置表清单，可以添加。';
+      } else if (legacy) {
+        // 老项目：没有配置和清单，但有本地 xlsx 或导表脚本里的表格链接，确认后自动生成
+        const found = [];
+        if (legacy.tables) found.push(`${legacy.tables}${legacy.tablesTruncated ? '+' : ''} 张 xlsx`);
+        if (legacy.mapped) found.push(`从 ${legacy.sources.join('、')} 识别到 ${legacy.mapped} 张表的云端链接`);
+        dirEls.msg.textContent = `此目录还没有配置表清单（找到 ${found.join('，')}）。` +
+          `${dirMode === 'relocate' ? '更新' : '添加'}时会自动生成 filelist.json 和 syncmanager.config.json` +
+          `${legacy.mapped ? '' : '，之后可在「管理配置表」里绑定云端表'}。`;
+      } else {
+        dirEls.msg.textContent = '此目录没有找到配置表清单，也没有 xlsx 配置表。请继续浏览，或用系统选择器重新选目录。';
+      }
+      dirEls.pick.textContent = legacy
+        ? (dirMode === 'relocate' ? '生成配置并更新' : '生成配置并添加')
+        : (dirMode === 'relocate' ? '更新此目录' : '添加此目录');
+      dirEls.pick.disabled = !data.hint && !legacy;
       dirEls.list.replaceChildren();
       const addItem = (text, target, star) => {
         const li = document.createElement('li');
@@ -2325,7 +2339,7 @@
     if (dirMode === 'relocate' && relocateTarget) {
       if (dirEls.title) dirEls.title.textContent = `更改「${relocateTarget.name}」的配置表目录`;
       if (dirEls.nameField) dirEls.nameField.style.display = 'none';
-      if (dirEls.tip) dirEls.tip.textContent = '选择包含项目配置或配置表清单的新目录';
+      if (dirEls.tip) dirEls.tip.textContent = '选择项目的配置表目录，没有清单的老项目会自动生成';
       if (dirEls.pick) dirEls.pick.textContent = '更新此目录';
       dirEls.modal.classList.remove('hidden');
       dirEls.native.focus();
@@ -2335,13 +2349,22 @@
       relocateTarget = null;
       if (dirEls.title) dirEls.title.textContent = '选择项目的配置表目录';
       if (dirEls.nameField) dirEls.nameField.style.display = '';
-      if (dirEls.tip) dirEls.tip.textContent = '选择包含项目配置或配置表清单的目录';
+      if (dirEls.tip) dirEls.tip.textContent = '选择项目的配置表目录，没有清单的老项目会自动生成';
       if (dirEls.pick) dirEls.pick.textContent = '添加此目录';
       dirEls.modal.classList.remove('hidden');
       dirEls.name.value = '';
       dirEls.native.focus();
       browse(lsGet(DIR_KEY));
     }
+  }
+
+  function generatedNote(data) {
+    if (!data.generated) return '';
+    if (!data.legacy) return '（已自动生成 syncmanager.config.json）';
+    const { mapped, unmapped } = data.legacy;
+    return `（老项目：已自动生成 filelist.json 和 syncmanager.config.json，` +
+      `${mapped ? `从导表脚本导入 ${mapped} 张表` : '清单为空'}` +
+      `${unmapped ? `；还有 ${unmapped} 张本地 xlsx 未绑定云端表，可在「管理配置表」里添加` : ''}。生成的文件建议提交到项目仓库）`;
   }
 
   async function submitDirModal() {
@@ -2364,7 +2387,7 @@
         if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
         lsSet(DIR_KEY, dir);
         dirEls.modal.classList.add('hidden');
-        appendLog(`✓ 项目「${p.name}」配置目录已更新为：${dir}${data.generated ? '（已自动生成 syncmanager.config.json）' : ''}\n`);
+        appendLog(`✓ 项目「${p.name}」配置目录已更新为：${dir}${generatedNote(data)}\n`);
         showToast(`已更新项目「${p.name}」配置目录`, 'info');
         await loadProjects(p.id);
         document.dispatchEvent(new Event('csm-project-changed'));
@@ -2391,7 +2414,7 @@
       if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
       lsSet(DIR_KEY, dir);
       dirEls.modal.classList.add('hidden');
-      appendLog(`✓ 已添加项目「${data.project.name}」${data.generated ? '（已自动生成 syncmanager.config.json）' : ''}\n`);
+      appendLog(`✓ 已添加项目「${data.project.name}」${generatedNote(data)}\n`);
       await loadProjects(data.project.id);
     } catch (err) {
       if (browseId === dirBrowseId) {

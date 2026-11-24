@@ -437,14 +437,14 @@ async function main(opts = {}) {
       const { name, dir } = req.body || {};
       const result = updateProject(REGISTRY_PATH, req.params.id, { name, dir });
       if (!result || !result.project) return res.status(404).json({ error: 'unknown project' });
-      const { project, generated } = result;
+      const { project, generated, legacy } = result;
       if (dir) {
         driveCaches.delete(project.id);
         driveCacheFresh.delete(project.id);
         cloudPathPreviews.delete(project.id);
         clearVerifyCache(project.id);
       }
-      res.json({ ...project, project, generated, exists: fs.existsSync(project.dir) });
+      res.json({ ...project, project, generated, legacy, exists: fs.existsSync(project.dir) });
     } catch (err) {
       res.status(err.code === 'DUPLICATE' ? 409 : 400).json({ error: err.message });
     }
@@ -1037,7 +1037,7 @@ async function main(opts = {}) {
         return { ...e, local, sync };
       });
       const relBase = path.relative(project.dir, baseDir);
-      const scanRoot = localTables.scanRootOf(entries, cfg.cloudRoot && cfg.cloudRoot.local);
+      const scanRoot = localTables.scanRootOf(entries, cfg.cloudRoot && cfg.cloudRoot.local, baseDir);
       res.json({
         // 本地表：本地目录下存在但还没加入清单的 xlsx
         local: { root: scanRoot, tables: localTables.scanLocalTables(baseDir, scanRoot, entries) },

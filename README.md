@@ -77,7 +77,13 @@ npm run dist       # 一次打 macOS + Windows
 - **添加项目**：点「＋ 添加项目」，在弹窗里逐级浏览目录，选中项目的**配置表目录**（含 `syncmanager.config.json` 或 `filelist.json` 的目录会标 ★），点「添加此目录」。
   - 目录里已有 `syncmanager.config.json` → 直接使用。
   - 只有 `filelist.json`（根目录或 `Input/` 下）→ 自动生成一份最小配置（走 Drive API 导出、无自定义动作），之后可自行编辑补充。
-  - 两者都没有 → 提示错误，不添加。
+  - 两者都没有、但目录里有 xlsx（**老项目**）→ 自动生成 `filelist.json` 和 `syncmanager.config.json`，弹窗按钮显示为「生成配置并添加」：
+    - 会在配置表目录本身、它的子目录、上一级目录和上一级的其他子目录（如 `Res/ExcelTools`）里找导表脚本（`.sh` / `.command` / `.bat` / `.cmd` / `.ps1` / `.py`），**同一行里同时出现 spreadsheetId（或表格链接）和 xlsx 路径**的就记为一条映射，例如 `{"Game","16M0h…","../Configs/Modules/Game.xlsx"}`。注释行、含变量的路径、落在配置表目录之外的表都会跳过
+    - 没识别到映射的 xlsx 不会写进清单，之后在「管理配置表」里绑定或上传
+    - 目录太大（遍历超过 800 个子目录还没数完，多半是选到了主目录这类上层目录）且脚本里也没有映射时，不按老项目处理
+    - 项目名自动跳过 `Configs`、`Res`、`Input` 这类通用目录名（如 `SmashBlast1/Res/Configs` → `SmashBlast1`）
+    - 生成的两个文件建议提交到项目仓库
+  - 什么都没有（连 xlsx 都没有）→ 提示错误，不添加。
 - **移除项目**：点标签上的 ✕。只是平台不再管理，项目目录里的文件不会被删。
 - **切换项目**：点标签。上次选的项目会被记住。
 
