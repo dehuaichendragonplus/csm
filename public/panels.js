@@ -387,10 +387,12 @@
     return m;
   }
 
-  // 与服务端 sameCell 一致：数字按值比较（1 与 1.0 相同）
+  // 与服务端 sameCell 一致：数字按值比较（1 与 1.0 相同），换行 \r\n / \r / \n 视为相同
+  const normNl = s => (typeof s === 'string' && s.includes('\r') ? s.replace(/\r\n?/g, '\n') : s);
   function sameVal(a, b) {
     if (a === b) return true;
     if (a === '' || b === '') return false;
+    if (normNl(a) === normNl(b)) return true;
     const x = Number(a);
     const y = Number(b);
     return Number.isFinite(x) && Number.isFinite(y) && Math.abs(x - y) <= 1e-9 * Math.max(1, Math.abs(x), Math.abs(y));

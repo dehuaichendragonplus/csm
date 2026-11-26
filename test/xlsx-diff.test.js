@@ -183,3 +183,12 @@ test('diffWorkbooks 标出只在一侧有内容的列', () => {
   const same = diff([{ name: 'S', rows: L }], [{ name: 'S', rows: L }]).sheets[0];
   assert.deepEqual(same.onlyCols, { local: [], cloud: [] });
 });
+
+test('sameCell / diffWorkbooks：换行符 \\r\\n、\\r 与 \\n 视为相同（Windows Excel 与云端导出差异）', () => {
+  assert.ok(sameCell('是否启用\r\n只影响', '是否启用\n只影响'));
+  assert.ok(sameCell('a\rb', 'a\nb'));
+  assert.ok(!sameCell('a\n\nb', 'a\nb'));
+  const local = [{ name: 'S', rows: [['##var', 'Key', 'IsEnabled'], ['##desc', '活动Key\r\n主键', '是否启用\r\n只影响']] }];
+  const cloud = [{ name: 'S', rows: [['##var', 'Key', 'IsEnabled'], ['##desc', '活动Key\n主键', '是否启用\n只影响']] }];
+  assert.strictEqual(diffWorkbooks(local, cloud, { view: false }).identical, true);
+});

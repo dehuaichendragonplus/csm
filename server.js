@@ -291,8 +291,10 @@ async function main(opts = {}) {
     return changed;
   }
 
+  // 比较规则改了就加 1，让旧的核对结果失效（2：换行 \r\n 与 \n 视为相同）
+  const VERIFY_RULES = 2;
   function verifyKey(entry, row, localHash) {
-    return JSON.stringify([entry.spreadsheetId, row.cloudModifiedTime, localHash, entry.diffKeys]);
+    return JSON.stringify([entry.spreadsheetId, row.cloudModifiedTime, localHash, entry.diffKeys, VERIFY_RULES]);
   }
 
   function tablesOf(ctx, { driveMap = driveCaches.get(ctx.id), persistState = true } = {}) {
